@@ -66,7 +66,21 @@ openssl rand -hex 24
 
 不要提交 `.env`。
 
-## 3. 访问范围
+## 3. Public URL 与 Internal URL
+
+这两个地址不能混用：
+
+```env
+WINDMILL_BASE_URL=http://localhost:8000
+WINDMILL_INTERNAL_URL=http://windmill_server:8000
+```
+
+- `WINDMILL_BASE_URL`：浏览器/外部客户端看到的地址。
+- `WINDMILL_INTERNAL_URL`：Docker 网络内 Worker 回调 Windmill Server 的地址。
+
+Worker 绝不能把 `localhost:8000` 当成 Server，因为 Worker 自己是另一个容器。
+
+## 4. 访问范围
 
 默认：
 
@@ -84,17 +98,21 @@ http://localhost:8000
 
 如果部署到园区服务器：
 
-优先让 nginx / Traefik / 现有反代通过 HTTPS 转发到 `127.0.0.1:8000`。
-
-不要为了方便直接把：
+优先让 nginx / Traefik / 现有反代通过 HTTPS 转发到 `127.0.0.1:8000`，然后把：
 
 ```env
-WINDMILL_BIND_HOST=0.0.0.0
+WINDMILL_BASE_URL=https://你的内部域名或正式域名
 ```
 
-暴露到公网。
+保持：
 
-## 4. 启动
+```env
+WINDMILL_INTERNAL_URL=http://windmill_server:8000
+```
+
+不要为了方便把 8000 端口直接暴露公网。
+
+## 5. 启动
 
 ```bash
 docker compose pull
@@ -114,9 +132,9 @@ Windmill 健康检查：
 curl http://127.0.0.1:8000/api/version
 ```
 
-官方 Windmill 本身也使用 `/api/version` 做容器健康检查。
+Windmill 官方部署/测试本身也使用 `/api/version` 做健康检查。
 
-## 5. 首次数据库初始化
+## 6. 首次数据库初始化
 
 PostgreSQL volume 第一次创建时会自动运行：
 
@@ -137,7 +155,7 @@ db/schema.sql
 
 业务 Schema 中的对象归 `RESEARCH_DB_USER` 所有，而不是 Windmill。
 
-## 6. 验证
+## 7. 验证
 
 ```bash
 bash scripts/verify-stack.sh
@@ -150,7 +168,7 @@ bash scripts/verify-stack.sh
 - `douyin_research` 是否存在业务表
 - `source_video` 是否创建成功
 
-## 7. 停止
+## 8. 停止
 
 保留数据：
 
@@ -166,7 +184,7 @@ docker compose down -v
 
 **警告：`-v` 会删除 PostgreSQL volume。**
 
-## 8. Schema 变更
+## 9. Schema 变更
 
 `docker-entrypoint-initdb.d` 只在空数据目录首次启动时运行。
 
@@ -175,7 +193,7 @@ docker compose down -v
 - 开发期可在明确可丢数据时 `docker compose down -v` 重建；
 - 进入有历史数据阶段后，必须使用 `db/migrations/`，不能靠删 volume。
 
-## 9. 备份
+## 10. 备份
 
 ```bash
 bash scripts/backup.sh
@@ -198,7 +216,7 @@ backups/<UTC timestamp>/
 
 后续生产环境再增加自动定时备份与 restore drill。
 
-## 10. Windmill 初始化后的安全设置
+## 11. Windmill 初始化后的安全设置
 
 第一次进入 Windmill 后：
 
@@ -211,7 +229,7 @@ backups/<UTC timestamp>/
 6. 不挂载宿主 Docker socket。
 7. 不启动 debugger/multiplayer。
 
-## 11. 为什么只有一个普通 Worker
+## 12. 为什么只有一个普通 Worker
 
 官方通用 compose 默认多个 worker，但我们的 V0 数据量极小。
 
@@ -222,13 +240,30 @@ backups/<UTC timestamp>/
 
 只有队列实际积压才加 replica。
 
-## 12. 版本
+## 13. 自动验证
+
+仓库包含：
+
+`.github/workflows/infra-validate.yml`
+
+每次修改基础设施后自动检查：
+
+- Shell 语法
+- `docker compose config`
+- 真正启动 PostgreSQL 18
+- 执行 research DB bootstrap
+- 执行 `db/schema.sql`
+- 验证 `source_video` 表存在
+
+CI 不启动 Windmill 镜像，因此速度和资源消耗较低。
+
+## 14. 版本
 
 当前 V0 基线：
 
 - Windmill `1.815.0`
 - PostgreSQL `18`
 
-Windmill GitHub 在 2026-09-18 发布 v1.815.0；官方容器 tag 使用 `1.x.y` 形式。
+Windmill GitHub 在 2026-09-18 发布 v1.815.0；官方 GHCR 容器使用 `1.x.y` 标签形式。
 
 生产版本不跟 `main` / floating `latest`。
