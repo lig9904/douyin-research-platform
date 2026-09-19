@@ -138,7 +138,16 @@ class TikHubTransport:
 
                 if response.status_code == 401:
                     raise ProviderAuthError("TikHub authentication failed")
+                if response.status_code == 402:
+                    raise ProviderBalanceError(
+                        f"TikHub balance/credit error: {response.text[:300]}"
+                    )
                 if response.status_code == 403:
+                    text = response.text.lower()
+                    if any(x in text for x in ("balance", "credit", "余额")):
+                        raise ProviderBalanceError(
+                            f"TikHub balance/credit error: {response.text[:300]}"
+                        )
                     raise ProviderPermanentError(
                         f"TikHub permission/quota error: {response.text[:300]}"
                     )
@@ -168,6 +177,7 @@ def _map_sdk_exception(exc: Exception) -> Exception | None:
         from tikhub import (
             TikHubAuthError,
             TikHubConnectionError,
+            TikHubHTTPError,
             TikHubNotFoundError,
             TikHubPermissionError,
             TikHubRateLimitError,
@@ -191,6 +201,23 @@ def _map_sdk_exception(exc: Exception) -> Exception | None:
         return ProviderPermanentError(str(exc))
     if isinstance(exc, (TikHubServerError, TikHubUpstreamError, TikHubConnectionError)):
         return ProviderTemporaryError(str(exc))
+    if isinstance(exc, TikHubHTTPError):
+        status = getattr(exc, "status_code", None)
+        body = getattr(exc, "response_body", None)
+        text = f"{body} {exc}".lower()
+        if status == 402 or any(x in text for x in ("balance", "credit", "余额")):
+            return ProviderBalanceError(str(exc))
+        if status == 401:
+            return ProviderAuthError(str(exc))
+        if status == 404:
+            return ProviderNotFound(str(exc))
+        if status == 429:
+            return ProviderRateLimitError(
+                str(exc), retry_after=getattr(exc, "retry_after", None)
+            )
+        if status is not None and 500 <= status < 600:
+            return ProviderTemporaryError(str(exc))
+        return ProviderPermanentError(str(exc))
     return None
 
 
