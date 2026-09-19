@@ -1,0 +1,66 @@
+summary: Manual comment evidence collection
+description: |
+  Manual-only L2 evidence flow. It defaults to preview and has no schedule.
+  Paid execution requires execute=true and the exact confirmation string.
+value:
+  concurrent_limit: 1
+  concurrency_time_window_s: 0
+  modules:
+    - id: collect_comments
+      summary: Guard, fetch, and persist bounded comment evidence
+      value:
+        type: script
+        path: f/content_research/collectors/manual_comment_collection
+        input_transforms:
+          db:
+            type: static
+            value: "$res:f/content_research/research_db"
+          video_platform_id:
+            type: javascript
+            expr: flow_input.video_platform_id
+          execute:
+            type: javascript
+            expr: flow_input.execute
+          confirmation:
+            type: javascript
+            expr: flow_input.confirmation
+          count:
+            type: javascript
+            expr: flow_input.count
+          max_pages:
+            type: javascript
+            expr: flow_input.max_pages
+          max_items:
+            type: javascript
+            expr: flow_input.max_items
+schema:
+  type: object
+  properties:
+    video_platform_id:
+      type: string
+      description: Existing Douyin platform video ID. It is not returned by the flow.
+    execute:
+      type: boolean
+      default: false
+      description: False performs a zero-call preview.
+    confirmation:
+      type: string
+      default: ""
+      description: Use COLLECT_COMMENTS_PAID only for an intentional paid run.
+    count:
+      type: integer
+      minimum: 1
+      maximum: 20
+      default: 20
+    max_pages:
+      type: integer
+      minimum: 1
+      maximum: 2
+      default: 1
+    max_items:
+      type: integer
+      minimum: 1
+      maximum: 40
+      default: 20
+  required:
+    - video_platform_id
