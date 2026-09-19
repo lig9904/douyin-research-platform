@@ -47,6 +47,7 @@ def obs(
         observed_at=when,
     )
     metrics = MetricSnapshotInput(
+        platform="douyin",
         video_platform_id=vid,
         captured_at=when,
         provider="tikhub",
