@@ -334,11 +334,17 @@ def test_comment_collector_closes_provider_to_postgres_loop_without_replaying_ca
     assert first.new_comments == 29
     assert first.observations_inserted == 29
     assert first.pages_fetched == 2
+    assert first.cached_pages == 0
+    assert first.external_pages == 2
     assert first.cross_page_duplicates_removed == 10
+    assert first.estimated_api_cost_usd == pytest.approx(0.002)
     assert first.cached is False
     assert replay.new_comments == 0
     assert replay.observations_inserted == 0
     assert replay.duplicate_observations == 29
+    assert replay.cached_pages == 2
+    assert replay.external_pages == 0
+    assert replay.estimated_api_cost_usd == 0.0
     assert replay.cached is True
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
@@ -358,10 +364,14 @@ def test_comment_collector_closes_provider_to_postgres_loop_without_replaying_ca
         assert float(spent_cost) == pytest.approx(0.002)
         cur.execute(
             """
-            select summary->>'llm_calls', summary->>'pages_fetched'
+            select summary->>'llm_calls', summary->>'pages_fetched', api_cost
             from pipeline_run
             where id=%s
             """,
             (replay.run_id,),
         )
-        assert cur.fetchone() == ("0", "2")
+        llm_calls, pages_fetched, api_cost = cur.fetchone()
+        assert (llm_calls, pages_fetched) == ("0", "2")
+        assert float(api_cost) == 0.0
+        cur.execute("select api_cost from pipeline_run where id=%s", (first.run_id,))
+        assert float(cur.fetchone()[0]) == pytest.approx(0.002)
