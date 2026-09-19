@@ -36,6 +36,14 @@ create table if not exists source_account (
   platform_account_id text not null,
   nickname text,
   profile_url text,
+  bio text,
+  location_text text,
+  account_type text,
+  certification_type text,
+  research_level smallint not null default 0,
+  monitoring_status text not null default 'untracked',
+  monitoring_priority numeric,
+  next_due_at timestamptz,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   unique (platform, platform_account_id)
@@ -54,6 +62,20 @@ create table if not exists account_metric_snapshot (
   video_count bigint,
   raw_metrics jsonb
 );
+
+create table if not exists account_tag (
+  id bigserial primary key,
+  account_id uuid not null references source_account(id) on delete cascade,
+  tag_type text not null,
+  tag_value text not null,
+  source text not null default 'manual',
+  confidence numeric,
+  created_at timestamptz not null default now(),
+  unique(account_id, tag_type, tag_value)
+);
+
+create index if not exists idx_account_tag_lookup
+  on account_tag(tag_type, tag_value);
 
 create table if not exists provider_account_snapshot (
   id bigserial primary key,
@@ -494,6 +516,8 @@ create index if not exists idx_video_platform_published
   on source_video(platform, published_at desc);
 create index if not exists idx_account_platform_seen
   on source_account(platform, last_seen_at desc);
+create index if not exists idx_account_monitoring
+  on source_account(platform, monitoring_status, research_level);
 create index if not exists idx_video_account on source_video(account_id);
 create index if not exists idx_provider_video_time on provider_video_snapshot(video_id, provider, captured_at desc);
 create index if not exists idx_signal_type_seen on external_signal(signal_type, last_seen_at desc);
