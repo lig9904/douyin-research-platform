@@ -394,6 +394,7 @@ create table if not exists api_endpoint_registry (
 create table if not exists external_api_response (
   id bigserial primary key,
   provider text not null,
+  platform text not null references platform_registry(platform_key),
   endpoint_key text not null,
   request_fingerprint text,
   requested_at timestamptz not null default now(),
@@ -444,6 +445,7 @@ create index if not exists idx_pipeline_run_time
 create table if not exists external_api_call (
   id bigserial primary key,
   provider text not null,
+  platform text not null references platform_registry(platform_key),
   endpoint_key text not null,
   request_fingerprint text,
   status text not null,
@@ -509,3 +511,7 @@ create index if not exists idx_analysis_video_time on analysis_run(video_id, cre
 create index if not exists idx_analysis_signal_time on analysis_run(signal_id, created_at desc);
 create index if not exists idx_video_title_lower on source_video(lower(title));
 create index if not exists idx_api_response_fingerprint on external_api_response(provider, endpoint_key, request_fingerprint, requested_at desc);
+create index if not exists idx_api_call_platform_time
+  on external_api_call(platform, started_at desc);
+create index if not exists idx_api_response_platform_time
+  on external_api_response(platform, requested_at desc);
