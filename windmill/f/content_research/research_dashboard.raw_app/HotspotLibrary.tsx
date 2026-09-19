@@ -194,20 +194,22 @@ function HotspotTrend({
 }) {
   const validPoints = (data || [])
     .map((point) => {
+      const heatValue: unknown = point.heat_value
+
       if (
         point.captured_at == null ||
         point.captured_at === '' ||
-        point.heat_value == null ||
-        point.heat_value === ''
+        heatValue == null ||
+        heatValue === ''
       ) {
         return null
       }
 
       const timestamp = Date.parse(point.captured_at)
       const heat =
-        typeof point.heat_value === 'number'
-          ? point.heat_value
-          : Number(point.heat_value)
+        typeof heatValue === 'number'
+          ? heatValue
+          : Number(heatValue)
 
       if (!Number.isFinite(timestamp) || !Number.isFinite(heat)) return null
       return { timestamp, heat }
