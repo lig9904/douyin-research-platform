@@ -132,6 +132,7 @@ def _normalize_aweme(
     )
 
     metrics = MetricSnapshotInput(
+        platform="douyin",
         video_platform_id=aweme_id,
         captured_at=observed_at,
         provider="tikhub",
