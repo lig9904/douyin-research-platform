@@ -1,0 +1,65 @@
+name: tikhub-paid-v0-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type RUN_PAID_V0 to authorize exactly four paid platform calls"
+        required: true
+        type: string
+      aweme_id:
+        description: "One public Douyin aweme_id for the App V3 batch-detail probe"
+        required: true
+        default: "7534641277405531446"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tikhub-paid-v0-smoke
+  cancel-in-progress: false
+
+jobs:
+  paid-smoke:
+    if: ${{ inputs.confirmation == 'RUN_PAID_V0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pinned project dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Verify paid smoke safety tests
+        run: python -m pytest tests/test_tikhub_v0_smoke.py tests/test_provider_transport.py
+
+      - name: Run four-call paid smoke
+        env:
+          TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
+          TIKHUB_ENABLE_PAID_SMOKE: "YES"
+          AWEME_ID: ${{ inputs.aweme_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          if not os.environ.get("TIKHUB_API_KEY"):
+              sys.exit("TIKHUB_API_KEY repository secret is missing")
+          if not os.environ.get("AWEME_ID", "").isdigit():
+              sys.exit("aweme_id must contain digits only")
+          PY
+          python scripts/tikhub/v0_smoke.py all-paid --aweme-id "$AWEME_ID"
+
+      - name: Confirm ephemeral raw cleanup policy
+        if: always()
+        run: |
+          test ! -e tmp/tikhub-v0 || find tmp/tikhub-v0 -maxdepth 1 -type f -name '*.json' -delete

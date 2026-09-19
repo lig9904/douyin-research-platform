@@ -235,7 +235,7 @@ def save_and_summarize(label: str, payload: Any, sdk_version: str) -> dict[str, 
     summary = {
         "label": label,
         "sdk_version": sdk_version,
-        "request_id": env.get("request_id"),
+        "request_id_present": bool(env.get("request_id")),
         "router": env.get("router"),
         "data_type": type(data).__name__,
         "first_list_count": len(items) if items is not None else None,
