@@ -157,7 +157,7 @@ def test_windmill_metadata_keeps_paid_flow_manual_and_serial() -> None:
     assert "\nschedule:" not in flow.lower()
     assert not flow.lower().startswith("schedule:")
     assert "default: false" in flow
-    assert "concurrent_limit: 1" in flow
+    assert "value:\n  concurrent_limit: 1" in flow
     assert "concurrent_limit: 1" in script_metadata
     assert "maximum: 2" in flow
     assert "$var:" not in flow
