@@ -147,6 +147,24 @@ def test_execution_returns_only_redacted_aggregates() -> None:
     assert "secret-value" not in repr(result)
 
 
+
+def test_upstream_exception_text_is_redacted_before_provider_logging() -> None:
+    class LeakyTransport:
+        def call(self, _spec, _kwargs):
+            raise module.ProviderRateLimitError(
+                "balance=private-total request_id=private-id",
+                retry_after=7,
+            )
+
+    guarded = module._RedactingTransport(LeakyTransport())
+    with pytest.raises(module.ProviderRateLimitError) as caught:
+        guarded.call(None, {})
+
+    assert str(caught.value) == "TikHub request was rate limited"
+    assert caught.value.retry_after == 7
+    assert "balance" not in str(caught.value)
+    assert "request_id" not in str(caught.value)
+
 def test_windmill_metadata_keeps_paid_flow_manual_and_serial() -> None:
     flow = (
         Path(__file__).parents[1]
