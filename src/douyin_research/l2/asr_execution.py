@@ -125,11 +125,11 @@ class ASRExecutionCoordinator:
             job = self._reserve_and_create(request)
             external_calls = 0
             try:
-                state = provider.submit(_provider_request(request))
                 external_calls += 1
+                state = provider.submit(_provider_request(request))
                 job = self._apply_state(request, job["id"], state)
             except Exception:
-                self._mark_submit_failed(job["id"])
+                self._mark_submit_failed(request, job["id"])
                 failed = self._load_job(request.task_key)
                 assert failed is not None
                 return self._redacted(
@@ -167,8 +167,10 @@ class ASRExecutionCoordinator:
         for _ in range(request.max_polls):
             self._reserve_poll(request, UUID(str(job["id"])))
             try:
-                state = provider.poll(provider_task_ref)
                 external_calls += 1
+                state = provider.poll(provider_task_ref)
+                if state.provider_task_ref != provider_task_ref:
+                    raise ValueError("ASR provider task reference changed during polling")
                 job = self._apply_state(request, UUID(str(job["id"])), state)
             except Exception:
                 self._record_poll_error(UUID(str(job["id"])))
@@ -296,6 +298,8 @@ class ASRExecutionCoordinator:
         state: ASRProviderState,
     ) -> dict[str, object]:
         _validate_provider_state(state)
+        if state.cost is not None and state.cost.currency != request.cost_currency:
+            raise ValueError("ASR provider cost currency does not match request")
         if state.status == "completed":
             assert state.evidence is not None and state.cost is not None
             _assert_evidence_matches_request(request, state.evidence)
@@ -348,6 +352,8 @@ class ASRExecutionCoordinator:
             basis="unknown",
         )
         api_cost, asr_cost, llm_cost = _validated_cost(cost)
+        if cost.currency != request.cost_currency:
+            raise ValueError("failed ASR cost currency does not match request")
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -494,15 +500,33 @@ class ASRExecutionCoordinator:
             "llm_calls": 0,
         }
 
-    def _mark_submit_failed(self, job_id: UUID) -> None:
+    def _mark_submit_failed(
+        self,
+        request: ASRExecutionRequest,
+        job_id: UUID,
+    ) -> None:
+        failed = ASRProviderState(
+            status="failed",
+            provider_task_ref="unavailable",
+            cost=TaskCost(
+                api_cost=None,
+                asr_cost=None,
+                llm_cost=Decimal("0"),
+                currency=request.cost_currency,
+                basis="unknown",
+            ),
+            error_code="submit_failed",
+        )
+        task_cost_id = self._record_failed_cost(request, failed)
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
                 update asr_execution_job
-                set status='failed', error_code='submit_failed', updated_at=now()
+                set status='failed', error_code='submit_failed',
+                    task_cost_id=%s, updated_at=now()
                 where id=%s
                 """,
-                (job_id,),
+                (task_cost_id, job_id),
             )
             conn.commit()
 
@@ -617,6 +641,8 @@ def _validated_cost(
         raise ValueError("ASR execution requires explicit llm_cost=0")
     if not cost.currency.strip():
         raise ValueError("cost currency is required")
+    if cost.basis not in {"actual", "estimated", "mixed", "unknown"}:
+        raise ValueError("invalid cost basis")
     return values
 
 
