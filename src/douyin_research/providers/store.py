@@ -23,6 +23,7 @@ class CachedPayload:
     expires_at: datetime | None
     provider_request_id: str | None = None
     response_code: str | None = None
+    raw_ref: str | None = None
 
 
 class ProviderStore(Protocol):
@@ -80,12 +81,14 @@ class MemoryProviderStore:
         response_code: str | None,
         provider_request_id: str | None,
     ) -> str:
+        raw_ref = f"memory:{len(self.responses) + 1}"
         cached = CachedPayload(
             payload=payload,
             requested_at=requested_at,
             expires_at=expires_at,
             provider_request_id=provider_request_id,
             response_code=response_code,
+            raw_ref=raw_ref,
         )
         self.cache[(provider, platform, endpoint_key, fingerprint)] = cached
         self.responses.append(
@@ -99,7 +102,7 @@ class MemoryProviderStore:
                 "response_code": response_code,
             }
         )
-        return f"memory:{len(self.responses)}"
+        return raw_ref
 
     def record_call(self, call: ProviderCallMeta) -> None:
         self.calls.append(call)
@@ -113,7 +116,7 @@ class PostgresProviderStore:
         self, provider: str, platform: str, endpoint_key: str, fingerprint: str, now: datetime
     ) -> CachedPayload | None:
         sql = """
-            select response_body, requested_at, expires_at, provider_request_id, response_code
+            select id, response_body, requested_at, expires_at, provider_request_id, response_code
             from external_api_response
             where provider = %s
               and platform = %s
@@ -130,11 +133,12 @@ class PostgresProviderStore:
         if row is None:
             return None
         return CachedPayload(
-            payload=row[0],
-            requested_at=row[1],
-            expires_at=row[2],
-            provider_request_id=row[3],
-            response_code=row[4],
+            payload=row[1],
+            requested_at=row[2],
+            expires_at=row[3],
+            provider_request_id=row[4],
+            response_code=row[5],
+            raw_ref=f"external_api_response:{row[0]}",
         )
 
     def save_response(
