@@ -97,7 +97,7 @@ def test_l3_preview_never_loads_evidence_or_adapter() -> None:
 
 
 @pytest.mark.parametrize(
-    ("module", "request", "kwargs", "confirmation"),
+    ("module", "preview_request", "kwargs", "confirmation"),
     [
         (
             asr,
