@@ -13,6 +13,7 @@ from douyin_research.l2 import L3PromotionGate, TaskCost
 from douyin_research.l3 import (
     L3_BUDGET_KEY,
     L3_CONFIRMATION,
+    L3_EVIDENCE_VERSION,
     L3_SCHEMA_VERSION,
     L3EvidenceBundle,
     L3ExecutionCoordinator,
@@ -30,6 +31,24 @@ DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
 BUDGET_DATE = date(2026, 9, 19)
 PROVIDER = "synthetic-l3-provider"
+SYNTHETIC_MODALITIES = ("metadata", "comments", "transcript", "comparison")
+
+
+def _evidence_payload(payload=None, *, modalities=SYNTHETIC_MODALITIES):
+    return {
+        "evidence_version": L3_EVIDENCE_VERSION,
+        "modalities": list(modalities),
+        "privacy_review": {"reviewed": True, "version": "privacy-v1"},
+        "synthetic_payload": (
+            {"metadata": "synthetic"} if payload is None else payload
+        ),
+    }
+
+
+SYNTHETIC_INPUT_FINGERPRINT = L3EvidenceBundle.issue(
+    video_id=UUID(int=0),
+    evidence_bundle=_evidence_payload(),
+).input_fingerprint
 
 
 def _clear() -> None:
@@ -67,6 +86,17 @@ def _video(*, selected: bool, key: str = "main") -> UUID:
             (f"synthetic-l3-execution-{key}",),
         )
         video_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into human_annotation(
+              video_id, actor, annotation_type, value
+            ) values (
+              %s, 'synthetic-reviewer', 'l3_privacy_review',
+              '{"reviewed":true,"version":"privacy-v1"}'::jsonb
+            )
+            """,
+            (video_id,),
+        )
         cur.execute(
             """
             insert into pipeline_run_item(
@@ -125,7 +155,7 @@ def _request(video_id: UUID, **overrides) -> L3ExecutionRequest:
         "model_revision": "revision-1",
         "prompt_version": "l3-prompt-v1",
         "schema_version": L3_SCHEMA_VERSION,
-        "input_fingerprint": "synthetic-input-fingerprint",
+        "input_fingerprint": SYNTHETIC_INPUT_FINGERPRINT,
         "estimated_llm_cost": Decimal("0.3"),
         "cost_currency": "CNY",
         "execute": False,
@@ -142,13 +172,8 @@ def _result(**overrides) -> L3ResearchResult:
         "model_revision": "revision-1",
         "prompt_version": "l3-prompt-v1",
         "schema_version": L3_SCHEMA_VERSION,
-        "input_fingerprint": "synthetic-input-fingerprint",
-        "evidence_modalities": (
-            "metadata",
-            "comments",
-            "transcript",
-            "comparison",
-        ),
+        "input_fingerprint": SYNTHETIC_INPUT_FINGERPRINT,
+        "evidence_modalities": SYNTHETIC_MODALITIES,
         "narrative_structure": ("Synthetic narrative structure.",),
         "hook_functions": ("Synthetic information gap.",),
         "comment_semantics": ("Synthetic sampled discussion pattern.",),
@@ -187,6 +212,7 @@ def _provider_contract() -> VerifiedExecutionContract:
 
 class FakeProvider:
     provider_name = PROVIDER
+    pricing_version = "synthetic-pricing-v1"
     max_retries = 0
 
     def __init__(self, response):
@@ -201,10 +227,11 @@ class FakeProvider:
         return self.response
 
 
-def _response(**result_overrides) -> L3ProviderResponse:
+def _response(*, cost: TaskCost | None = None, **result_overrides) -> L3ProviderResponse:
     return L3ProviderResponse(
         result=_result(**result_overrides),
-        cost=TaskCost(
+        cost=cost
+        or TaskCost(
             api_cost=Decimal("0"),
             asr_cost=Decimal("0"),
             llm_cost=Decimal("0.21"),
@@ -214,13 +241,25 @@ def _response(**result_overrides) -> L3ProviderResponse:
     )
 
 
-def _evidence(video_id: UUID, payload=None, *, fingerprint=None) -> L3EvidenceBundle:
-    return L3EvidenceBundle(
+def _evidence(
+    video_id: UUID,
+    payload=None,
+    *,
+    fingerprint=None,
+    modalities=SYNTHETIC_MODALITIES,
+) -> L3EvidenceBundle:
+    issued = L3EvidenceBundle.issue(
         video_id=video_id,
-        evidence_version="synthetic-evidence-v1",
-        input_fingerprint=fingerprint or "synthetic-input-fingerprint",
-        evidence_modalities=("metadata",),
-        evidence_bundle=payload or {"metadata": "synthetic"},
+        evidence_bundle=_evidence_payload(payload, modalities=modalities),
+    )
+    if fingerprint is None:
+        return issued
+    return L3EvidenceBundle(
+        video_id=issued.video_id,
+        evidence_version=issued.evidence_version,
+        input_fingerprint=fingerprint,
+        evidence_modalities=issued.evidence_modalities,
+        evidence_bundle=issued.evidence_bundle,
     )
 
 
@@ -300,12 +339,19 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
     _clear()
     video_id = _video(selected=True)
     _budget()
-    provider = FakeProvider(_response())
+    assembled = _evidence(
+        video_id,
+        {"transcript": "private synthetic evidence"},
+    )
+    provider = FakeProvider(
+        _response(input_fingerprint=assembled.input_fingerprint)
+    )
     evidence_calls = []
     request = _request(
         video_id,
         execute=True,
         confirmation=L3_CONFIRMATION,
+        input_fingerprint=assembled.input_fingerprint,
     )
     coordinator = L3ExecutionCoordinator(DSN)
 
@@ -313,10 +359,7 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
         request,
         evidence_factory=lambda: (
             evidence_calls.append("evidence")
-            or _evidence(
-                video_id,
-                {"transcript": "private synthetic evidence"},
-            )
+            or assembled
         ),
         provider_factory=lambda: provider,
     )
@@ -339,7 +382,7 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
     assert evidence_calls == ["evidence"]
     assert len(provider.calls) == 1
     assert "private synthetic evidence" not in repr(provider.calls[0])
-    assert "synthetic-input-fingerprint" not in repr(result)
+    assert assembled.input_fingerprint not in repr(result)
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute(
@@ -354,13 +397,26 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
         cur.execute(
             """
             select status, attempt_count, task_cost_id is not null,
-                   metadata->>'evidence_bundle_stored'
+                   metadata->>'evidence_bundle_stored',
+                   metadata->>'evidence_version',
+                   metadata->>'privacy_review_version',
+                   metadata->>'pricing_version',
+                   metadata->'evidence_modalities'
             from l3_execution_job
             where task_key=%s
             """,
             (request.task_key,),
         )
-        assert cur.fetchone() == ("completed", 1, True, "false")
+        assert cur.fetchone() == (
+            "completed",
+            1,
+            True,
+            "false",
+            L3_EVIDENCE_VERSION,
+            "privacy-v1",
+            "synthetic-pricing-v1",
+            list(SYNTHETIC_MODALITIES),
+        )
         cur.execute(
             """
             select api_cost, asr_cost, llm_cost, total_cost, status
@@ -407,10 +463,30 @@ def test_execution_requires_evidence_object_bound_to_video_and_fingerprint() -> 
             ),
             provider_factory=lambda: provider_calls.append("provider"),
         )
+    tampered = _evidence(video_id)
+    tampered.evidence_bundle["synthetic_payload"] = {"metadata": "tampered"}
+    with pytest.raises(ValueError, match="fingerprint does not match payload"):
+        coordinator.run(
+            request,
+            evidence_factory=lambda: tampered,
+            provider_factory=lambda: provider_calls.append("provider"),
+        )
     with pytest.raises(ValueError, match="video does not match"):
         coordinator.run(
             request,
             evidence_factory=lambda: _evidence(UUID(int=0)),
+            provider_factory=lambda: provider_calls.append("provider"),
+        )
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "delete from human_annotation where video_id=%s",
+            (video_id,),
+        )
+        conn.commit()
+    with pytest.raises(ValueError, match="persisted L3 privacy review"):
+        coordinator.run(
+            request,
+            evidence_factory=lambda: _evidence(video_id),
             provider_factory=lambda: provider_calls.append("provider"),
         )
 
@@ -482,6 +558,93 @@ def test_generation_failure_is_not_retried_and_unknown_cost_stays_null() -> None
         )
 
 
+def test_provider_modalities_cannot_claim_unsupplied_evidence() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(selected=True, key="modality-mismatch")
+    _budget()
+    provider = FakeProvider(
+        _response(evidence_modalities=("metadata",))
+    )
+    result = L3ExecutionCoordinator(DSN).run(
+        _request(
+            video_id,
+            execute=True,
+            confirmation=L3_CONFIRMATION,
+            task_key="synthetic-l3-modality-mismatch",
+        ),
+        evidence_factory=lambda: _evidence(video_id),
+        provider_factory=lambda: provider,
+    )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "invalid_provider_result"
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select count(*) from analysis_run")
+        assert cur.fetchone()[0] == 0
+
+
+def test_actual_cost_over_reservation_is_recorded_and_fails_closed() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(selected=True, key="cost-overrun")
+    _budget(max_cost=Decimal("0.4"))
+    provider = FakeProvider(
+        _response(
+            cost=TaskCost(
+                api_cost=0,
+                asr_cost=0,
+                llm_cost=Decimal("0.45"),
+                currency="CNY",
+                basis="actual",
+            )
+        )
+    )
+    result = L3ExecutionCoordinator(DSN).run(
+        _request(
+            video_id,
+            execute=True,
+            confirmation=L3_CONFIRMATION,
+            task_key="synthetic-l3-cost-overrun",
+        ),
+        evidence_factory=lambda: _evidence(video_id),
+        provider_factory=lambda: provider,
+    )
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "provider_cost_exceeded_reservation"
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, spent_cost
+            from daily_budget
+            where budget_date=%s and provider=%s and budget_key=%s
+            """,
+            (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (1, Decimal("0.45"))
+        cur.execute(
+            """
+            select status, api_cost, asr_cost, llm_cost, total_cost,
+                   metadata->>'reserved_llm_cost',
+                   metadata->>'actual_llm_cost'
+            from research_task_cost
+            where task_key='synthetic-l3-cost-overrun'
+            """
+        )
+        assert cur.fetchone() == (
+            "failed",
+            Decimal("0"),
+            Decimal("0"),
+            Decimal("0.45"),
+            Decimal("0.45"),
+            "0.3",
+            "0.45",
+        )
+        cur.execute("select count(*) from analysis_run")
+        assert cur.fetchone()[0] == 0
+
+
 def test_running_job_requires_reconciliation_without_second_call() -> None:
     assert DSN
     _clear()
@@ -545,6 +708,16 @@ def test_retrying_provider_and_invalid_result_are_rejected_safely() -> None:
         confirmation=L3_CONFIRMATION,
         task_key="synthetic-l3-provider-guard",
     )
+    unpriced = FakeProvider(_response())
+    unpriced.pricing_version = ""
+    with pytest.raises(ValueError, match="pricing version is required"):
+        L3ExecutionCoordinator(DSN).run(
+            request,
+            evidence_factory=lambda: _evidence(video_id),
+            provider_factory=lambda: unpriced,
+        )
+    assert unpriced.calls == []
+
     retrying = FakeProvider(_response())
     retrying.max_retries = 1
 

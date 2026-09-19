@@ -20,8 +20,13 @@ from douyin_research.providers.execution_contracts import (
     validate_execution_contract,
 )
 
-from .evidence import L3EvidenceBundle
+from .evidence import (
+    L3EvidenceBundle,
+    assert_persisted_l3_privacy_review,
+    verify_l3_evidence_bundle,
+)
 from .results import (
+    COST_BASES,
     L3_ANALYSIS_TYPE,
     L3_SCHEMA_VERSION,
     L3ResearchResult,
@@ -31,6 +36,12 @@ from .results import (
 L3_CONFIRMATION = "RUN_L3_MODEL_PAID"
 L3_BUDGET_KEY = "windmill_manual_l3"
 L3_LOCK_NAME = "douyin_research:manual_l3_execution"
+
+
+class _ProviderCostExceedsReservation(Exception):
+    def __init__(self, actual_cost: Decimal, cost_basis: str) -> None:
+        self.actual_cost = actual_cost
+        self.cost_basis = cost_basis
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +80,7 @@ class L3ProviderResponse:
 
 class L3Provider(Protocol):
     provider_name: str
+    pricing_version: str
     max_retries: int
     contract: VerifiedExecutionContract
 
@@ -121,25 +133,38 @@ class L3ExecutionCoordinator:
                 assembled = evidence_factory()
             except Exception:
                 raise RuntimeError("L3 evidence assembly failed") from None
-            if not isinstance(assembled, L3EvidenceBundle):
-                raise TypeError("L3 evidence factory must return L3EvidenceBundle")
+            evidence = verify_l3_evidence_bundle(assembled)
             if assembled.video_id != UUID(str(request.video_id)):
                 raise ValueError("L3 evidence video does not match execution request")
             if assembled.input_fingerprint != request.input_fingerprint:
                 raise ValueError(
                     "L3 evidence fingerprint does not match execution request"
                 )
-            evidence = assembled.evidence_bundle
-            if not isinstance(evidence, Mapping) or not evidence:
-                raise ValueError("L3 evidence bundle must be a non-empty mapping")
-
+            review = evidence["privacy_review"]
+            assert isinstance(review, Mapping)
+            with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+                cur.execute("set transaction read only")
+                assert_persisted_l3_privacy_review(
+                    cur,
+                    assembled.video_id,
+                    str(review["version"]),
+                )
             try:
                 provider = provider_factory()
             except Exception:
                 raise RuntimeError("L3 provider could not be initialized") from None
-            contract_fingerprint = self._assert_provider(provider, request)
+            contract_fingerprint, pricing_version = self._assert_provider(
+                provider,
+                request,
+            )
 
-            job = self._reserve_and_create(request, contract_fingerprint)
+            job = self._reserve_and_create(
+                request,
+                contract_fingerprint,
+                pricing_version,
+                assembled,
+                evidence,
+            )
             external_calls = 0
             try:
                 external_calls += 1
@@ -155,7 +180,11 @@ class L3ExecutionCoordinator:
                 )
 
             try:
-                self._validate_response(request, response)
+                self._validate_response(
+                    request,
+                    response,
+                    expected_modalities=assembled.evidence_modalities,
+                )
                 record = L3ResearchStore(self.dsn).ingest(
                     request.video_id,
                     task_key=request.task_key,
@@ -165,6 +194,20 @@ class L3ExecutionCoordinator:
                 self._mark_completed(
                     UUID(str(job["id"])),
                     record.task_cost_id,
+                )
+            except _ProviderCostExceedsReservation as exc:
+                self._mark_cost_overrun(
+                    request,
+                    UUID(str(job["id"])),
+                    actual_cost=exc.actual_cost,
+                    cost_basis=exc.cost_basis,
+                )
+                failed = self._load_job(request.task_key)
+                assert failed is not None
+                return self._redacted(
+                    failed,
+                    external_calls=external_calls,
+                    created=True,
                 )
             except Exception:
                 if not self._task_cost_exists(request.task_key):
@@ -261,10 +304,16 @@ class L3ExecutionCoordinator:
         self,
         request: L3ExecutionRequest,
         contract_fingerprint: str,
+        pricing_version: str,
+        assembled: L3EvidenceBundle,
+        evidence: Mapping[str, object],
     ) -> dict[str, object]:
         budget_date = request.budget_date or date.today()
         estimated_llm = _decimal(request.estimated_llm_cost)
         assert estimated_llm is not None
+        review = evidence["privacy_review"]
+        assert isinstance(review, Mapping)
+        review_version = review["version"]
         job_id = uuid4()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             _reserve_budget(
@@ -307,6 +356,12 @@ class L3ExecutionCoordinator:
                             "sdk_retries": 0,
                             "maximum_external_calls": 1,
                             "evidence_bundle_stored": False,
+                            "evidence_version": assembled.evidence_version,
+                            "evidence_modalities": list(
+                                assembled.evidence_modalities
+                            ),
+                            "privacy_review_version": review_version,
+                            "pricing_version": pricing_version,
                             "provider_contract_fingerprint": contract_fingerprint,
                         }
                     ),
@@ -382,6 +437,77 @@ class L3ExecutionCoordinator:
             conn.commit()
         assert row is not None
         return row[0]
+
+    def _mark_cost_overrun(
+        self,
+        request: L3ExecutionRequest,
+        job_id: UUID,
+        *,
+        actual_cost: Decimal,
+        cost_basis: str,
+    ) -> None:
+        estimated = _decimal(request.estimated_llm_cost)
+        assert estimated is not None and actual_cost > estimated
+        budget_date = request.budget_date or date.today()
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into research_task_cost(
+                  task_key, task_type, task_version, video_id, status,
+                  input_fingerprint, output_fingerprint,
+                  api_cost, asr_cost, llm_cost,
+                  cost_currency, cost_basis, metadata
+                ) values (
+                  %s,%s,%s,%s,'failed',%s,null,
+                  0,0,%s,%s,%s,%s
+                )
+                returning id
+                """,
+                (
+                    request.task_key,
+                    L3_ANALYSIS_TYPE,
+                    request.schema_version,
+                    request.video_id,
+                    request.input_fingerprint,
+                    actual_cost,
+                    request.cost_currency,
+                    cost_basis,
+                    Jsonb(
+                        {
+                            "external_execution": True,
+                            "error_code": "provider_cost_exceeded_reservation",
+                            "reserved_llm_cost": str(estimated),
+                            "actual_llm_cost": str(actual_cost),
+                            "sdk_retries": 0,
+                        }
+                    ),
+                ),
+            )
+            task_cost_id = cur.fetchone()[0]
+            cur.execute(
+                """
+                update daily_budget
+                set spent_cost=spent_cost+%s, updated_at=now()
+                where budget_date=%s and provider=%s and budget_key=%s
+                """,
+                (
+                    actual_cost - estimated,
+                    budget_date,
+                    request.provider,
+                    L3_BUDGET_KEY,
+                ),
+            )
+            cur.execute(
+                """
+                update l3_execution_job
+                set status='failed', task_cost_id=%s,
+                    error_code='provider_cost_exceeded_reservation',
+                    updated_at=now()
+                where id=%s
+                """,
+                (task_cost_id, job_id),
+            )
+            conn.commit()
 
     def _mark_completed(self, job_id: UUID, task_cost_id: UUID) -> None:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
@@ -509,14 +635,17 @@ class L3ExecutionCoordinator:
     def _assert_provider(
         provider: L3Provider,
         request: L3ExecutionRequest,
-    ) -> str:
+    ) -> tuple[str, str]:
         if provider.provider_name != request.provider:
             raise ValueError("L3 provider does not match request")
+        pricing_version = getattr(provider, "pricing_version", None)
+        if not isinstance(pricing_version, str) or not pricing_version.strip():
+            raise ValueError("L3 provider pricing version is required")
         if provider.max_retries != 0:
             raise ValueError("L3 provider retries must be disabled")
         if provider.contract.max_retries != provider.max_retries:
             raise ValueError("L3 provider retry settings do not match contract")
-        return validate_execution_contract(
+        fingerprint = validate_execution_contract(
             provider.contract,
             expected_provider=request.provider,
             expected_capability=L3_SYNC_CAPABILITY,
@@ -524,11 +653,14 @@ class L3ExecutionCoordinator:
             expected_model_revision=request.model_revision,
             expected_currency=request.cost_currency,
         )
+        return fingerprint, pricing_version.strip()
 
     @staticmethod
     def _validate_response(
         request: L3ExecutionRequest,
         response: L3ProviderResponse,
+        *,
+        expected_modalities: tuple[str, ...],
     ) -> None:
         result = response.result
         actual = (
@@ -547,6 +679,8 @@ class L3ExecutionCoordinator:
         )
         if actual != expected:
             raise ValueError("L3 provider result does not match execution request")
+        if set(result.evidence_modalities) != set(expected_modalities):
+            raise ValueError("L3 provider evidence modalities do not match input")
 
         cost = response.cost
         if cost.currency != request.cost_currency:
@@ -559,6 +693,12 @@ class L3ExecutionCoordinator:
             raise ValueError("L3 provider costs cannot be negative")
         if values[0] != Decimal("0") or values[1] != Decimal("0"):
             raise ValueError("L3 model execution requires api_cost=0 and asr_cost=0")
+        if cost.basis not in COST_BASES:
+            raise ValueError("unsupported L3 provider cost basis")
+        estimated = _decimal(request.estimated_llm_cost)
+        assert estimated is not None
+        if values[2] is not None and values[2] > estimated:
+            raise _ProviderCostExceedsReservation(values[2], cost.basis)
 
     @contextmanager
     def _single_paid_job(self) -> Iterator[None]:

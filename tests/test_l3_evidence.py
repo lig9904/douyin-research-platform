@@ -57,6 +57,17 @@ def _video(*, level: int = 2, selected: bool = True, key: str = "main") -> UUID:
         video_id = cur.fetchone()[0]
         cur.execute(
             """
+            insert into human_annotation(
+              video_id, actor, annotation_type, value
+            ) values (
+              %s, 'synthetic-reviewer', 'l3_privacy_review',
+              '{"reviewed":true,"version":"privacy-v1"}'::jsonb
+            )
+            """,
+            (video_id,),
+        )
+        cur.execute(
+            """
             insert into pipeline_run_item(
               run_id, entity_type, entity_id, stage, outcome
             ) values (%s, 'video', %s, 'L2', 'scored')
@@ -322,6 +333,19 @@ def test_gate_level_and_required_evidence_fail_closed() -> None:
     with pytest.raises(ValueError, match="transcript evidence"):
         _assemble(missing_transcript)
 
+    _clear()
+    missing_review = _video(key="missing-review")
+    _feature(missing_review)
+    _transcript(missing_review)
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "delete from human_annotation where video_id=%s",
+            (missing_review,),
+        )
+        conn.commit()
+    with pytest.raises(ValueError, match="persisted L3 privacy review"):
+        _assemble(missing_review)
+
 
 def test_privacy_review_fails_before_database_access() -> None:
     assembler = L3EvidenceAssembler("postgresql://127.0.0.1:1/not-used")
@@ -348,6 +372,20 @@ def test_fingerprint_binds_review_and_content_and_limits_are_enforced() -> None:
     _transcript(video_id)
 
     first = _assemble(video_id, version="privacy-v1")
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into human_annotation(
+              video_id, actor, annotation_type, value, created_at
+            ) values (
+              %s, 'synthetic-reviewer-v2', 'l3_privacy_review',
+              '{"reviewed":true,"version":"privacy-v2"}'::jsonb,
+              '2026-09-20 00:00:00+00'
+            )
+            """,
+            (video_id,),
+        )
+        conn.commit()
     reviewed_again = _assemble(video_id, version="privacy-v2")
     assert reviewed_again.input_fingerprint != first.input_fingerprint
 
@@ -357,7 +395,7 @@ def test_fingerprint_binds_review_and_content_and_limits_are_enforced() -> None:
             (video_id,),
         )
         conn.commit()
-    changed = _assemble(video_id, version="privacy-v1")
+    changed = _assemble(video_id, version="privacy-v2")
     assert changed.input_fingerprint != first.input_fingerprint
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
@@ -367,4 +405,4 @@ def test_fingerprint_binds_review_and_content_and_limits_are_enforced() -> None:
         )
         conn.commit()
     with pytest.raises(ValueError, match="transcript text exceeds"):
-        _assemble(video_id)
+        _assemble(video_id, version="privacy-v2")

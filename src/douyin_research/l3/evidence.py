@@ -34,6 +34,25 @@ class L3EvidenceBundle:
     evidence_modalities: tuple[str, ...]
     evidence_bundle: Mapping[str, object] = field(repr=False)
 
+    @classmethod
+    def issue(
+        cls,
+        *,
+        video_id: UUID | str,
+        evidence_bundle: Mapping[str, object],
+    ) -> L3EvidenceBundle:
+        """Create a bundle whose fingerprint covers the exact JSON payload."""
+
+        snapshot = _canonical_copy(evidence_bundle)
+        version, modalities = _validate_bundle_payload(snapshot)
+        return cls(
+            video_id=UUID(str(video_id)),
+            evidence_version=version,
+            input_fingerprint=hashlib.sha256(_canonical_json(snapshot)).hexdigest(),
+            evidence_modalities=modalities,
+            evidence_bundle=snapshot,
+        )
+
 
 class L3EvidenceAssembler:
     """Build model input from persisted L2 evidence without external calls.
@@ -62,6 +81,11 @@ class L3EvidenceAssembler:
             cur.execute("set transaction read only")
             video = self._load_video(cur, video_id)
             self._assert_selected(cur, video["id"])
+            assert_persisted_l3_privacy_review(
+                cur,
+                video["id"],
+                review_version,
+            )
             comments = self._load_comment_features(cur, video["id"])
             transcript = self._load_transcript(cur, video["id"])
 
@@ -87,11 +111,8 @@ class L3EvidenceAssembler:
         if len(encoded) > MAX_EVIDENCE_BYTES:
             raise ValueError("L3 evidence bundle exceeds the byte limit")
 
-        return L3EvidenceBundle(
+        return L3EvidenceBundle.issue(
             video_id=video["id"],
-            evidence_version=L3_EVIDENCE_VERSION,
-            input_fingerprint=hashlib.sha256(encoded).hexdigest(),
-            evidence_modalities=("metadata", "comments", "transcript"),
             evidence_bundle=bundle,
         )
 
@@ -283,6 +304,38 @@ def _validate_privacy_review(*, reviewed: bool, version: str) -> str:
     return normalized
 
 
+def assert_persisted_l3_privacy_review(
+    cur,
+    video_id: UUID,
+    expected_version: str,
+) -> None:
+    """Require the latest persisted human review to match the model input."""
+
+    cur.execute(
+        """
+        select actor, value
+        from human_annotation
+        where video_id=%s
+          and annotation_type='l3_privacy_review'
+        order by created_at desc, id desc
+        limit 1
+        """,
+        (video_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError("persisted L3 privacy review is required")
+    actor, value = row
+    if not isinstance(actor, str) or not actor.strip():
+        raise ValueError("persisted L3 privacy review actor is required")
+    if (
+        not isinstance(value, Mapping)
+        or value.get("reviewed") is not True
+        or value.get("version") != expected_version
+    ):
+        raise ValueError("persisted L3 privacy review does not match request")
+
+
 def _validate_content_length(name: str, value: str | None, limit: int) -> None:
     if value is not None and len(value) > limit:
         raise ValueError(f"{name} exceeds the character limit")
@@ -310,3 +363,56 @@ def _canonical_json(value: object) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+
+
+def _canonical_copy(value: object) -> dict[str, object]:
+    try:
+        snapshot = json.loads(_canonical_json(value))
+    except (TypeError, ValueError):
+        raise ValueError("L3 evidence bundle must be canonical JSON") from None
+    if not isinstance(snapshot, dict):
+        raise ValueError("L3 evidence bundle must be an object")
+    return snapshot
+
+
+def _validate_bundle_payload(
+    payload: Mapping[str, object],
+) -> tuple[str, tuple[str, ...]]:
+    version = payload.get("evidence_version")
+    if version != L3_EVIDENCE_VERSION:
+        raise ValueError("L3 evidence version is unsupported")
+    raw_modalities = payload.get("modalities")
+    if (
+        not isinstance(raw_modalities, list)
+        or not raw_modalities
+        or not all(isinstance(item, str) and item for item in raw_modalities)
+        or len(raw_modalities) != len(set(raw_modalities))
+    ):
+        raise ValueError("L3 evidence modalities are invalid")
+    review = payload.get("privacy_review")
+    if not isinstance(review, Mapping) or review.get("reviewed") is not True:
+        raise ValueError("L3 evidence privacy review is not complete")
+    version_value = review.get("version")
+    if (
+        not isinstance(version_value, str)
+        or not _REVIEW_VERSION_RE.fullmatch(version_value)
+    ):
+        raise ValueError("L3 evidence privacy review version is invalid")
+    return version, tuple(raw_modalities)
+
+
+def verify_l3_evidence_bundle(bundle: L3EvidenceBundle) -> dict[str, object]:
+    """Validate fields and return an immutable-by-copy provider payload."""
+
+    if not isinstance(bundle, L3EvidenceBundle):
+        raise TypeError("L3 evidence factory must return L3EvidenceBundle")
+    snapshot = _canonical_copy(bundle.evidence_bundle)
+    version, modalities = _validate_bundle_payload(snapshot)
+    fingerprint = hashlib.sha256(_canonical_json(snapshot)).hexdigest()
+    if bundle.evidence_version != version:
+        raise ValueError("L3 evidence version does not match payload")
+    if bundle.evidence_modalities != modalities:
+        raise ValueError("L3 evidence modalities do not match payload")
+    if bundle.input_fingerprint != fingerprint:
+        raise ValueError("L3 evidence fingerprint does not match payload")
+    return snapshot
