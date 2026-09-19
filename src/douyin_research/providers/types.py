@@ -72,11 +72,13 @@ class CommentSample:
     video_platform_id: str
     platform_comment_id: str
     text: str
+    parent_platform_comment_id: str | None = None
     like_count: int | None = None
     published_at: datetime | None = None
     reply_count: int | None = None
     sample_reason: str = "top"
     observed_at: datetime | None = None
+    raw_ref: str | None = None
 
 
 @dataclass(slots=True)

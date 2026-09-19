@@ -217,17 +217,48 @@ create table if not exists video_comment (
   id uuid primary key default gen_random_uuid(),
   video_id uuid not null references source_video(id) on delete cascade,
   provider text not null,
+  source_endpoint text,
   platform_comment_id text,
+  parent_platform_comment_id text,
   text_content text,
   like_count bigint,
-  published_at timestamptz,
+  reply_count bigint,
+  sample_reason text not null default 'top',
+  raw_ref text,
   raw_payload jsonb,
-  captured_at timestamptz not null default now()
+  published_at timestamptz,
+  captured_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  observation_count bigint not null default 0
 );
 
-create unique index if not exists uq_video_comment_provider_id
-  on video_comment(provider, platform_comment_id)
+create unique index if not exists uq_video_comment_provider_video_id
+  on video_comment(provider, video_id, platform_comment_id)
   where platform_comment_id is not null;
+
+create index if not exists idx_comment_video_seen
+  on video_comment(video_id, last_seen_at desc);
+
+create index if not exists idx_comment_parent
+  on video_comment(provider, video_id, parent_platform_comment_id)
+  where parent_platform_comment_id is not null;
+
+create table if not exists video_comment_observation (
+  id bigserial primary key,
+  comment_id uuid not null references video_comment(id) on delete cascade,
+  observation_key text not null unique,
+  provider text not null,
+  source_endpoint text not null,
+  request_fingerprint text not null,
+  observed_at timestamptz not null,
+  like_count bigint,
+  reply_count bigint,
+  raw_ref text,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create index if not exists idx_comment_observation_time
+  on video_comment_observation(comment_id, observed_at desc);
 
 -- Low-cost visual preprocessing. Images themselves are temporary in V1;
 -- only deterministic metadata, timestamps and OCR output are persisted.

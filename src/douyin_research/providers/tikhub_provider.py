@@ -249,6 +249,8 @@ class TikHubDouyinProvider:
             pagination={
                 **last.pagination,
                 "pages_fetched": len(pages),
+                "cached_pages": sum(1 for page in pages if page.cached),
+                "external_pages": sum(1 for page in pages if not page.cached),
                 "unique_items": len(items),
                 "duplicates_removed": duplicates_removed,
             },
@@ -279,6 +281,7 @@ class TikHubDouyinProvider:
             },
             video_id=video_id,
             sample_reason="thread_root",
+            parent_comment_id=comment_id,
             force_refresh=force_refresh,
         )
 
@@ -290,6 +293,7 @@ class TikHubDouyinProvider:
         video_id: str,
         sample_reason: str,
         force_refresh: bool,
+        parent_comment_id: str | None = None,
     ) -> ProviderPage[CommentSample]:
         payload, fp, cached, raw_ref = self._call(
             spec,
@@ -302,6 +306,8 @@ class TikHubDouyinProvider:
             endpoint_key=spec.key,
             observed_at=utcnow(),
             sample_reason=sample_reason,
+            parent_platform_comment_id=parent_comment_id,
+            raw_ref=raw_ref,
         )
         return ProviderPage(
             items=items,
@@ -383,7 +389,7 @@ class TikHubDouyinProvider:
                     )
                 )
                 validate_tikhub_envelope(cached.payload)
-                return cached.payload, fp, True, f"cache:{fp}"
+                return cached.payload, fp, True, cached.raw_ref or f"cache:{fp}"
 
         if self.before_external_call is not None:
             self.before_external_call(spec)

@@ -134,6 +134,7 @@ signal_type 例如：
 ```text
 platform_comment_id
 video_platform_id
+parent_platform_comment_id?
 text
 like_count?
 published_at?
@@ -142,6 +143,7 @@ sample_reason
 observed_at
 provider
 source_endpoint
+raw_ref?
 ```
 
 sample_reason:
@@ -341,6 +343,8 @@ CI 检查 provider 代码中是否引用已知写接口名。
 - `max_pages` 与 `max_items` 必须同时限制；cursor 缺失、不变或 `has_more=0` 时立即停止
 - 每次缓存未命中、准备发起外部请求前重新执行调用/预算闸门
 - 回复默认单页读取，只有显式上层预算与页数限制后才允许继续翻页
+- canonical comment 与 observation 分表：同一 raw response 重放不得新增 observation，新 raw response 才形成新观察
+- 缓存命中必须沿用原始 raw_ref，不能伪造为一次新观察
 
 ### Index
 filter/category等枚举动态拉取并缓存，不硬编码长期枚举。
