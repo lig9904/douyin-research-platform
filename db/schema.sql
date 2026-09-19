@@ -35,6 +35,44 @@ create table if not exists source_video (
   unique (provider, platform, platform_video_id)
 );
 
+-- Non-video signals: rising hot topics, search terms, topic lists, city hot topics,
+-- creative topics/keywords, etc. These must be preserved independently from videos.
+create table if not exists external_signal (
+  id uuid primary key default gen_random_uuid(),
+  provider text not null,
+  platform text not null default 'douyin',
+  signal_type text not null,
+  provider_signal_id text,
+  signal_key text not null,
+  title text,
+  category_key text,
+  city_code text,
+  raw_payload jsonb,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  unique (provider, platform, signal_type, signal_key)
+);
+
+create table if not exists signal_snapshot (
+  id bigserial primary key,
+  signal_id uuid not null references external_signal(id) on delete cascade,
+  captured_at timestamptz not null default now(),
+  rank_value numeric,
+  rank_change numeric,
+  heat_value numeric,
+  value_json jsonb,
+  raw_payload jsonb
+);
+
+create table if not exists signal_video_link (
+  signal_id uuid not null references external_signal(id) on delete cascade,
+  video_id uuid not null references source_video(id) on delete cascade,
+  relation_type text not null default 'related',
+  observed_at timestamptz not null default now(),
+  metadata jsonb,
+  primary key (signal_id, video_id, relation_type)
+);
+
 create table if not exists discovery_event (
   id bigserial primary key,
   video_id uuid not null references source_video(id) on delete cascade,
@@ -95,6 +133,7 @@ create table if not exists transcript (
 create table if not exists analysis_run (
   id uuid primary key default gen_random_uuid(),
   video_id uuid references source_video(id) on delete cascade,
+  signal_id uuid references external_signal(id) on delete cascade,
   analysis_type text not null,
   analysis_level text not null,
   status text not null default 'completed',
@@ -105,16 +144,19 @@ create table if not exists analysis_run (
   output jsonb,
   cost_amount numeric(14,6),
   cost_currency text default 'CNY',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  check ((video_id is not null)::int + (signal_id is not null)::int <= 1)
 );
 
 create table if not exists human_annotation (
   id uuid primary key default gen_random_uuid(),
   video_id uuid references source_video(id) on delete cascade,
+  signal_id uuid references external_signal(id) on delete cascade,
   actor text,
   annotation_type text not null,
   value jsonb not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  check ((video_id is not null)::int + (signal_id is not null)::int <= 1)
 );
 
 create table if not exists collection (
@@ -127,10 +169,31 @@ create table if not exists collection (
 
 create table if not exists collection_item (
   collection_id uuid not null references collection(id) on delete cascade,
-  video_id uuid not null references source_video(id) on delete cascade,
+  video_id uuid references source_video(id) on delete cascade,
+  signal_id uuid references external_signal(id) on delete cascade,
   note text,
   added_at timestamptz not null default now(),
-  primary key (collection_id, video_id)
+  check ((video_id is not null)::int + (signal_id is not null)::int = 1)
+);
+
+create unique index if not exists uq_collection_video
+  on collection_item(collection_id, video_id) where video_id is not null;
+create unique index if not exists uq_collection_signal
+  on collection_item(collection_id, signal_id) where signal_id is not null;
+
+-- Raw API responses are stored separately so historical data can be re-normalized
+-- without repurchasing the same source data.
+create table if not exists external_api_response (
+  id bigserial primary key,
+  provider text not null,
+  endpoint_key text not null,
+  request_fingerprint text,
+  requested_at timestamptz not null default now(),
+  http_status integer,
+  response_code text,
+  response_body jsonb,
+  provider_request_id text,
+  expires_at timestamptz
 );
 
 create table if not exists external_api_call (
@@ -142,16 +205,46 @@ create table if not exists external_api_call (
   http_status integer,
   cached boolean not null default false,
   estimated_cost numeric(14,6),
-  cost_currency text default 'CNY',
+  actual_cost numeric(14,6),
+  cost_currency text default 'USD',
   started_at timestamptz not null default now(),
   finished_at timestamptz,
   metadata jsonb
 );
 
+-- Community Edition does not provide global concurrency/rate limits.
+-- These tables support a DB-coordinated token bucket / daily budget gate.
+create table if not exists api_rate_bucket (
+  provider text not null,
+  bucket_key text not null,
+  window_started_at timestamptz not null,
+  window_seconds integer not null,
+  used_count integer not null default 0,
+  max_count integer not null,
+  updated_at timestamptz not null default now(),
+  primary key (provider, bucket_key, window_started_at)
+);
+
+create table if not exists daily_budget (
+  budget_date date not null,
+  provider text not null,
+  budget_key text not null default 'default',
+  max_cost numeric(14,6),
+  max_requests integer,
+  spent_cost numeric(14,6) not null default 0,
+  used_requests integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (budget_date, provider, budget_key)
+);
+
 create index if not exists idx_video_published_at on source_video(published_at desc);
 create index if not exists idx_video_account on source_video(account_id);
+create index if not exists idx_signal_type_seen on external_signal(signal_type, last_seen_at desc);
+create index if not exists idx_signal_snapshot_time on signal_snapshot(signal_id, captured_at desc);
 create index if not exists idx_discovery_video_time on discovery_event(video_id, discovered_at desc);
 create index if not exists idx_metric_video_time on metric_snapshot(video_id, captured_at desc);
 create index if not exists idx_comment_video on video_comment(video_id);
 create index if not exists idx_analysis_video_time on analysis_run(video_id, created_at desc);
+create index if not exists idx_analysis_signal_time on analysis_run(signal_id, created_at desc);
 create index if not exists idx_video_title_lower on source_video(lower(title));
+create index if not exists idx_api_response_fingerprint on external_api_response(provider, endpoint_key, request_fingerprint, requested_at desc);
