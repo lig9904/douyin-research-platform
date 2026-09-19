@@ -57,3 +57,27 @@ V1 使用结构化索引 + ILIKE/substring 满足早期搜索。
 App 后端默认以 publisher 权限执行。
 
 所有人工标注、收藏、人工判定必须使用 WM_END_USER_EMAIL 获取实际 viewer，避免把操作统一记到 publisher。
+
+## ADR-012：V1 普通成员使用 Windmill Operator 账号
+
+Guest App 需要 OAuth/SSO 或自建 JWT issuer，会增加不必要的身份系统工作量。
+
+V1 在团队规模适合 Community Edition 的前提下，直接手工创建普通 Windmill 用户并赋予 Operator 角色。开发人员使用 Developer 角色。
+
+## ADR-013：TikHub 主域名使用 api.tikhub.io
+
+TikHub 最新官方 API 文档明确要求优先使用 https://api.tikhub.io，并提示避免优先使用 api.tikhub.dev，因为可能出现更慢响应和性能下降。
+
+若部署环境网络质量不佳，单独通过网络/proxy解决，不默认切换到 dev 域名。
+
+## ADR-014：研究 App 使用权限受限的 publisher
+
+App runnable 默认以 publisher 权限执行。
+
+研究台不得由 superadmin 身份作为长期 publisher。应使用权限受限的普通用户，仅授权 douyin_research 数据库资源、本项目文件夹及必要 secrets。
+
+## ADR-015：数据库查询优先使用 Windmill 原生 PostgreSQL runnable
+
+列表、详情、搜索、统计等确定性数据库访问优先使用 .pg.sql 参数化查询。
+
+只有需要复杂业务逻辑时才使用 Python/TypeScript，避免增加 ORM、独立 API 层和 SQL 注入风险。
