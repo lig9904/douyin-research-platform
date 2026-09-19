@@ -7,6 +7,8 @@ import pytest
 from douyin_research.providers.endpoints import EndpointSpec, get_endpoint
 from douyin_research.providers.fingerprint import request_fingerprint
 from douyin_research.providers.normalizer import (
+    extract_pagination,
+    normalize_comment_samples,
     normalize_video_observations,
     validate_tikhub_envelope,
 )
@@ -67,3 +69,52 @@ def test_missing_metrics_remain_none_not_zero() -> None:
     assert metrics.play_count is None
     assert metrics.comment_count is None
     assert metrics.metric_status["play_count"] == "unavailable"
+
+
+def test_comment_normalizer_preserves_zero_and_deduplicates_ids() -> None:
+    observed_at = datetime.now(timezone.utc)
+    payload = {
+        "code": 200,
+        "data": {
+            "comments": [
+                {
+                    "cid": "comment-private-1",
+                    "text": "first",
+                    "digg_count": 0,
+                    "reply_comment_total": 2,
+                },
+                {
+                    "cid": "comment-private-1",
+                    "text": "duplicate",
+                    "digg_count": 8,
+                },
+                {
+                    "cid": "comment-private-2",
+                    "text": "second",
+                },
+            ]
+        },
+    }
+
+    comments = normalize_comment_samples(
+        payload,
+        video_platform_id="video-private",
+        endpoint_key="douyin.app.comments",
+        observed_at=observed_at,
+    )
+
+    assert len(comments) == 2
+    assert comments[0].like_count == 0
+    assert comments[0].reply_count == 2
+    assert comments[1].like_count is None
+
+
+def test_pagination_can_read_stringified_nested_payload() -> None:
+    payload = {
+        "code": 200,
+        "data": {
+            "payload": '{"comments": [], "cursor": 20, "has_more": 1}'
+        },
+    }
+
+    assert extract_pagination(payload) == {"cursor": 20, "has_more": 1}
