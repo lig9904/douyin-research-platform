@@ -64,6 +64,8 @@ _L3_OUTPUT_BOOL_FIELDS = (
     "mechanism_hypotheses_are_inferences",
     "privacy_reviewed",
 )
+_L3_ANALYSIS_TYPE = "l3_structured_research"
+_L3_SCHEMA_VERSION = "l3-research-v1.0.0"
 
 
 def _public_l3_output(output: Any) -> dict[str, Any]:
@@ -340,7 +342,7 @@ def main(
                 conn,
                 """
                 select
-                  source_type, source_key, discovered_at, rank_value, metadata
+                  source_type, source_key, discovered_at, rank_value
                 from discovery_event
                 where video_id=%s::uuid
                 order by discovered_at desc
@@ -379,16 +381,28 @@ def main(
                   coalesce(c.cost_currency, a.cost_currency) as cost_currency,
                   c.cost_basis
                 from analysis_run a
-                left join research_task_cost c on c.id=a.task_cost_id
+                join research_task_cost c on c.id=a.task_cost_id
                 where a.video_id=%s::uuid
                   and a.analysis_level='L3'
-                  and a.analysis_type='l3_structured_research'
+                  and a.analysis_type=%s
                   and a.status='completed'
-                  and (a.task_cost_id is null or c.status='completed')
+                  and a.schema_version=%s
+                  and a.output->>'privacy_reviewed'='true'
+                  and c.status='completed'
+                  and c.task_type=%s
+                  and c.task_version=%s
+                  and c.input_fingerprint=a.input_fingerprint
+                  and c.output_fingerprint=a.output_fingerprint
                 order by a.created_at desc, a.id desc
                 limit 1
                 """,
-                (selected_id,),
+                (
+                    selected_id,
+                    _L3_ANALYSIS_TYPE,
+                    _L3_SCHEMA_VERSION,
+                    _L3_ANALYSIS_TYPE,
+                    _L3_SCHEMA_VERSION,
+                ),
             )
             detail["evidence"] = evidence
             detail["comments"] = comments

@@ -133,7 +133,8 @@ def clear_and_seed() -> str:
             )
             values
               (%s,'tikhub','low_fan','low_fan_24h','vl-discovery-1',
-               now()-interval '3 hours',1,'test','{}'::jsonb),
+               now()-interval '3 hours',1,'test',
+               '{"run_id":"private-run","request_fingerprint":"private-fingerprint"}'::jsonb),
               (%s,'tikhub','search','秦皇岛海边传说','vl-discovery-2',
                now()-interval '2 hours',2,'test','{}'::jsonb)
             """,
@@ -209,6 +210,7 @@ def test_video_library_filters_and_detail() -> None:
     detail = result["detail"]
     assert detail["id"] == video_id
     assert len(detail["evidence"]) == 2
+    assert all("metadata" not in item for item in detail["evidence"])
     assert len(detail["comments"]) == 2
     assert detail["source_url"] == "https://example.com/video-lib-1"
 
@@ -292,11 +294,13 @@ def test_video_library_returns_latest_completed_l3_public_result_only() -> None:
             """
             insert into research_task_cost(
               task_key, task_type, task_version, video_id, status,
-              input_fingerprint, api_cost, asr_cost, llm_cost,
+              input_fingerprint, output_fingerprint, api_cost, asr_cost, llm_cost,
               cost_currency, cost_basis, metadata
             ) values (
-              'video-library-l3-new', 'l3_structured_research', 'v1', %s,
-              'completed', 'private-new-input', null, 0, null, 'CNY', 'mixed',
+              'video-library-l3-new', 'l3_structured_research',
+              'l3-research-v1.0.0', %s, 'completed',
+              'private-new-input', 'private-output-fingerprint',
+              null, 0, null, 'CNY', 'mixed',
               '{"provider_request_id":"private"}'::jsonb
             ) returning id
             """,
@@ -312,7 +316,7 @@ def test_video_library_returns_latest_completed_l3_public_result_only() -> None:
               cost_amount, cost_currency, task_cost_id, created_at
             ) values (
               %s, 'l3_structured_research', 'L3', 'completed',
-              'safe-model', 'revision-2', 'prompt-v2', 'schema-v1',
+              'safe-model', 'revision-2', 'prompt-v2', 'l3-research-v1.0.0',
               'private-new-input', 'private-output-fingerprint',
               '{"fingerprint":"private","task_key":"private-task","raw_text":"never return"}'::jsonb,
               '{
@@ -350,7 +354,7 @@ def test_video_library_returns_latest_completed_l3_public_result_only() -> None:
     assert l3["model"] == "safe-model"
     assert l3["model_revision"] == "revision-2"
     assert l3["prompt_version"] == "prompt-v2"
-    assert l3["schema_version"] == "schema-v1"
+    assert l3["schema_version"] == "l3-research-v1.0.0"
     assert l3["output"]["narrative_structure"] == ["公开叙事结论"]
     assert l3["output"]["limitations"] == ["样本有限"]
     assert "comment_semantics" not in l3["output"]
@@ -375,14 +379,70 @@ def test_video_library_l3_empty_state_excludes_incomplete_and_failed_records() -
     module = load_backend()
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        invalid_cost_ids = []
+        for task_key, schema_version, fingerprint in (
+            (
+                "video-library-l3-private",
+                "l3-research-v1.0.0",
+                "private-review-input",
+            ),
+            ("video-library-l3-wrong-schema", "wrong-schema", "wrong-schema-input"),
+        ):
+            cur.execute(
+                """
+                insert into research_task_cost(
+                  task_key, task_type, task_version, video_id, status,
+                  input_fingerprint, output_fingerprint,
+                  api_cost, asr_cost, llm_cost, cost_currency, cost_basis
+                ) values (
+                  %s, 'l3_structured_research', %s, %s, 'completed',
+                  %s, %s, 0, 0, 0.1, 'CNY', 'actual'
+                ) returning id
+                """,
+                (
+                    task_key,
+                    schema_version,
+                    video_id,
+                    fingerprint,
+                    f"{fingerprint}-output",
+                ),
+            )
+            invalid_cost_ids.append(cur.fetchone()[0])
         cur.execute(
             """
-            insert into analysis_run(video_id, analysis_type, analysis_level, status, output)
+            insert into analysis_run(
+              video_id, analysis_type, analysis_level, status,
+              schema_version, input_fingerprint, output_fingerprint,
+              output, task_cost_id, created_at
+            )
             values
-              (%s, 'l3_structured_research', 'L3', 'running', '{"narrative_structure":["running"]}'::jsonb),
-              (%s, 'l3_structured_research', 'L3', 'failed', '{"internal_error":"private"}'::jsonb)
+              (%s, 'l3_structured_research', 'L3', 'running', null, null, null,
+               '{"narrative_structure":["running"]}'::jsonb, null, now()),
+              (%s, 'l3_structured_research', 'L3', 'failed', null, null, null,
+               '{"internal_error":"private"}'::jsonb, null, now()),
+              (%s, 'l3_structured_research', 'L3', 'completed',
+               'l3-research-v1.0.0', 'private-review-input',
+               'private-review-input-output',
+               '{"privacy_reviewed":false,"narrative_structure":["private"]}'::jsonb,
+               %s, now()+interval '1 minute'),
+              (%s, 'l3_structured_research', 'L3', 'completed',
+               'wrong-schema', 'wrong-schema-input', 'wrong-schema-input-output',
+               '{"privacy_reviewed":true,"narrative_structure":["wrong schema"]}'::jsonb,
+               %s, now()+interval '2 minutes'),
+              (%s, 'l3_structured_research', 'L3', 'completed',
+               'l3-research-v1.0.0', 'orphan-input', 'orphan-output',
+               '{"privacy_reviewed":true,"narrative_structure":["orphan"]}'::jsonb,
+               null, now()+interval '3 minutes')
             """,
-            (video_id, video_id),
+            (
+                video_id,
+                video_id,
+                video_id,
+                invalid_cost_ids[0],
+                video_id,
+                invalid_cost_ids[1],
+                video_id,
+            ),
         )
         conn.commit()
 
