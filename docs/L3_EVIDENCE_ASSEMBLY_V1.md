@@ -14,7 +14,7 @@
 组装前必须同时满足：
 
 1. 调用方明确传入 `privacy_reviewed=true` 和非空、格式受限的隐私复核版本；该格式检查在连接数据库之前完成。
-2. 最新一条 `human_annotation(annotation_type='l3_privacy_review')` 必须由非空 actor 写入，且其 `reviewed=true`、版本与请求完全一致。
+2. 最新一条 `human_annotation(annotation_type='l3_privacy_review')` 必须由非空 actor 写入，且其 `reviewed=true`、版本、证据版本、modalities 和证据 SHA-256 与本次候选快照完全一致。
 3. 视频存在且 `research_level >= 2`。
 4. 视频已经被 L2→L3 闸门以 `selected` 结果选中。
 5. 存在评论特征快照。
@@ -41,13 +41,21 @@ NULL 保持 NULL，明确的 0 保持 0。时间统一序列化为 UTC，数值�
 - 转写来源指纹、任务 ID 或任意数据库 metadata JSON
 - L2→L3 批次 ID 和内部运行 ID
 
-评论 snapshot 的 `metadata` 不会整体透传；组装器只输出固定的范围声明。转写正文和视频标题/描述仍可能含个人信息，所以 `privacy_reviewed=true` 只是请求方选择的复核版本；真正的准入事实来自最新持久化人工复核记录。本模块仍不声称能自动识别个人信息。
+评论 snapshot 的 `metadata` 不会整体透传；组装器只输出固定的范围声明。转写正文和视频标题/描述仍可能含个人信息，所以 `privacy_reviewed=true` 只是请求方选择的复核版本；真正的准入事实来自最新持久化人工复核记录及其中绑定的证据 SHA-256。本模块仍不声称能自动识别个人信息。审核后任一标题、说明、评论快照或转写变化都会产生新指纹，并要求重新审核。
 
 标题、描述、转写和最终序列化字节数都有硬上限。超限时拒绝，不静默截断证据。
 
 ## 协作接口
 
 ```python
+candidate = L3EvidenceAssembler(dsn).prepare_for_privacy_review(
+    video_id,
+    privacy_review_version="privacy-v1",
+)
+
+# 人工检查 candidate.evidence_bundle 后，持久化 reviewed、actor、version、
+# candidate.input_fingerprint、candidate.evidence_version 和 modalities。
+
 assembled = L3EvidenceAssembler(dsn).assemble(
     video_id,
     privacy_reviewed=True,
@@ -66,12 +74,12 @@ coordinator.run(
 )
 ```
 
-正式执行的 `evidence_factory` 必须返回 `L3EvidenceBundle`。执行控制层会重新规范化证据 JSON、计算 SHA-256，并在构造 Provider 和预占预算之前核对版本、modalities、隐私复核版本、证据视频 ID 与请求视频 ID。它还会重新读取最新持久化人工复核记录；普通 Mapping、伪造 dataclass 字段或组装后的内存篡改都不能绕过该绑定。
+`prepare_for_privacy_review()` 只读数据库并生成待审候选，不授予执行权限。正式执行的 `evidence_factory` 必须返回已经由精确指纹审核通过的 `L3EvidenceBundle`。执行控制层会重新规范化证据 JSON、计算 SHA-256，并在构造 Provider 和预占预算之前核对版本、modalities、隐私复核版本、证据视频 ID 与请求视频 ID。它还会重新读取最新持久化人工复核记录并匹配证据指纹；普通 Mapping、伪造 dataclass 字段、陈旧审核或组装后的内存篡改都不能绕过该绑定。
 
 正式付费执行仍由 L3 执行控制层负责预算、确认、单并发、零重试和故障对账；证据组装器不扩大任何执行授权。
 
 ## 验收边界
 
-- 单元/集成测试证明：准入失败关闭、持久化人工复核绑定、选择最新快照、NULL/0 保真、指纹重算、敏感标识不透传、超限拒绝和数据库零写入。
+- 单元/集成测试证明：准入失败关闭、持久化人工复核与精确快照绑定、陈旧审核拒绝、选择最新快照、NULL/0 保真、指纹重算、敏感标识不透传、超限拒绝和执行数据库零写入。
 - 这些测试不证明自动隐私识别，也不证明真实模型内容安全。
 - 未经单独授权，不发起付费模型调用，不把本地实现视为生产启用。

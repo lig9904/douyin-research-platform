@@ -148,6 +148,9 @@ class L3ExecutionCoordinator:
                     cur,
                     assembled.video_id,
                     str(review["version"]),
+                    evidence_fingerprint=assembled.input_fingerprint,
+                    evidence_version=assembled.evidence_version,
+                    evidence_modalities=assembled.evidence_modalities,
                 )
             try:
                 provider = provider_factory()

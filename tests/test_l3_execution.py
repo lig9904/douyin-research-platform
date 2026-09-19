@@ -7,6 +7,7 @@ from uuid import UUID
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from douyin_research.l0l1 import DailyBudgetGuard
 from douyin_research.l2 import L3PromotionGate, TaskCost
@@ -91,11 +92,21 @@ def _video(*, selected: bool, key: str = "main") -> UUID:
             insert into human_annotation(
               video_id, actor, annotation_type, value
             ) values (
-              %s, 'synthetic-reviewer', 'l3_privacy_review',
-              '{"reviewed":true,"version":"privacy-v1"}'::jsonb
+              %s, 'synthetic-reviewer', 'l3_privacy_review', %s
             )
             """,
-            (video_id,),
+            (
+                video_id,
+                Jsonb(
+                    {
+                        "reviewed": True,
+                        "version": "privacy-v1",
+                        "evidence_fingerprint": SYNTHETIC_INPUT_FINGERPRINT,
+                        "evidence_version": L3_EVIDENCE_VERSION,
+                        "evidence_modalities": list(SYNTHETIC_MODALITIES),
+                    }
+                ),
+            ),
         )
         cur.execute(
             """
@@ -263,6 +274,31 @@ def _evidence(
     )
 
 
+def _persist_review(video_id: UUID, evidence: L3EvidenceBundle) -> None:
+    assert DSN
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into human_annotation(
+              video_id, actor, annotation_type, value
+            ) values (%s, 'synthetic-reviewer', 'l3_privacy_review', %s)
+            """,
+            (
+                video_id,
+                Jsonb(
+                    {
+                        "reviewed": True,
+                        "version": "privacy-v1",
+                        "evidence_fingerprint": evidence.input_fingerprint,
+                        "evidence_version": evidence.evidence_version,
+                        "evidence_modalities": list(evidence.evidence_modalities),
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+
+
 def test_preview_and_wrong_confirmation_load_nothing() -> None:
     assert DSN
     _clear()
@@ -343,6 +379,7 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
         video_id,
         {"transcript": "private synthetic evidence"},
     )
+    _persist_review(video_id, assembled)
     provider = FakeProvider(
         _response(input_fingerprint=assembled.input_fingerprint)
     )
@@ -475,6 +512,22 @@ def test_execution_requires_evidence_object_bound_to_video_and_fingerprint() -> 
         coordinator.run(
             request,
             evidence_factory=lambda: _evidence(UUID(int=0)),
+            provider_factory=lambda: provider_calls.append("provider"),
+        )
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            update human_annotation
+            set value=jsonb_set(value, '{evidence_fingerprint}', '"stale"')
+            where video_id=%s and annotation_type='l3_privacy_review'
+            """,
+            (video_id,),
+        )
+        conn.commit()
+    with pytest.raises(ValueError, match="does not match evidence"):
+        coordinator.run(
+            request,
+            evidence_factory=lambda: _evidence(video_id),
             provider_factory=lambda: provider_calls.append("provider"),
         )
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:

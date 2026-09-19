@@ -57,9 +57,10 @@ class L3EvidenceBundle:
 class L3EvidenceAssembler:
     """Build model input from persisted L2 evidence without external calls.
 
-    The caller supplies a completed privacy-review attestation. This class does
-    not claim to detect personal data and fails before opening the database when
-    that attestation is absent or invalid.
+    The caller selects a privacy-review version, while persisted human review
+    binds the exact candidate fingerprint. This class does not claim to detect
+    personal data and fails before opening the database when the caller's
+    attestation shape is absent or invalid.
     """
 
     def __init__(self, dsn: str) -> None:
@@ -79,15 +80,47 @@ class L3EvidenceAssembler:
 
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute("set transaction read only")
-            video = self._load_video(cur, video_id)
-            self._assert_selected(cur, video["id"])
+            assembled = self._build_snapshot(cur, video_id, review_version)
             assert_persisted_l3_privacy_review(
                 cur,
-                video["id"],
+                assembled.video_id,
                 review_version,
+                evidence_fingerprint=assembled.input_fingerprint,
+                evidence_version=assembled.evidence_version,
+                evidence_modalities=assembled.evidence_modalities,
             )
-            comments = self._load_comment_features(cur, video["id"])
-            transcript = self._load_transcript(cur, video["id"])
+        return assembled
+
+    def prepare_for_privacy_review(
+        self,
+        video_id: UUID | str,
+        *,
+        privacy_review_version: str,
+    ) -> L3EvidenceBundle:
+        """Build the exact candidate snapshot a human must review.
+
+        This read-only step does not claim approval and cannot be used by the
+        execution coordinator until a matching persisted review exists.
+        """
+
+        review_version = _validate_privacy_review(
+            reviewed=True,
+            version=privacy_review_version,
+        )
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute("set transaction read only")
+            return self._build_snapshot(cur, video_id, review_version)
+
+    def _build_snapshot(
+        self,
+        cur,
+        video_id: UUID | str,
+        review_version: str,
+    ) -> L3EvidenceBundle:
+        video = self._load_video(cur, video_id)
+        self._assert_selected(cur, video["id"])
+        comments = self._load_comment_features(cur, video["id"])
+        transcript = self._load_transcript(cur, video["id"])
 
         bundle: dict[str, object] = {
             "evidence_version": L3_EVIDENCE_VERSION,
@@ -308,8 +341,12 @@ def assert_persisted_l3_privacy_review(
     cur,
     video_id: UUID,
     expected_version: str,
+    *,
+    evidence_fingerprint: str,
+    evidence_version: str,
+    evidence_modalities: tuple[str, ...],
 ) -> None:
-    """Require the latest persisted human review to match the model input."""
+    """Require the latest persisted human review to bind the exact snapshot."""
 
     cur.execute(
         """
@@ -332,8 +369,11 @@ def assert_persisted_l3_privacy_review(
         not isinstance(value, Mapping)
         or value.get("reviewed") is not True
         or value.get("version") != expected_version
+        or value.get("evidence_fingerprint") != evidence_fingerprint
+        or value.get("evidence_version") != evidence_version
+        or value.get("evidence_modalities") != list(evidence_modalities)
     ):
-        raise ValueError("persisted L3 privacy review does not match request")
+        raise ValueError("persisted L3 privacy review does not match evidence")
 
 
 def _validate_content_length(name: str, value: str | None, limit: int) -> None:

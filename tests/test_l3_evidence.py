@@ -57,17 +57,6 @@ def _video(*, level: int = 2, selected: bool = True, key: str = "main") -> UUID:
         video_id = cur.fetchone()[0]
         cur.execute(
             """
-            insert into human_annotation(
-              video_id, actor, annotation_type, value
-            ) values (
-              %s, 'synthetic-reviewer', 'l3_privacy_review',
-              '{"reviewed":true,"version":"privacy-v1"}'::jsonb
-            )
-            """,
-            (video_id,),
-        )
-        cur.execute(
-            """
             insert into pipeline_run_item(
               run_id, entity_type, entity_id, stage, outcome
             ) values (%s, 'video', %s, 'L2', 'scored')
@@ -198,6 +187,36 @@ def _assemble(video_id: UUID, *, version: str = "privacy-v1"):
     )
 
 
+def _approve(video_id: UUID, *, version: str = "privacy-v1"):
+    assert DSN
+    candidate = L3EvidenceAssembler(DSN).prepare_for_privacy_review(
+        video_id,
+        privacy_review_version=version,
+    )
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into human_annotation(
+              video_id, actor, annotation_type, value
+            ) values (%s, 'synthetic-reviewer', 'l3_privacy_review', %s)
+            """,
+            (
+                video_id,
+                Jsonb(
+                    {
+                        "reviewed": True,
+                        "version": version,
+                        "evidence_fingerprint": candidate.input_fingerprint,
+                        "evidence_version": candidate.evidence_version,
+                        "evidence_modalities": list(candidate.evidence_modalities),
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+    return candidate
+
+
 def test_bundle_is_stable_minimized_and_preserves_null_vs_zero() -> None:
     assert DSN
     _clear()
@@ -228,9 +247,11 @@ def test_bundle_is_stable_minimized_and_preserves_null_vs_zero() -> None:
         created_at="2026-09-19 03:00:00+00",
     )
 
+    candidate = _approve(video_id)
     first = _assemble(video_id)
     replay = _assemble(video_id)
 
+    assert candidate.input_fingerprint == first.input_fingerprint
     assert first.input_fingerprint == replay.input_fingerprint
     assert len(first.input_fingerprint) == 64
     assert first.evidence_version == L3_EVIDENCE_VERSION
@@ -298,6 +319,7 @@ def test_no_speech_is_explicit_evidence_and_empty_usable_is_rejected() -> None:
     _feature(video_id)
     _transcript(video_id, text="", quality="no_speech")
 
+    _approve(video_id)
     bundle = _assemble(video_id)
     assert bundle.evidence_bundle["transcript"]["text"] == ""
     assert bundle.evidence_bundle["transcript"]["quality_status"] == "no_speech"
@@ -337,12 +359,6 @@ def test_gate_level_and_required_evidence_fail_closed() -> None:
     missing_review = _video(key="missing-review")
     _feature(missing_review)
     _transcript(missing_review)
-    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-        cur.execute(
-            "delete from human_annotation where video_id=%s",
-            (missing_review,),
-        )
-        conn.commit()
     with pytest.raises(ValueError, match="persisted L3 privacy review"):
         _assemble(missing_review)
 
@@ -371,21 +387,9 @@ def test_fingerprint_binds_review_and_content_and_limits_are_enforced() -> None:
     _feature(video_id)
     _transcript(video_id)
 
+    _approve(video_id, version="privacy-v1")
     first = _assemble(video_id, version="privacy-v1")
-    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            insert into human_annotation(
-              video_id, actor, annotation_type, value, created_at
-            ) values (
-              %s, 'synthetic-reviewer-v2', 'l3_privacy_review',
-              '{"reviewed":true,"version":"privacy-v2"}'::jsonb,
-              '2026-09-20 00:00:00+00'
-            )
-            """,
-            (video_id,),
-        )
-        conn.commit()
+    _approve(video_id, version="privacy-v2")
     reviewed_again = _assemble(video_id, version="privacy-v2")
     assert reviewed_again.input_fingerprint != first.input_fingerprint
 
@@ -395,7 +399,11 @@ def test_fingerprint_binds_review_and_content_and_limits_are_enforced() -> None:
             (video_id,),
         )
         conn.commit()
+    with pytest.raises(ValueError, match="does not match evidence"):
+        _assemble(video_id, version="privacy-v2")
+    changed_candidate = _approve(video_id, version="privacy-v2")
     changed = _assemble(video_id, version="privacy-v2")
+    assert changed.input_fingerprint == changed_candidate.input_fingerprint
     assert changed.input_fingerprint != first.input_fingerprint
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
