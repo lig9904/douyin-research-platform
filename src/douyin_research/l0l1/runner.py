@@ -4,21 +4,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Any
 
+from douyin_research.providers.contracts import PlatformResearchProvider
 from douyin_research.providers.types import ProviderPage, VideoObservation
 
 from .budget import DailyBudgetGuard
 from .ingest import DiscoveryContext, L0L1Store
 from .scoring import L1Scorer
-
-
-class DiscoveryProvider(Protocol):
-    provider_name: str
-    def fetch_low_fan_billboard(self, **kwargs: Any) -> ProviderPage[VideoObservation]: ...
-    def search_videos(self, query: str, **kwargs: Any) -> ProviderPage[VideoObservation]: ...
-    def fetch_creator_material(self, **kwargs: Any) -> ProviderPage[VideoObservation]: ...
-    def fetch_videos(self, video_ids, **kwargs: Any) -> list[VideoObservation]: ...
 
 
 @dataclass(slots=True)
@@ -33,6 +26,7 @@ class DiscoverySource:
 @dataclass(slots=True)
 class RunSummary:
     run_id: Any
+    platform: str
     source_count: int
     observations: int
     unique_platform_videos: int
@@ -40,7 +34,7 @@ class RunSummary:
 
 
 class L0L1Runner:
-    def __init__(self, *, provider: DiscoveryProvider, store: L0L1Store,
+    def __init__(self, *, provider: PlatformResearchProvider, store: L0L1Store,
                  scorer: L1Scorer, budget: DailyBudgetGuard,
                  budget_key: str = "l0l1") -> None:
         self.provider = provider
@@ -51,7 +45,12 @@ class L0L1Runner:
 
     def run(self, sources: list[DiscoverySource], *, enrich_details: bool = True,
             triggered_by: str = "system") -> RunSummary:
-        run_id = self.store.create_run("l0l1_discovery", "v1.0.0", triggered_by)
+        run_id = self.store.create_run(
+            "l0l1_discovery",
+            "v1.0.0",
+            triggered_by,
+            platform=self.provider.platform_name,
+        )
         observation_count = 0
         unique_platform_ids: dict[str, VideoObservation] = {}
         try:
@@ -69,6 +68,7 @@ class L0L1Runner:
                         requests=1,
                     )
                 items = page.items[: max(0, source.max_items)]
+                self._validate_platform(items)
                 ranks = {
                     item.video.platform_video_id: idx
                     for idx, item in enumerate(items, start=1)
@@ -87,16 +87,18 @@ class L0L1Runner:
                 )
                 observation_count += len(items)
                 for item in items:
-                    unique_platform_ids[item.video.platform_video_id] = item
+                    key = f"{item.video.platform}:{item.video.platform_video_id}"
+                    unique_platform_ids[key] = item
 
             if enrich_details and unique_platform_ids:
-                ids = list(unique_platform_ids)
+                ids = [item.video.platform_video_id for item in unique_platform_ids.values()]
                 self.budget.acquire(
                     provider=self.provider.provider_name,
                     budget_key=self.budget_key,
                     requests=math.ceil(len(ids) / 50),
                 )
                 details = self.provider.fetch_videos(ids)
+                self._validate_platform(details)
                 self.store.ingest(
                     details,
                     DiscoveryContext(
@@ -117,10 +119,12 @@ class L0L1Runner:
                 output_count=len(unique_platform_ids),
                 promoted_l1_count=len(scores),
                 summary={"source_count": len(sources), "llm_calls": 0,
+                         "platform": self.provider.platform_name,
                          "enrich_details": enrich_details},
             )
             return RunSummary(
                 run_id=run_id,
+                platform=self.provider.platform_name,
                 source_count=len(sources),
                 observations=observation_count,
                 unique_platform_videos=len(unique_platform_ids),
@@ -135,14 +139,22 @@ class L0L1Runner:
             raise
 
     def _fetch(self, source: DiscoverySource) -> ProviderPage[VideoObservation]:
-        if source.kind == "low_fan":
-            return self.provider.fetch_low_fan_billboard(**source.kwargs)
         if source.kind == "search":
             query = source.kwargs.get("query")
             if not query:
                 raise ValueError("search source requires kwargs.query")
             kwargs = {k: v for k, v in source.kwargs.items() if k != "query"}
             return self.provider.search_videos(query, **kwargs)
-        if source.kind == "creator":
-            return self.provider.fetch_creator_material(**source.kwargs)
-        raise ValueError(f"unsupported discovery source kind: {source.kind}")
+        return self.provider.discover(source.kind, **source.kwargs)
+
+    def _validate_platform(self, items: list[VideoObservation]) -> None:
+        mismatched = sorted({
+            item.video.platform
+            for item in items
+            if item.video.platform != self.provider.platform_name
+        })
+        if mismatched:
+            raise ValueError(
+                f"provider platform={self.provider.platform_name} returned "
+                f"mismatched platforms={mismatched}"
+            )
