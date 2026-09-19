@@ -142,6 +142,7 @@ class L3PromotionGate:
                 from research_promotion_batch
                 where source_run_id=%s
                   and quota_date=%s
+                  and quota_key=%s
                   and rule_version=%s
                   and requested_top_n=%s
                   and min_score=%s
@@ -150,6 +151,7 @@ class L3PromotionGate:
                 (
                     source_run_id,
                     quota_date,
+                    quota_key,
                     PROMOTION_RULE_VERSION,
                     top_n,
                     score_floor,
