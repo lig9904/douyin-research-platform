@@ -1,25 +1,45 @@
 -- Douyin Research Platform V1
--- PostgreSQL initial schema. Fields will be refined after V0 interface verification.
+-- Canonical business schema. External provider payloads are stored separately.
+-- Fields will be refined after V0 interface verification.
 
 create extension if not exists pgcrypto;
 
+-- Canonical account identity: provider-independent.
 create table if not exists source_account (
   id uuid primary key default gen_random_uuid(),
-  provider text not null,
   platform text not null default 'douyin',
   platform_account_id text not null,
   nickname text,
   profile_url text,
-  follower_count bigint,
-  raw_profile jsonb,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
-  unique (provider, platform, platform_account_id)
+  unique (platform, platform_account_id)
 );
 
+create table if not exists account_metric_snapshot (
+  id bigserial primary key,
+  account_id uuid not null references source_account(id) on delete cascade,
+  provider text not null,
+  captured_at timestamptz not null default now(),
+  follower_count bigint,
+  following_count bigint,
+  total_favorited bigint,
+  video_count bigint,
+  raw_metrics jsonb
+);
+
+create table if not exists provider_account_snapshot (
+  id bigserial primary key,
+  account_id uuid not null references source_account(id) on delete cascade,
+  provider text not null,
+  provider_object_id text,
+  captured_at timestamptz not null default now(),
+  raw_payload jsonb not null
+);
+
+-- Canonical video identity: provider-independent.
 create table if not exists source_video (
   id uuid primary key default gen_random_uuid(),
-  provider text not null,
   platform text not null default 'douyin',
   platform_video_id text not null,
   account_id uuid references source_account(id),
@@ -28,15 +48,23 @@ create table if not exists source_video (
   source_url text,
   published_at timestamptz,
   duration_ms integer,
-  raw_payload jsonb,
   availability_status text not null default 'available',
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
-  unique (provider, platform, platform_video_id)
+  unique (platform, platform_video_id)
+);
+
+create table if not exists provider_video_snapshot (
+  id bigserial primary key,
+  video_id uuid not null references source_video(id) on delete cascade,
+  provider text not null,
+  provider_object_id text,
+  captured_at timestamptz not null default now(),
+  raw_payload jsonb not null
 );
 
 -- Non-video signals: rising hot topics, search terms, topic lists, city hot topics,
--- creative topics/keywords, etc. These must be preserved independently from videos.
+-- creative topics/keywords, etc.
 create table if not exists external_signal (
   id uuid primary key default gen_random_uuid(),
   provider text not null,
@@ -73,9 +101,11 @@ create table if not exists signal_video_link (
   primary key (signal_id, video_id, relation_type)
 );
 
+-- Why/how a video entered the research pool.
 create table if not exists discovery_event (
   id bigserial primary key,
   video_id uuid not null references source_video(id) on delete cascade,
+  provider text not null,
   source_type text not null,
   source_key text,
   discovered_at timestamptz not null default now(),
@@ -87,6 +117,7 @@ create table if not exists discovery_event (
 create table if not exists metric_snapshot (
   id bigserial primary key,
   video_id uuid not null references source_video(id) on delete cascade,
+  provider text not null,
   captured_at timestamptz not null default now(),
   play_count bigint,
   like_count bigint,
@@ -94,8 +125,7 @@ create table if not exists metric_snapshot (
   share_count bigint,
   collect_count bigint,
   author_follower_count bigint,
-  raw_metrics jsonb,
-  unique (video_id, captured_at)
+  raw_metrics jsonb
 );
 
 create table if not exists video_score (
@@ -111,6 +141,7 @@ create table if not exists video_score (
 create table if not exists video_comment (
   id uuid primary key default gen_random_uuid(),
   video_id uuid not null references source_video(id) on delete cascade,
+  provider text not null,
   platform_comment_id text,
   text_content text,
   like_count bigint,
@@ -118,6 +149,10 @@ create table if not exists video_comment (
   raw_payload jsonb,
   captured_at timestamptz not null default now()
 );
+
+create unique index if not exists uq_video_comment_provider_id
+  on video_comment(provider, platform_comment_id)
+  where platform_comment_id is not null;
 
 create table if not exists transcript (
   id uuid primary key default gen_random_uuid(),
@@ -181,8 +216,7 @@ create unique index if not exists uq_collection_video
 create unique index if not exists uq_collection_signal
   on collection_item(collection_id, signal_id) where signal_id is not null;
 
--- Raw API responses are stored separately so historical data can be re-normalized
--- without repurchasing the same source data.
+-- Raw API responses make normalization replayable without repurchasing source data.
 create table if not exists external_api_response (
   id bigserial primary key,
   provider text not null,
@@ -237,8 +271,11 @@ create table if not exists daily_budget (
   primary key (budget_date, provider, budget_key)
 );
 
+create index if not exists idx_account_metric_time on account_metric_snapshot(account_id, captured_at desc);
+create index if not exists idx_provider_account_time on provider_account_snapshot(account_id, provider, captured_at desc);
 create index if not exists idx_video_published_at on source_video(published_at desc);
 create index if not exists idx_video_account on source_video(account_id);
+create index if not exists idx_provider_video_time on provider_video_snapshot(video_id, provider, captured_at desc);
 create index if not exists idx_signal_type_seen on external_signal(signal_type, last_seen_at desc);
 create index if not exists idx_signal_snapshot_time on signal_snapshot(signal_id, captured_at desc);
 create index if not exists idx_discovery_video_time on discovery_event(video_id, discovered_at desc);
