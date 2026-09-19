@@ -127,7 +127,7 @@ class CommentEvidenceStore:
                 new_comments += int(inserted)
 
                 observation_key = _observation_key(
-                    context.request_fingerprint,
+                    sample.raw_ref or context.request_fingerprint,
                     context.platform,
                     context.video_platform_id,
                     sample.provider,
