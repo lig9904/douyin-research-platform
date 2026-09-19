@@ -157,10 +157,20 @@ class L3ExecutionCoordinator:
                         UUID(str(job["id"])),
                         "invalid_provider_result",
                     )
+                    failed = self._load_job(request.task_key)
+                    assert failed is not None
+                    return self._redacted(
+                        failed,
+                        external_calls=external_calls,
+                        created=True,
+                    )
                 fresh = self._load_job(request.task_key)
                 assert fresh is not None
                 reconciled = self._reconcile_terminal(request, fresh)
                 if reconciled is not None:
+                    reconciled["created"] = True
+                    reconciled["external_calls"] = external_calls
+                    reconciled["llm_calls"] = external_calls
                     return reconciled
                 return {
                     "status": "reconciliation_required",
@@ -171,7 +181,7 @@ class L3ExecutionCoordinator:
                     "has_cost_record": False,
                     "error_code": "result_persistence_uncertain",
                     "sdk_retries": 0,
-                    "llm_calls": 1,
+                    "llm_calls": external_calls,
                 }
 
             completed = self._load_job(request.task_key)
