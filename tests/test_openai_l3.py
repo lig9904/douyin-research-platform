@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from decimal import Decimal
 from pathlib import Path
 
 import httpx
 import pytest
 
-from douyin_research.l3 import L3ProviderRequest, L3_SCHEMA_VERSION
+from douyin_research.l3 import L3_SCHEMA_VERSION, L3ProviderRequest
 from douyin_research.providers.openai_l3 import (
     OPENAI_L3_DOC_FINGERPRINT,
     OPENAI_L3_PROVIDER,
     OpenAIResponsesL3Provider,
+    _decode_json_object,
+    _map_completed_response,
+    _request_body,
+    _require_success_status,
 )
-
 
 SECRET = "synthetic-secret-never-log"
 MODEL_ID = "synthetic-reasoning-model"
@@ -30,7 +33,7 @@ def _request(**overrides) -> L3ProviderRequest:
         "schema_version": L3_SCHEMA_VERSION,
         "input_fingerprint": "input-fingerprint",
         "evidence_bundle": {
-            "evidence_modalities": ["metadata", "comments"],
+            "modalities": ["metadata", "comments"],
             "summary": "privacy-reviewed synthetic evidence",
             "privacy_review": {"reviewed": True, "version": "privacy-v1"},
         },
@@ -76,52 +79,64 @@ def _response(**overrides):
     return value
 
 
-def _provider(handler):
+def _provider() -> OpenAIResponsesL3Provider:
     return OpenAIResponsesL3Provider(
-        api_key=SECRET,
         model_id=MODEL_ID,
         model_revision=MODEL_REVISION,
         cost_currency="USD",
         pricing_version="synthetic-pricing-v1",
         input_cost_per_million_tokens="2.50",
         output_cost_per_million_tokens="10.00",
-        client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
 
 
-def test_adapter_defaults_to_fail_closed_without_network() -> None:
-    calls = []
-    provider = _provider(lambda request: calls.append(request))
+def _map(payload, *, request=None):
+    return _map_completed_response(
+        payload,
+        request or _request(),
+        model_revision=MODEL_REVISION,
+        cost_currency="USD",
+        input_rate=Decimal("2.50"),
+        output_rate=Decimal("10.00"),
+    )
+
+
+def test_adapter_is_permanently_fail_closed_without_transport() -> None:
+    provider = _provider()
 
     with pytest.raises(ValueError, match="not production ready"):
         provider.generate(_request())
 
-    assert calls == []
     assert provider.contract.production_ready is False
+    assert provider.pricing_version == "synthetic-pricing-v1"
+    assert not hasattr(provider, "_generate_with_transport")
+    assert not hasattr(provider, "_client")
+    assert not hasattr(provider, "_api_key")
     assert SECRET not in repr(provider)
 
 
-def test_production_ready_cannot_be_enabled_by_constructor() -> None:
+def test_production_ready_and_secret_cannot_be_injected_by_constructor() -> None:
+    common = {
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "cost_currency": "USD",
+        "pricing_version": "synthetic-pricing-v1",
+        "input_cost_per_million_tokens": "2.50",
+        "output_cost_per_million_tokens": "10.00",
+    }
     with pytest.raises(TypeError, match="production_ready"):
-        OpenAIResponsesL3Provider(
-            api_key=SECRET,
-            model_id=MODEL_ID,
-            model_revision=MODEL_REVISION,
-            cost_currency="USD",
-            pricing_version="synthetic-pricing-v1",
-            input_cost_per_million_tokens="2.50",
-            output_cost_per_million_tokens="10.00",
-            production_ready=True,
-        )
+        OpenAIResponsesL3Provider(**common, production_ready=True)
+    with pytest.raises(TypeError, match="api_key"):
+        OpenAIResponsesL3Provider(**common, api_key=SECRET)
 
 
-def test_generate_sends_one_strict_non_stored_request_and_maps_result() -> None:
+def test_offline_wire_codec_builds_strict_request_and_maps_result() -> None:
     calls = []
 
     def handler(request):
         calls.append(request)
         body = json.loads(request.content)
-        assert request.headers["Authorization"] == f"Bearer {SECRET}"
+        assert "Authorization" not in request.headers
         assert body["model"] == MODEL_REVISION
         assert body["store"] is False
         assert body["text"]["format"]["type"] == "json_schema"
@@ -133,7 +148,13 @@ def test_generate_sends_one_strict_non_stored_request_and_maps_result() -> None:
         assert envelope["evidence"]["summary"].startswith("privacy-reviewed")
         return httpx.Response(200, json=_response())
 
-    result = _provider(handler)._generate_with_transport(_request())
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        response = client.post(
+            "https://offline.invalid/v1/responses",
+            json=_request_body(_request()),
+        )
+    _require_success_status(response.status_code)
+    result = _map(_decode_json_object(response.content))
 
     assert len(calls) == 1
     assert result.result.model_id == MODEL_ID
@@ -149,12 +170,22 @@ def test_generate_sends_one_strict_non_stored_request_and_maps_result() -> None:
     assert result.cost.basis == "estimated"
 
 
-def test_model_mismatch_fails_before_network() -> None:
-    calls = []
-    provider = _provider(lambda request: calls.append(request))
+def test_model_and_evidence_fail_before_production_gate() -> None:
+    provider = _provider()
     with pytest.raises(ValueError, match="model does not match"):
         provider.generate(_request(model_revision="different-revision"))
-    assert calls == []
+
+    evidence = {
+        "modalities": ["metadata"],
+        "privacy_review": {"reviewed": False, "version": "privacy-v1"},
+    }
+    with pytest.raises(ValueError, match="privacy review is not complete"):
+        provider.generate(_request(evidence_bundle=evidence))
+
+    evidence["privacy_review"] = {"reviewed": True, "version": "privacy-v1"}
+    evidence["modalities"] = ["metadata", "metadata"]
+    with pytest.raises(ValueError, match="modalities must be unique"):
+        provider.generate(_request(evidence_bundle=evidence))
 
 
 @pytest.mark.parametrize(
@@ -167,10 +198,8 @@ def test_model_mismatch_fails_before_network() -> None:
     ],
 )
 def test_invalid_provider_responses_fail_closed(response, message) -> None:
-    payload = _response(**response)
-    provider = _provider(lambda request: httpx.Response(200, json=payload))
     with pytest.raises((ValueError, RuntimeError), match=message):
-        provider._generate_with_transport(_request())
+        _map(_response(**response))
 
 
 def test_refusal_fails_closed() -> None:
@@ -183,40 +212,34 @@ def test_refusal_fails_closed() -> None:
         ]
     )
     with pytest.raises(RuntimeError, match="was refused"):
-        provider = _provider(lambda request: httpx.Response(200, json=refusal))
-        provider._generate_with_transport(_request())
+        _map(refusal)
 
 
-def test_secret_and_upstream_body_are_hidden_on_http_error() -> None:
-    provider = _provider(
-        lambda request: httpx.Response(
-            401, json={"error": {"message": "upstream-secret-diagnostic"}}
-        )
-    )
+def test_http_status_check_never_includes_upstream_body() -> None:
     with pytest.raises(RuntimeError, match="HTTP request failed") as exc:
-        provider._generate_with_transport(_request())
+        _require_success_status(401)
     rendered = repr(exc.value)
     assert SECRET not in rendered
     assert "upstream-secret-diagnostic" not in rendered
 
 
 def test_malformed_json_and_schema_fields_are_rejected() -> None:
-    provider = _provider(lambda request: httpx.Response(200, content=b"not-json"))
     with pytest.raises(ValueError, match="not valid JSON"):
-        provider._generate_with_transport(_request())
+        _decode_json_object(b"not-json")
+    with pytest.raises(ValueError, match="must be an object"):
+        _decode_json_object(b"[]")
 
     output = _response()
-    value = _structured(unexpected=["field"])
-    output["output"][0]["content"][0]["text"] = json.dumps(value)
+    output["output"][0]["content"][0]["text"] = json.dumps(
+        _structured(unexpected=["field"])
+    )
     with pytest.raises(ValueError, match="fields do not match schema"):
-        provider = _provider(lambda request: httpx.Response(200, json=output))
-        provider._generate_with_transport(_request())
+        _map(output)
 
 
 def test_token_rates_must_be_finite_and_nonnegative() -> None:
     with pytest.raises(ValueError, match="finite and non-negative"):
         OpenAIResponsesL3Provider(
-            api_key=SECRET,
             model_id=MODEL_ID,
             model_revision=MODEL_REVISION,
             cost_currency="USD",
@@ -227,7 +250,7 @@ def test_token_rates_must_be_finite_and_nonnegative() -> None:
 
 
 def test_contract_is_secret_free_and_synchronous() -> None:
-    provider = _provider(lambda request: httpx.Response(200, json=_response()))
+    provider = _provider()
     rendered = repr(provider.contract)
     assert provider.provider_name == OPENAI_L3_PROVIDER
     assert provider.max_retries == 0
@@ -235,15 +258,6 @@ def test_contract_is_secret_free_and_synchronous() -> None:
     assert provider.contract.polling_billed is False
     assert provider.contract.production_ready is False
     assert SECRET not in rendered
-
-
-def test_unreviewed_evidence_fails_before_network() -> None:
-    calls = []
-    provider = _provider(lambda request: calls.append(request))
-    evidence = {"privacy_review": {"reviewed": False, "version": "privacy-v1"}}
-    with pytest.raises(ValueError, match="privacy review is not complete"):
-        provider.generate(_request(evidence_bundle=evidence))
-    assert calls == []
 
 
 @pytest.mark.parametrize(
@@ -257,11 +271,11 @@ def test_unreviewed_evidence_fails_before_network() -> None:
 )
 def test_response_binding_mismatch_is_rejected(field, value) -> None:
     output = _response()
-    structured = _structured(**{field: value})
-    output["output"][0]["content"][0]["text"] = json.dumps(structured)
-    provider = _provider(lambda request: httpx.Response(200, json=output))
+    output["output"][0]["content"][0]["text"] = json.dumps(
+        _structured(**{field: value})
+    )
     with pytest.raises(ValueError, match="binding does not match"):
-        provider._generate_with_transport(_request())
+        _map(output)
 
 
 def test_contract_source_fingerprint_is_reproducible() -> None:
@@ -271,13 +285,16 @@ def test_contract_source_fingerprint_is_reproducible() -> None:
 
 @pytest.mark.parametrize(
     "modalities",
-    [["metadata", "metadata"], ["metadata", "unsupported"]],
+    [
+        ["metadata", "metadata"],
+        ["metadata", "unsupported"],
+        ["metadata"],
+    ],
 )
-def test_invalid_evidence_modalities_are_rejected(modalities) -> None:
+def test_invalid_or_unsupplied_response_modalities_are_rejected(modalities) -> None:
     output = _response()
     output["output"][0]["content"][0]["text"] = json.dumps(
         _structured(evidence_modalities=modalities)
     )
-    provider = _provider(lambda request: httpx.Response(200, json=output))
     with pytest.raises(ValueError, match="modalit"):
-        provider._generate_with_transport(_request())
+        _map(output)

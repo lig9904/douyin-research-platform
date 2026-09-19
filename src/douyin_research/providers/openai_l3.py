@@ -7,8 +7,6 @@ from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any
 
-import httpx
-
 from douyin_research.l2.transcripts import TaskCost
 from douyin_research.l3.execution import L3ProviderRequest, L3ProviderResponse
 from douyin_research.l3.results import (
@@ -24,7 +22,6 @@ from .execution_contracts import (
     VerifiedExecutionContract,
     validate_execution_contract,
 )
-
 
 OPENAI_L3_PROVIDER = "openai-responses"
 OPENAI_L3_BASE_URL = "https://api.openai.com"
@@ -56,7 +53,6 @@ class OpenAIResponsesL3Provider:
     def __init__(
         self,
         *,
-        api_key: str,
         model_id: str,
         model_revision: str,
         cost_currency: str,
@@ -64,10 +60,7 @@ class OpenAIResponsesL3Provider:
         input_cost_per_million_tokens: Decimal | str | int,
         output_cost_per_million_tokens: Decimal | str | int,
         timeout_seconds: int = 60,
-        client: httpx.Client | None = None,
     ) -> None:
-        if not api_key.strip():
-            raise ValueError("OpenAI API key is required")
         for name, value in {
             "model_id": model_id,
             "model_revision": model_revision,
@@ -76,7 +69,6 @@ class OpenAIResponsesL3Provider:
         }.items():
             if not value.strip():
                 raise ValueError(f"OpenAI L3 {name} is required")
-        self._api_key = api_key
         self._model_id = model_id
         self._model_revision = model_revision
         self._cost_currency = cost_currency
@@ -87,11 +79,6 @@ class OpenAIResponsesL3Provider:
         self._output_rate = _nonnegative_decimal(
             output_cost_per_million_tokens, "output token rate"
         )
-        self._client = client or httpx.Client(
-            timeout=timeout_seconds,
-            follow_redirects=False,
-        )
-        self._owns_client = client is None
         self.contract = VerifiedExecutionContract(
             provider=self.provider_name,
             capability=L3_SYNC_CAPABILITY,
@@ -120,70 +107,15 @@ class OpenAIResponsesL3Provider:
             f"production_ready={self.contract.production_ready!r})"
         )
 
-    def close(self) -> None:
-        if self._owns_client:
-            self._client.close()
+    @property
+    def pricing_version(self) -> str:
+        return self._pricing_version
 
     def generate(self, request: L3ProviderRequest) -> L3ProviderResponse:
+        """Fail closed until a later code review adds a production transport."""
+
         self._assert_ready(request)
-        return self._generate_with_transport(request)
-
-    def _generate_with_transport(
-        self, request: L3ProviderRequest
-    ) -> L3ProviderResponse:
-        """Exercise the wire contract in offline tests after local validation.
-
-        Production code must call ``generate``. This private seam cannot make a
-        default adapter production-ready and exists only to test MockTransport
-        request/response behavior while the public contract remains blocked.
-        """
-
-        self._assert_request(request)
-        try:
-            response = self._client.post(
-                OPENAI_L3_BASE_URL + OPENAI_L3_SUBMIT_PATH,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=_request_body(request),
-            )
-            response.raise_for_status()
-        except httpx.HTTPError:
-            raise RuntimeError("OpenAI L3 HTTP request failed") from None
-
-        payload = _json_object(response)
-        if payload.get("status") != "completed":
-            raise RuntimeError("OpenAI L3 response did not complete")
-        if payload.get("model") != self._model_revision:
-            raise ValueError("OpenAI L3 response model revision does not match request")
-        structured = _structured_output(payload)
-        _assert_response_binding(structured, request)
-        usage = _usage(payload)
-        result = L3ResearchResult(
-            model_id=request.model_id,
-            model_revision=request.model_revision,
-            prompt_version=request.prompt_version,
-            schema_version=request.schema_version,
-            input_fingerprint=request.input_fingerprint,
-            evidence_modalities=_evidence_modalities(structured),
-            **{name: _string_tuple(structured, name) for name in _SECTIONS},
-            privacy_reviewed=True,
-        )
-        token_cost = (
-            Decimal(usage[0]) * self._input_rate
-            + Decimal(usage[1]) * self._output_rate
-        ) / Decimal(1_000_000)
-        return L3ProviderResponse(
-            result=result,
-            cost=TaskCost(
-                api_cost=Decimal("0"),
-                asr_cost=Decimal("0"),
-                llm_cost=token_cost,
-                currency=self._cost_currency,
-                basis="estimated",
-            ),
-        )
+        raise AssertionError("unreachable while production_ready is false")
 
     def _assert_ready(self, request: L3ProviderRequest) -> None:
         self._assert_request(request)
@@ -208,6 +140,7 @@ class OpenAIResponsesL3Provider:
         version = review.get("version")
         if not isinstance(version, str) or not version.strip():
             raise ValueError("OpenAI L3 privacy review version is required")
+        _request_modalities(request)
 
 
 def _request_body(request: L3ProviderRequest) -> dict[str, object]:
@@ -269,14 +202,67 @@ def _string_array_schema() -> dict[str, object]:
     }
 
 
-def _json_object(response: httpx.Response) -> Mapping[str, Any]:
+def _decode_json_object(content: bytes) -> Mapping[str, Any]:
     try:
-        payload = response.json()
-    except ValueError:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
         raise ValueError("OpenAI L3 response body is not valid JSON") from None
     if not isinstance(payload, Mapping):
         raise ValueError("OpenAI L3 response body must be an object")
     return payload
+
+
+def _require_success_status(status_code: int) -> None:
+    """Validate only the status code so an upstream body cannot leak."""
+
+    if not 200 <= status_code < 300:
+        raise RuntimeError("OpenAI L3 HTTP request failed")
+
+
+def _map_completed_response(
+    payload: Mapping[str, Any],
+    request: L3ProviderRequest,
+    *,
+    model_revision: str,
+    cost_currency: str,
+    input_rate: Decimal,
+    output_rate: Decimal,
+) -> L3ProviderResponse:
+    """Map a decoded response without owning or invoking any transport."""
+
+    if payload.get("status") != "completed":
+        raise RuntimeError("OpenAI L3 response did not complete")
+    if payload.get("model") != model_revision:
+        raise ValueError("OpenAI L3 response model revision does not match request")
+    structured = _structured_output(payload)
+    _assert_response_binding(structured, request)
+    modalities = _evidence_modalities(structured)
+    if set(modalities) != set(_request_modalities(request)):
+        raise ValueError("OpenAI L3 evidence modalities do not match input")
+    usage = _usage(payload)
+    result = L3ResearchResult(
+        model_id=request.model_id,
+        model_revision=request.model_revision,
+        prompt_version=request.prompt_version,
+        schema_version=request.schema_version,
+        input_fingerprint=request.input_fingerprint,
+        evidence_modalities=modalities,
+        **{name: _string_tuple(structured, name) for name in _SECTIONS},
+        privacy_reviewed=True,
+    )
+    token_cost = (
+        Decimal(usage[0]) * input_rate + Decimal(usage[1]) * output_rate
+    ) / Decimal(1_000_000)
+    return L3ProviderResponse(
+        result=result,
+        cost=TaskCost(
+            api_cost=Decimal("0"),
+            asr_cost=Decimal("0"),
+            llm_cost=token_cost,
+            currency=cost_currency,
+            basis="estimated",
+        ),
+    )
 
 
 def _structured_output(payload: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -348,6 +334,22 @@ def _evidence_modalities(payload: Mapping[str, Any]) -> tuple[str, ...]:
         raise ValueError("OpenAI L3 evidence modalities must be unique")
     if set(modalities) - EVIDENCE_MODALITIES:
         raise ValueError("OpenAI L3 evidence modality is unsupported")
+    return modalities
+
+
+def _request_modalities(request: L3ProviderRequest) -> tuple[str, ...]:
+    value = request.evidence_bundle.get("modalities")
+    if (
+        not isinstance(value, list)
+        or not value
+        or any(not isinstance(item, str) or not item for item in value)
+    ):
+        raise ValueError("OpenAI L3 input evidence modalities are invalid")
+    modalities = tuple(value)
+    if len(set(modalities)) != len(modalities):
+        raise ValueError("OpenAI L3 input evidence modalities must be unique")
+    if set(modalities) - EVIDENCE_MODALITIES:
+        raise ValueError("OpenAI L3 input evidence modality is unsupported")
     return modalities
 
 
