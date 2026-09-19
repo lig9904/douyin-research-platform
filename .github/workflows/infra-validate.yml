@@ -1,0 +1,75 @@
+name: infra-validate
+
+on:
+  push:
+    paths:
+      - "docker-compose.yml"
+      - ".env.example"
+      - "db/**"
+      - "scripts/backup.sh"
+      - "scripts/verify-stack.sh"
+      - ".github/workflows/infra-validate.yml"
+  pull_request:
+    paths:
+      - "docker-compose.yml"
+      - ".env.example"
+      - "db/**"
+      - "scripts/backup.sh"
+      - "scripts/verify-stack.sh"
+      - ".github/workflows/infra-validate.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare test env
+        run: cp .env.example .env
+
+      - name: Validate shell syntax
+        run: |
+          bash -n db/init/01-bootstrap-research.sh
+          bash -n scripts/backup.sh
+          bash -n scripts/verify-stack.sh
+          bash -n scripts/tikhub/v0_smoke.py 2>/dev/null || true
+
+      - name: Validate compose
+        run: docker compose config >/dev/null
+
+      - name: Start PostgreSQL only
+        run: docker compose up -d postgres
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T postgres pg_isready -U postgres -d windmill >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs postgres
+          exit 1
+
+      - name: Verify research schema
+        run: |
+          test "$(docker compose exec -T postgres             psql -U postgres -d douyin_research -Atc "select to_regclass('public.source_video');"             | tr -d '\r')" = "source_video"
+
+          count="$(docker compose exec -T postgres             psql -U postgres -d douyin_research -Atc             "select count(*) from pg_catalog.pg_tables where schemaname='public';"             | tr -d '\r')"
+
+          test "$count" -gt 10
+          echo "research tables: $count"
+
+      - name: PostgreSQL logs on failure
+        if: failure()
+        run: docker compose logs postgres
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
