@@ -1,6 +1,9 @@
 -- 009_asr_execution_control.sql
 -- Submit-once ASR job state without storing media references in plaintext.
 
+alter table daily_budget
+  add column if not exists cost_currency text not null default 'USD';
+
 create table if not exists asr_execution_job (
   id uuid primary key,
   task_key text not null unique,
