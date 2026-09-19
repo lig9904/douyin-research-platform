@@ -229,12 +229,29 @@ create table if not exists video_comment (
   published_at timestamptz,
   captured_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
-  observation_count bigint not null default 1
+  observation_count bigint not null default 0
 );
 
 create unique index if not exists uq_video_comment_provider_video_id
   on video_comment(provider, video_id, platform_comment_id)
   where platform_comment_id is not null;
+
+create table if not exists video_comment_observation (
+  id bigserial primary key,
+  comment_id uuid not null references video_comment(id) on delete cascade,
+  observation_key text not null unique,
+  provider text not null,
+  source_endpoint text not null,
+  request_fingerprint text not null,
+  observed_at timestamptz not null,
+  like_count bigint,
+  reply_count bigint,
+  raw_ref text,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create index if not exists idx_comment_observation_time
+  on video_comment_observation(comment_id, observed_at desc);
 
 -- Low-cost visual preprocessing. Images themselves are temporary in V1;
 -- only deterministic metadata, timestamps and OCR output are persisted.
