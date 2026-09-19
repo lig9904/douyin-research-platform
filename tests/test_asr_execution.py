@@ -8,6 +8,7 @@ from uuid import UUID
 import psycopg
 import pytest
 
+from douyin_research.l0l1 import DailyBudgetGuard
 from douyin_research.l2 import (
     ASR_BUDGET_KEY,
     ASR_CONFIRMATION,
@@ -58,24 +59,14 @@ def _budget(
     currency: str = "CNY",
 ) -> None:
     assert DSN
-    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-        cur.execute(
-            """
-            insert into daily_budget(
-              budget_date, provider, budget_key,
-              max_cost, max_requests, cost_currency
-            ) values (%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                BUDGET_DATE,
-                PROVIDER,
-                ASR_BUDGET_KEY,
-                max_cost,
-                max_requests,
-                currency,
-            ),
-        )
-        conn.commit()
+    DailyBudgetGuard(DSN).configure(
+        provider=PROVIDER,
+        budget_key=ASR_BUDGET_KEY,
+        max_cost=float(max_cost),
+        max_requests=max_requests,
+        budget_date=BUDGET_DATE,
+        cost_currency=currency,
+    )
 
 
 def _request(video_id: UUID, **overrides) -> ASRExecutionRequest:
