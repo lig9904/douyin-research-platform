@@ -24,7 +24,9 @@ OUT_DIR = Path("tmp/tikhub-v0-batch2")
 API_KEY_ENV = "TIKHUB_API_KEY"
 GATE_ENV = "TIKHUB_ENABLE_PAID_BATCH2"
 GATE_VALUE = "BATCH2_10"
+RESUME_GATE_VALUE = "BATCH2_RESUME7"
 MAX_CALLS = 10
+RESUME_MAX_CALLS = 7
 
 
 class ProbeFailure(RuntimeError):
@@ -43,6 +45,15 @@ def walk_dicts(value: Any):
     elif isinstance(value, list):
         for child in value:
             yield from walk_dicts(child)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return
+            if parsed != value:
+                yield from walk_dicts(parsed)
 
 
 def first_list(value: Any) -> list[Any] | None:
@@ -117,8 +128,9 @@ def user_candidates(payload: dict[str, Any]) -> list[dict[str, Any]]:
     candidates: dict[str, dict[str, Any]] = {}
     for obj in walk_dicts(payload.get("data")):
         sec_uid = obj.get("sec_uid") or obj.get("sec_user_id")
-        if not isinstance(sec_uid, str) or not sec_uid:
+        if not isinstance(sec_uid, (str, int)) or not sec_uid:
             continue
+        sec_uid = str(sec_uid)
         follower = obj.get("follower_count")
         if follower is None and isinstance(obj.get("user_info"), dict):
             follower = obj["user_info"].get("follower_count")
@@ -246,13 +258,16 @@ def pagination(payload: dict[str, Any]) -> tuple[Any, Any]:
     )
 
 
-def require_environment() -> str:
-    if os.getenv(GATE_ENV) != GATE_VALUE:
-        raise ProbeFailure(f"{GATE_ENV} must equal {GATE_VALUE}")
+def require_environment() -> tuple[str, str]:
+    gate = os.getenv(GATE_ENV)
+    if gate not in {GATE_VALUE, RESUME_GATE_VALUE}:
+        raise ProbeFailure(
+            f"{GATE_ENV} must equal {GATE_VALUE} or {RESUME_GATE_VALUE}"
+        )
     api_key = os.getenv(API_KEY_ENV)
     if not api_key:
         raise ProbeFailure(f"{API_KEY_ENV} is missing")
-    return api_key
+    return api_key, gate
 
 
 def supports_keyword(callable_obj: Callable[..., Any], name: str) -> bool:
@@ -270,6 +285,13 @@ def preflight_sdk(client: Any) -> None:
             "calculate_price": ("endpoint", "request_per_day"),
         },
         "douyin_search": {
+            "fetch_user_search": (
+                "keyword",
+                "cursor",
+                "douyin_user_fans",
+                "douyin_user_type",
+                "search_id",
+            ),
             "fetch_user_search_v2": ("keyword", "cursor"),
         },
         "douyin_app_v3": {
@@ -295,9 +317,182 @@ def preflight_sdk(client: Any) -> None:
                 )
 
 
+def key_inventory(value: Any) -> list[str]:
+    keys = {
+        str(key)
+        for obj in walk_dicts(value)
+        for key in obj.keys()
+        if "id" not in str(key).lower()
+        and "name" not in str(key).lower()
+        and "token" not in str(key).lower()
+    }
+    return sorted(keys)[:80]
+
+
+def emit_progress(summary: dict[str, Any]) -> None:
+    print("BATCH2_PROGRESS " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
+
+
+def run_resume7(api_key: str, TikHub: Any, sdk_version: str) -> int:
+    if not supports_keyword(TikHub, "max_retries"):
+        raise ProbeFailure("SDK constructor cannot enforce max_retries=0")
+
+    budget = CallBudget(max_calls=RESUME_MAX_CALLS)
+    summaries: list[dict[str, Any]] = []
+    client = TikHub(api_key=api_key, max_retries=0)
+    preflight_sdk(client)
+
+    with client:
+        usage_before = budget.call(
+            "resume_usage_before",
+            client.tikhub_user.get_user_daily_usage,
+        )
+        summary = safe_shape("resume_usage_before", usage_before)
+        summaries.append(summary)
+        emit_progress(summary)
+
+        search = budget.call(
+            "resume_user_search_v1",
+            client.douyin_search.fetch_user_search,
+            keyword="秦皇岛旅游",
+            cursor=0,
+            douyin_user_fans=None,
+            douyin_user_type=None,
+            search_id="",
+        )
+        candidates = user_candidates(search)
+        search_summary = safe_shape("resume_user_search_v1", search)
+        search_summary.update(
+            {
+                "unique_user_candidate_count": len(candidates),
+                "safe_key_inventory": key_inventory(search.get("data")),
+            }
+        )
+        summaries.append(search_summary)
+        emit_progress(search_summary)
+        selected_user = choose_ordinary_user(candidates)
+
+        profile = budget.call(
+            "resume_user_profile",
+            client.douyin_app_v3.handler_user_profile,
+            sec_user_id=selected_user["sec_uid"],
+        )
+        profile_summary = safe_shape("resume_user_profile", profile)
+        profile_summary.update(
+            {
+                "selected_follower_bucket": follower_bucket(
+                    selected_user.get("follower_count")
+                ),
+                "follower_count_present": first_value(
+                    profile.get("data"), ("follower_count",)
+                )
+                is not None,
+                "following_count_present": first_value(
+                    profile.get("data"), ("following_count",)
+                )
+                is not None,
+                "total_favorited_present": first_value(
+                    profile.get("data"), ("total_favorited",)
+                )
+                is not None,
+            }
+        )
+        summaries.append(profile_summary)
+        emit_progress(profile_summary)
+
+        posts = budget.call(
+            "resume_user_posts_page1",
+            client.douyin_app_v3.fetch_user_post_videos,
+            sec_user_id=selected_user["sec_uid"],
+            max_cursor=0,
+            count=10,
+            sort_type=0,
+        )
+        videos = video_candidates(posts)
+        posts_cursor, posts_has_more = pagination(posts)
+        posts_summary = safe_shape("resume_user_posts_page1", posts)
+        posts_summary.update(
+            {
+                "unique_video_count": len(videos),
+                "metric_coverage": metric_coverage(videos),
+                "cursor_present": posts_cursor is not None,
+                "has_more": posts_has_more,
+            }
+        )
+        summaries.append(posts_summary)
+        emit_progress(posts_summary)
+        selected_video = choose_comment_rich_video(videos)
+
+        detail = budget.call(
+            "resume_video_detail",
+            client.douyin_app_v3.fetch_multi_video_v2,
+            body=[selected_video["aweme_id"]],
+        )
+        detail_videos = video_candidates(detail)
+        detail_summary = safe_shape("resume_video_detail", detail)
+        detail_summary.update(
+            {
+                "unique_video_count": len(detail_videos),
+                "metric_coverage": metric_coverage(detail_videos),
+            }
+        )
+        summaries.append(detail_summary)
+        emit_progress(detail_summary)
+
+        comments = budget.call(
+            "resume_video_comments_page1",
+            client.douyin_app_v3.fetch_video_comments,
+            aweme_id=selected_video["aweme_id"],
+            cursor=0,
+            count=20,
+        )
+        comment_ids = {
+            str(obj.get("cid") or obj.get("comment_id"))
+            for obj in walk_dicts(comments.get("data"))
+            if isinstance(obj.get("cid") or obj.get("comment_id"), (str, int))
+        }
+        comments_summary = safe_shape("resume_video_comments_page1", comments)
+        comments_summary.update(
+            {
+                "unique_comment_count": len(comment_ids),
+                "cursor_present": first_value(
+                    comments.get("data"), ("cursor",)
+                )
+                is not None,
+                "has_more": first_value(comments.get("data"), ("has_more",)),
+            }
+        )
+        summaries.append(comments_summary)
+        emit_progress(comments_summary)
+
+        usage_after = budget.call(
+            "resume_usage_after",
+            client.tikhub_user.get_user_daily_usage,
+        )
+        usage_summary = safe_shape("resume_usage_after", usage_after)
+        usage_summary.update(usage_delta_summary(usage_before, usage_after))
+        summaries.append(usage_summary)
+        emit_progress(usage_summary)
+
+    result = {
+        "sdk_version": sdk_version,
+        "resume_after_prior_calls": 3,
+        "call_budget_max": budget.max_calls,
+        "calls_completed": budget.calls,
+        "cumulative_batch2_calls": 3 + budget.calls,
+        "raw_files_ephemeral": True,
+        "summaries": summaries,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
 def run() -> int:
-    api_key = require_environment()
+    api_key, gate = require_environment()
     from tikhub import TikHub, __version__
+
+    if gate == RESUME_GATE_VALUE:
+        return run_resume7(api_key, TikHub, __version__)
 
     if not supports_keyword(TikHub, "max_retries"):
         raise ProbeFailure("SDK constructor cannot enforce max_retries=0")
