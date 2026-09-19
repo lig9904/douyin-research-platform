@@ -122,7 +122,7 @@ class L0L1Store:
                       discovered_at, rank_value, rule_version, metadata
                     )
                     values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    on conflict(observation_key) do nothing
+                    on conflict do nothing
                     """,
                     (
                         video_id,
@@ -159,7 +159,7 @@ class L0L1Store:
                           author_follower_count, raw_metrics
                         )
                         values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        on conflict(observation_key) do nothing
+                        on conflict do nothing
                         """,
                         (
                             video_id,
@@ -250,7 +250,7 @@ class L0L1Store:
                   follower_count, raw_metrics
                 )
                 values (%s,%s,%s,%s,%s,%s,%s)
-                on conflict(observation_key) do nothing
+                on conflict do nothing
                 """,
                 (
                     account_id,
