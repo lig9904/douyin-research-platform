@@ -18,6 +18,7 @@ class PlatformResearchProvider(Protocol):
     provider_name: str
     platform_name: str
     capabilities: frozenset[str]
+    video_batch_size: int
 
     def discover(
         self,
