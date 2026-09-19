@@ -95,7 +95,7 @@ class L0L1Runner:
                 self.budget.acquire(
                     provider=self.provider.provider_name,
                     budget_key=self.budget_key,
-                    requests=math.ceil(len(ids) / 50),
+                    requests=math.ceil(len(ids) / self.provider.video_batch_size),
                 )
                 details = self.provider.fetch_videos(ids)
                 self._validate_platform(details)
