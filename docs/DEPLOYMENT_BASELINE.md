@@ -120,3 +120,18 @@ V1 最低要求：
 7. 再升级生产
 
 Windmill 发布频率很高，所以不需要追每一个版本；以稳定和功能需求驱动升级。
+
+
+## 10. PGroonga 与 PostgreSQL 18
+
+后续如果 V1 的 ILIKE / 结构化筛选无法满足中文历史全文搜索，可以在业务数据库中增加 PGroonga。
+
+当前官方兼容性：
+- PGroonga 支持 PostgreSQL 12–18
+- PGroonga 4.0.4 起加入 PostgreSQL 18 支持
+- 当前官方站点版本为 4.0.8
+- Debian/Ubuntu 的 PGDG PostgreSQL 18 有对应 PGroonga 包
+
+因此选择 PostgreSQL 18 不会阻断后续中文全文搜索路线。
+
+V1 仍然不默认安装 PGroonga，只有真实数据规模与搜索体验证明需要后再启用，并单独做索引/升级回归。
