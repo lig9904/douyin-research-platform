@@ -42,6 +42,7 @@ class VideoRef:
 
 @dataclass(slots=True)
 class MetricSnapshotInput:
+    platform: str
     video_platform_id: str
     captured_at: datetime
     provider: str
@@ -66,6 +67,7 @@ class VideoObservation:
 @dataclass(slots=True)
 class CommentSample:
     provider: str
+    platform: str
     source_endpoint: str
     video_platform_id: str
     platform_comment_id: str
