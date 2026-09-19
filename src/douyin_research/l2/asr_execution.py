@@ -13,6 +13,12 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg.types.json import Jsonb
 
+from douyin_research.providers.execution_contracts import (
+    ASR_ASYNC_CAPABILITY,
+    VerifiedExecutionContract,
+    validate_execution_contract,
+)
+
 from .transcripts import (
     ASR_EVIDENCE_VERSION,
     TaskCost,
@@ -71,6 +77,7 @@ class ASRProviderState:
 class ASRProvider(Protocol):
     provider_name: str
     max_retries: int
+    contract: VerifiedExecutionContract
 
     def submit(self, request: ASRProviderRequest) -> ASRProviderState: ...
 
@@ -121,8 +128,8 @@ class ASRExecutionCoordinator:
 
             self._preflight(request)
             provider = provider_factory()
-            self._assert_provider(provider, request)
-            job = self._reserve_and_create(request)
+            contract_fingerprint = self._assert_provider(provider, request)
+            job = self._reserve_and_create(request, contract_fingerprint)
             external_calls = 0
             try:
                 external_calls += 1
@@ -211,7 +218,11 @@ class ASRExecutionCoordinator:
             if budget[2] != request.cost_currency:
                 raise RuntimeError("daily ASR budget currency does not match request")
 
-    def _reserve_and_create(self, request: ASRExecutionRequest) -> dict[str, object]:
+    def _reserve_and_create(
+        self,
+        request: ASRExecutionRequest,
+        contract_fingerprint: str,
+    ) -> dict[str, object]:
         budget_date = request.budget_date or date.today()
         estimated_api = _decimal(request.estimated_api_cost)
         estimated_asr = _decimal(request.estimated_asr_cost)
@@ -261,6 +272,7 @@ class ASRExecutionCoordinator:
                             "sdk_retries": 0,
                             "media_ref_stored": False,
                             "semantic_inference": False,
+                            "provider_contract_fingerprint": contract_fingerprint,
                         }
                     ),
                 ),
@@ -463,11 +475,24 @@ class ASRExecutionCoordinator:
             raise ValueError("task_key already exists with different ASR execution inputs")
 
     @staticmethod
-    def _assert_provider(provider: ASRProvider, request: ASRExecutionRequest) -> None:
+    def _assert_provider(
+        provider: ASRProvider,
+        request: ASRExecutionRequest,
+    ) -> str:
         if provider.provider_name != request.provider:
             raise ValueError("ASR provider does not match request")
         if provider.max_retries != 0:
             raise ValueError("ASR provider retries must be disabled")
+        if provider.contract.max_retries != provider.max_retries:
+            raise ValueError("ASR provider retry settings do not match contract")
+        return validate_execution_contract(
+            provider.contract,
+            expected_provider=request.provider,
+            expected_capability=ASR_ASYNC_CAPABILITY,
+            expected_model_id=request.model_id,
+            expected_model_revision=request.model_revision,
+            expected_currency=request.cost_currency,
+        )
 
     @contextmanager
     def _single_paid_job(self) -> Iterator[None]:

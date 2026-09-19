@@ -12,6 +12,12 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg.types.json import Jsonb
 
+from douyin_research.providers.execution_contracts import (
+    L3_SYNC_CAPABILITY,
+    VerifiedExecutionContract,
+    validate_execution_contract,
+)
+
 from douyin_research.l2.transcripts import TaskCost
 
 from .results import (
@@ -64,6 +70,7 @@ class L3ProviderResponse:
 class L3Provider(Protocol):
     provider_name: str
     max_retries: int
+    contract: VerifiedExecutionContract
 
     def generate(self, request: L3ProviderRequest) -> L3ProviderResponse: ...
 
@@ -121,9 +128,9 @@ class L3ExecutionCoordinator:
                 provider = provider_factory()
             except Exception:
                 raise RuntimeError("L3 provider could not be initialized") from None
-            self._assert_provider(provider, request)
+            contract_fingerprint = self._assert_provider(provider, request)
 
-            job = self._reserve_and_create(request)
+            job = self._reserve_and_create(request, contract_fingerprint)
             external_calls = 0
             try:
                 external_calls += 1
@@ -244,6 +251,7 @@ class L3ExecutionCoordinator:
     def _reserve_and_create(
         self,
         request: L3ExecutionRequest,
+        contract_fingerprint: str,
     ) -> dict[str, object]:
         budget_date = request.budget_date or date.today()
         estimated_llm = _decimal(request.estimated_llm_cost)
@@ -290,6 +298,7 @@ class L3ExecutionCoordinator:
                             "sdk_retries": 0,
                             "maximum_external_calls": 1,
                             "evidence_bundle_stored": False,
+                            "provider_contract_fingerprint": contract_fingerprint,
                         }
                     ),
                 ),
@@ -491,11 +500,21 @@ class L3ExecutionCoordinator:
     def _assert_provider(
         provider: L3Provider,
         request: L3ExecutionRequest,
-    ) -> None:
+    ) -> str:
         if provider.provider_name != request.provider:
             raise ValueError("L3 provider does not match request")
         if provider.max_retries != 0:
             raise ValueError("L3 provider retries must be disabled")
+        if provider.contract.max_retries != provider.max_retries:
+            raise ValueError("L3 provider retry settings do not match contract")
+        return validate_execution_contract(
+            provider.contract,
+            expected_provider=request.provider,
+            expected_capability=L3_SYNC_CAPABILITY,
+            expected_model_id=request.model_id,
+            expected_model_revision=request.model_revision,
+            expected_currency=request.cost_currency,
+        )
 
     @staticmethod
     def _validate_response(
