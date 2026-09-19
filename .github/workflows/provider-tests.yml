@@ -6,12 +6,14 @@ on:
       - "pyproject.toml"
       - "src/**"
       - "tests/**"
+      - "db/schema.sql"
       - ".github/workflows/provider-tests.yml"
   pull_request:
     paths:
       - "pyproject.toml"
       - "src/**"
       - "tests/**"
+      - "db/schema.sql"
       - ".github/workflows/provider-tests.yml"
 
 permissions:
@@ -21,6 +23,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: test-postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgresql://douyin_research:test-research@127.0.0.1:5432/douyin_research
 
     steps:
       - uses: actions/checkout@v4
@@ -33,8 +53,28 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev]"
 
+      - name: Bootstrap test database
+        env:
+          ADMIN_DSN: postgresql://postgres:test-postgres@127.0.0.1:5432/postgres
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import psycopg
+
+          admin = os.environ["ADMIN_DSN"]
+          with psycopg.connect(admin, autocommit=True) as conn:
+              conn.execute("create role douyin_research login password 'test-research'")
+              conn.execute("create database douyin_research owner douyin_research")
+
+          dsn = os.environ["TEST_DATABASE_URL"]
+          schema = Path("db/schema.sql").read_text(encoding="utf-8")
+          with psycopg.connect(dsn, autocommit=True) as conn:
+              conn.execute(schema, prepare=False)
+          PY
+
       - name: Compile
         run: python -m compileall -q src
 
-      - name: Unit tests
+      - name: Unit and PostgreSQL integration tests
         run: pytest
