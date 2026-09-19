@@ -351,7 +351,7 @@ def _text_distribution(texts: list[str]) -> dict[str, Any]:
     repeated_flags = [bool(_REPEATED_CHAR_RE.search(text)) for text in normalized_texts]
     meaningful = [_alnum_characters(text) for text in normalized_texts]
     emoji_only_flags = [not chars for chars in meaningful]
-    short_flags = [len(chars) < 2 for chars in meaningful]
+    short_flags = [0 < len(chars) < 2 for chars in meaningful]
     duplicate_flags = [normalized_counts[text] >= 2 for text in normalized_texts]
     template_flags = [
         duplicate or has_url or emoji_only or repeated
