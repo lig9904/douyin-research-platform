@@ -107,3 +107,17 @@ V1 使用官方 Windmill Community Edition 镜像，不 fork、不修改 Windmil
 TikHub 当前 Terms 明确提示平台政策/能力可能变化，并在服务终止条款中要求停止使用且删除通过服务获得的缓存或存储数据。
 
 因此所有第三方原始数据必须保留 provider/provenance，系统必须能够按 provider、实体和时间范围定位并删除外部源数据。原始数据、人工标注和衍生研究结果不得设计成不可拆分的单一 JSON。
+
+
+## ADR-012：业务主库不使用 Windmill Data Tables
+
+Windmill Data Tables 虽然能减少数据库接入配置，但当前官方明确说明不实施数据库级权限控制，workspace 成员均可执行完整 CRUD。
+
+本项目存在 Viewer 角色，因此 `douyin_research` 继续使用独立 PostgreSQL database/resource：
+
+- Viewer 不获得 DB resource 直接读取权限
+- Full-code App backend runnable 以 publisher 身份执行受控 SQL
+- 人工写操作只能通过明确的 runnable
+- 不将底层业务库作为 workspace-wide Data Table 暴露
+
+Data Tables 后续仅可用于不敏感的临时/辅助数据，不作为研究历史事实库。
