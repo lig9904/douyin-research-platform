@@ -40,7 +40,7 @@ jobs:
         run: python -m pip install -e ".[dev]"
 
       - name: Verify paid smoke safety tests
-        run: python -m pytest tests/test_tikhub_v0_smoke.py tests/test_provider_transport.py
+        run: python -m pytest tests/test_tikhub_v0_smoke.py tests/test_tikhub_transport.py
 
       - name: Run four-call paid smoke
         env:
