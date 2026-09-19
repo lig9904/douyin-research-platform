@@ -57,7 +57,7 @@ V1 provider 名称：`tikhub`
 ```json
 {
   "platform": "douyin",
-  "signal_type": "rising_topic|hot_search|rising_search|rising_hashtag|city_hot|creator_topic|...",
+  "signal_type": "rising_topic|hot_search|rising_search|rising_hashtag|city_hot|creator_topic|creator_music|creator_material|...",
   "provider_signal_id": null,
   "signal_key": "...",
   "title": "...",
@@ -77,7 +77,9 @@ V1 provider 名称：`tikhub`
 ### Discovery
 
 - `list_video_billboard(kind, window, keyword?, category?, cursor?)`
-- `list_signals(kind, city_code?, cursor?)`
+- `list_signals(kind, city_code?, category?, window?, cursor?)`
+- `list_creator_material(kind, category?, order?, window?)`
+- `get_signal_related_videos(signal_ref, cursor?)`
 - `search_videos(query, filters, cursor?)`
 - `search_accounts(query, follower_band?, cursor?)`
 
@@ -98,48 +100,108 @@ V1 provider 名称：`tikhub`
 
 ## TikHub Mapping
 
-### Discovery
+### A. Billboard：热点/黑马发现
 
-Billboard:
-- low-follower viral
-- high completion
-- high follower growth
-- high likes
-- rising hot
-- rising search
-- rising topic
-- city hot / content tags where useful
+- `fetch_hot_total_low_fan_list`
+- `fetch_hot_total_high_play_list`
+- `fetch_hot_total_high_fan_list`
+- `fetch_hot_total_high_like_list`
+- `fetch_hot_rise_list`
+- `fetch_hot_total_high_search_list`
+- `fetch_hot_total_high_topic_list`
+- `fetch_hot_city_list`
+- `fetch_hot_total_video_list`
 
-Index/Search:
-- structured content search
+辅助：
+- `fetch_content_tag`
+- `fetch_city_list`
+- `fetch_hot_comment_word_list`
+- `fetch_hot_item_trends_list`
+
+### B. Creator：创作侧热点发现
+
+特别有价值：
+
+- `fetch_creator_hot_spot_billboard`
+- `fetch_creator_hot_topic_billboard`
+- `fetch_creator_hot_music_billboard`
+- `fetch_creator_material_center_billboard`
+
+这些接口提供旅行、剧情、二次元、创意、文化教育等可直接用于本项目的垂类标签，并支持 24小时 / 7天 / 30天或热点总榜 / 同城 / 上升榜。
+
+在线 API 文档另有：
+- `fetch_creator_material_center_related`
+
+用途：拿热点/话题/音乐的 `query_id` 后直接获取其相关视频。
+
+这比“拿热点关键词再自行搜索视频”更准确，应优先进入 V0 实测。
+
+### C. Index/Search：主动搜索
+
+- structured video/content search
 - user search with follower bands
+- current Search V1/V2 endpoints
 
-### Enrichment
+禁止继续选用 SDK/文档中已经标记 deprecated 的旧 Web/App 搜索方法。
 
-App V3:
-- `fetch_multi_video_v2` preferred for batch video details
-- `fetch_user_post_videos` for account videos (sort_type 0 latest / 1 hottest)
-- `fetch_video_comments` for comments
-- App V3 endpoints preferred over deprecated Web search/profile endpoints
+### D. App V3：入选样本补详情
+
+- `fetch_multi_video_v2`：批量视频详情
+- `fetch_user_post_videos`：账号作品
+  - sort_type=0 最新
+  - sort_type=1 最热
+  - count 建议保持 <=20
+  - normal 获取不到最新时可实测 lite fallback
+- `fetch_video_comments`：评论
+- `fetch_video_comment_replies`：评论回复
+- `handler_user_profile`：账号详情
+
+## SDK 与 REST 双通道
+
+TikHub 官方 Python SDK 当前仓库版本：`2.1.1`，项目状态标记为 Alpha。
+
+V1 原则：
+
+1. 已在 SDK 中存在且实测稳定的 endpoint → 使用 SDK。
+2. 在线 API 文档已经存在、但 SDK 暂未生成的方法 → 使用统一 REST fallback。
+3. REST fallback 仍必须经过同一个：
+   - cache
+   - budget
+   - rate bucket
+   - raw response persistence
+   - normalization
+4. 业务层不得知道某次调用来自 SDK 还是 REST。
+
+当前已确认差异案例：
+
+`fetch_creator_material_center_related`
+
+在线文档存在，但当前 SDK 仓库代码搜索未发现对应方法。
+
+因此“SDK 覆盖全部 TikHub API”不能作为系统假设；V0 必须做 SDK/API capability diff。
 
 ## Hard Rules
 
-1. `get_videos` MUST batch up to provider maximum; for TikHub App V3 use up to 50 IDs/request.
-2. Missing metrics MUST remain null; never coerce to 0.
-3. Provider-specific object IDs stay in raw/provider snapshot tables.
-4. Core business identity is Douyin account/video ID, not provider ID.
-5. Pagination MUST have configured page caps.
-6. Every paid call MUST pass `daily_budget` and rate-bucket guard.
-7. Every request SHOULD check persisted cache before external call.
-8. External raw response MUST be persistable for replay.
-9. Deprecated endpoints MUST NOT be selected when an official replacement is available.
-10. SDK version is pinned and upgraded only after V0/V1 regression tests.
+1. `get_videos` MUST batch up to provider maximum；TikHub App V3 优先最多 50 IDs/request。
+2. Missing metrics MUST remain null；never coerce to 0。
+3. Provider-specific object IDs stay in provider/raw observation tables。
+4. Core business identity is Douyin account/video ID, not provider ID。
+5. Pagination MUST have configured page caps。
+6. Every paid call MUST pass `daily_budget` and rate-bucket guard。
+7. Every request SHOULD check persisted cache before external call。
+8. External raw response MUST be persistable for replay。
+9. Deprecated endpoints MUST NOT be selected when an official replacement is available。
+10. SDK version is pinned；upgrade only after regression tests。
+11. SDK absence MUST NOT block a documented endpoint：use controlled REST fallback。
+12. Agent cannot control raw pagination freely。
 
 ## L0/L1 Allowed Provider Calls
 
 Allowed:
 - Billboard
-- Index/search
+- Creator material/hotspot billboards
+- Index/Search
+- signal → related video first page
 - batch video detail
 - basic account metadata when needed
 
@@ -165,8 +227,14 @@ L3 can request:
 
 ## References
 
-TikHub Python SDK reference:
+TikHub Python SDK:
+https://github.com/TikHub/TikHub-API-Python-SDK
+
+SDK reference:
 https://github.com/TikHub/TikHub-API-Python-SDK/blob/main/docs/reference.md
 
-TikHub App V3 user posts:
+Creator related videos:
+https://docs.tikhub.io/452620367e0
+
+App V3 user posts:
 https://docs.tikhub.io/186826223e0
