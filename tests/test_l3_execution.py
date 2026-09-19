@@ -9,6 +9,11 @@ import psycopg
 import pytest
 
 from douyin_research.l0l1 import DailyBudgetGuard
+from douyin_research.providers import (
+    EXECUTION_CONTRACT_VERSION,
+    L3_SYNC_CAPABILITY,
+    VerifiedExecutionContract,
+)
 from douyin_research.l2 import L3PromotionGate, TaskCost
 from douyin_research.l3 import (
     L3_BUDGET_KEY,
@@ -157,11 +162,36 @@ def _result(**overrides) -> L3ResearchResult:
     return L3ResearchResult(**values)
 
 
+
+def _provider_contract() -> VerifiedExecutionContract:
+    return VerifiedExecutionContract(
+        provider=PROVIDER,
+        capability=L3_SYNC_CAPABILITY,
+        contract_version=EXECUTION_CONTRACT_VERSION,
+        model_id="synthetic-model",
+        model_revision="revision-1",
+        base_url="https://relay.example.test/v1",
+        auth_scheme="bearer",
+        auth_header_name="Authorization",
+        submit_path="/responses",
+        status_path=None,
+        request_schema_version="l3-request-v1",
+        response_schema_version="l3-response-v1",
+        cost_currency="CNY",
+        polling_billed=False,
+        max_retries=0,
+        timeout_seconds=30,
+        verified_source_fingerprint="b" * 64,
+        production_ready=True,
+    )
+
+
 class FakeProvider:
     provider_name = PROVIDER
     max_retries = 0
 
     def __init__(self, response):
+        self.contract = _provider_contract()
         self.response = response
         self.calls = []
 
