@@ -11,7 +11,10 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+from douyin_research.providers.contracts import PlatformResearchProvider
 from douyin_research.providers.types import CommentSample
+
+from .ingest import L0L1Store
 
 
 @dataclass(slots=True)
@@ -30,6 +33,102 @@ class CommentIngestResult:
     observations_inserted: int
     duplicate_observations: int
     duplicate_input_items: int
+
+
+@dataclass(slots=True)
+class CommentCollectionSummary:
+    run_id: UUID
+    platform: str
+    comments_returned: int
+    new_comments: int
+    observations_inserted: int
+    duplicate_observations: int
+    pages_fetched: int
+    cross_page_duplicates_removed: int
+    cached: bool
+
+
+class CommentCollector:
+    """Fetch bounded comments through a Provider and persist normalized evidence."""
+
+    def __init__(
+        self,
+        *,
+        provider: PlatformResearchProvider,
+        evidence_store: "CommentEvidenceStore",
+        run_store: L0L1Store,
+    ) -> None:
+        self.provider = provider
+        self.evidence_store = evidence_store
+        self.run_store = run_store
+
+    def collect(
+        self,
+        video_platform_id: str,
+        *,
+        count: int = 20,
+        max_pages: int = 1,
+        max_items: int = 20,
+        sample_reason: str = "top",
+        triggered_by: str = "system",
+    ) -> CommentCollectionSummary:
+        run_id = self.run_store.create_run(
+            "comment_collection",
+            "v1.0.0",
+            triggered_by,
+            platform=self.provider.platform_name,
+        )
+        try:
+            page = self.provider.fetch_comments(
+                video_platform_id,
+                count=count,
+                max_pages=max_pages,
+                max_items=max_items,
+                sample_reason=sample_reason,
+            )
+            ingested = self.evidence_store.ingest(
+                page.items,
+                CommentIngestContext(
+                    platform=self.provider.platform_name,
+                    video_platform_id=video_platform_id,
+                    provider=self.provider.provider_name,
+                    request_fingerprint=page.request_fingerprint,
+                    run_id=run_id,
+                ),
+            )
+            pages_fetched = int(page.pagination.get("pages_fetched") or 1)
+            duplicates_removed = int(page.pagination.get("duplicates_removed") or 0)
+            self.run_store.finish_run(
+                run_id,
+                input_count=len(page.items),
+                output_count=ingested.observations_inserted,
+                summary={
+                    "llm_calls": 0,
+                    "cached": page.cached,
+                    "pages_fetched": pages_fetched,
+                    "cross_page_duplicates_removed": duplicates_removed,
+                    "new_comments": ingested.new_comments,
+                    "duplicate_observations": ingested.duplicate_observations,
+                },
+            )
+            return CommentCollectionSummary(
+                run_id=run_id,
+                platform=self.provider.platform_name,
+                comments_returned=len(page.items),
+                new_comments=ingested.new_comments,
+                observations_inserted=ingested.observations_inserted,
+                duplicate_observations=ingested.duplicate_observations,
+                pages_fetched=pages_fetched,
+                cross_page_duplicates_removed=duplicates_removed,
+                cached=page.cached,
+            )
+        except Exception as exc:
+            self.run_store.finish_run(
+                run_id,
+                status="failed",
+                summary={"llm_calls": 0, "error_type": type(exc).__name__},
+            )
+            raise
 
 
 class CommentEvidenceStore:
