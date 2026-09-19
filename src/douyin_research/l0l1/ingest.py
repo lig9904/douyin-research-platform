@@ -23,6 +23,7 @@ class DiscoveryContext:
     request_fingerprint: str
     source_count: int | None = None
     ranks: dict[str, int] | None = None
+    record_discovery: bool = True
 
 
 @dataclass(slots=True)
@@ -107,42 +108,43 @@ class L0L1Store:
 
                 self._upsert_lineage(cur, "video", video_id, context.provider)
 
-                discovery_key = _obs_key(
-                    str(context.run_id),
-                    "discovery",
-                    context.source_type,
-                    context.source_key,
-                    obs.video.platform_video_id,
-                )
-                rank = (context.ranks or {}).get(obs.video.platform_video_id)
-                cur.execute(
-                    """
-                    insert into discovery_event(
-                      video_id, provider, source_type, source_key, observation_key,
-                      discovered_at, rank_value, rule_version, metadata
-                    )
-                    values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                    on conflict do nothing
-                    """,
-                    (
-                        video_id,
-                        context.provider,
+                if context.record_discovery:
+                    discovery_key = _obs_key(
+                        str(context.run_id),
+                        "discovery",
                         context.source_type,
                         context.source_key,
-                        discovery_key,
-                        obs.video.observed_at or _utcnow(),
-                        rank,
-                        "discovery-v1.0.0",
-                        Jsonb(
-                            {
-                                "run_id": str(context.run_id),
-                                "request_fingerprint": context.request_fingerprint,
-                                "source_count": context.source_count,
-                            }
+                        obs.video.platform_video_id,
+                    )
+                    rank = (context.ranks or {}).get(obs.video.platform_video_id)
+                    cur.execute(
+                        """
+                        insert into discovery_event(
+                          video_id, provider, source_type, source_key, observation_key,
+                          discovered_at, rank_value, rule_version, metadata
+                        )
+                        values (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        on conflict do nothing
+                        """,
+                        (
+                            video_id,
+                            context.provider,
+                            context.source_type,
+                            context.source_key,
+                            discovery_key,
+                            obs.video.observed_at or _utcnow(),
+                            rank,
+                            "discovery-v1.0.0",
+                            Jsonb(
+                                {
+                                    "run_id": str(context.run_id),
+                                    "request_fingerprint": context.request_fingerprint,
+                                    "source_count": context.source_count,
+                                }
+                            ),
                         ),
-                    ),
-                )
-                discovery_inserted += cur.rowcount
+                    )
+                    discovery_inserted += cur.rowcount
 
                 if obs.metrics is not None:
                     metric_key = _obs_key(
