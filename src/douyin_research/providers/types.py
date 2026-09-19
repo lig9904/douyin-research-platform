@@ -82,6 +82,7 @@ class CommentSample:
 @dataclass(slots=True)
 class ProviderCallMeta:
     provider: str
+    platform: str
     endpoint_key: str
     request_fingerprint: str
     status: str
