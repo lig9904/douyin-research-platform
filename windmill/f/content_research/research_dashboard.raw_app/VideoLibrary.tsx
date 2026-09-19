@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Checkbox,
-  ConfigProvider,
   Input,
   Pagination,
   Select,
@@ -12,6 +11,7 @@ import {
   Tooltip,
 } from 'antd'
 import { backend } from './wmill'
+import AppShell from './AppShell'
 import './video-library.css'
 
 type Platform = {
@@ -286,87 +286,39 @@ export default function VideoLibrary({
   }
 
   return (
-    <ConfigProvider
-      theme={{
-        token: {
-          colorPrimary: '#1677ff',
-          borderRadius: 10,
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-        },
+    <AppShell
+      activeView="videos"
+      onNavigate={(next) => {
+        if (next === 'home' || next === 'videos') onNavigate(next)
       }}
+      title="视频库"
+      subtitle="多平台视频资产 / 黑马候选 / 研究流转"
+      mainClassName="video-library-main"
+      headerClassName="video-library-topbar"
+      actions={
+        <>
+          <Input.Search
+            className="global-search"
+            placeholder="搜索视频标题、账号名称、关键词..."
+            value={draft.query}
+            onChange={(e) => setDraft({ ...draft, query: e.target.value })}
+            onSearch={applyFilters}
+            allowClear
+          />
+          <Select
+            value={draft.days}
+            onChange={(days) => setDraft({ ...draft, days })}
+            options={[
+              { value: 7, label: '近7天' },
+              { value: 30, label: '近30天' },
+              { value: 90, label: '近90天' },
+            ]}
+          />
+          <Button type="primary" ghost disabled>保存筛选</Button>
+          <Button type="primary" disabled>导出结果</Button>
+        </>
+      }
     >
-      <div className="app-shell video-library-shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="brand-mark"><span /><span /><span /><span /></div>
-            <div>
-              <strong>内容研究台</strong>
-              <small>多平台洞察 · 研究资产</small>
-            </div>
-          </div>
-
-          <nav className="nav">
-            {[
-              ['⌂', '首页总览', 'home'],
-              ['▱', '平台总览', 'disabled'],
-              ['♨', '今日发现', 'disabled'],
-              ['▶', '视频库', 'videos'],
-              ['♟', '账号库', 'disabled'],
-              ['◆', '热点库', 'disabled'],
-              ['▤', '历史研究', 'disabled'],
-              ['★', '收藏专题', 'disabled'],
-              ['▥', '跨平台对比', 'disabled'],
-              ['◔', '成本与预算', 'disabled'],
-              ['⚙', '系统设置', 'disabled'],
-            ].map(([icon, label, view]) => (
-              <button
-                key={label}
-                className={view === 'videos' ? 'nav-item active' : 'nav-item'}
-                onClick={() => view === 'home' && onNavigate('home')}
-                disabled={view === 'disabled'}
-              >
-                <span>{icon}</span>{label}
-              </button>
-            ))}
-          </nav>
-
-          <div className="sidebar-quote">
-            <div>从内容中</div>
-            <strong>发现下一个可能</strong>
-          </div>
-          <div className="sidebar-foot">v1.0 · 数据事实优先</div>
-        </aside>
-
-        <main className="main video-library-main">
-          <header className="topbar video-library-topbar">
-            <div>
-              <h1>视频库</h1>
-              <p>多平台视频资产 / 黑马候选 / 研究流转</p>
-            </div>
-            <div className="top-actions">
-              <Input.Search
-                className="global-search"
-                placeholder="搜索视频标题、账号名称、关键词..."
-                value={draft.query}
-                onChange={(e) => setDraft({ ...draft, query: e.target.value })}
-                onSearch={applyFilters}
-                allowClear
-              />
-              <Select
-                value={draft.days}
-                onChange={(days) => setDraft({ ...draft, days })}
-                options={[
-                  { value: 7, label: '近7天' },
-                  { value: 30, label: '近30天' },
-                  { value: 90, label: '近90天' },
-                ]}
-              />
-              <Button type="primary" ghost disabled>保存筛选</Button>
-              <Button type="primary" disabled>导出结果</Button>
-            </div>
-          </header>
-
           <section className="platform-strip card">
             <div className="platform-title">平台筛选</div>
             <div className="platform-tabs">
@@ -812,8 +764,6 @@ export default function VideoLibrary({
           <div className="video-library-page-note">
             第 {filters.page} / {totalPages} 页 · 写操作将在对应业务流程完成后启用
           </div>
-        </main>
-      </div>
-    </ConfigProvider>
+    </AppShell>
   )
 }
