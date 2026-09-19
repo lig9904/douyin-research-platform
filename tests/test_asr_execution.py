@@ -9,6 +9,11 @@ import psycopg
 import pytest
 
 from douyin_research.l0l1 import DailyBudgetGuard
+from douyin_research.providers import (
+    ASR_ASYNC_CAPABILITY,
+    EXECUTION_CONTRACT_VERSION,
+    VerifiedExecutionContract,
+)
 from douyin_research.l2 import (
     ASR_BUDGET_KEY,
     ASR_CONFIRMATION,
@@ -107,11 +112,36 @@ def _evidence() -> TranscriptEvidence:
     )
 
 
+
+def _provider_contract() -> VerifiedExecutionContract:
+    return VerifiedExecutionContract(
+        provider=PROVIDER,
+        capability=ASR_ASYNC_CAPABILITY,
+        contract_version=EXECUTION_CONTRACT_VERSION,
+        model_id="synthetic-model",
+        model_revision="revision-1",
+        base_url="https://relay.example.test/v1",
+        auth_scheme="bearer",
+        auth_header_name="Authorization",
+        submit_path="/asr/jobs",
+        status_path="/asr/jobs/{task_ref}",
+        request_schema_version="asr-request-v1",
+        response_schema_version="asr-response-v1",
+        cost_currency="CNY",
+        polling_billed=False,
+        max_retries=0,
+        timeout_seconds=30,
+        verified_source_fingerprint="a" * 64,
+        production_ready=True,
+    )
+
+
 class FakeProvider:
     provider_name = PROVIDER
     max_retries = 0
 
     def __init__(self, submit_state, poll_states=()):
+        self.contract = _provider_contract()
         self.submit_state = submit_state
         self.poll_states = list(poll_states)
         self.submit_calls = []
