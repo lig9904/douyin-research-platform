@@ -34,7 +34,7 @@ create index if not exists idx_research_task_cost_video_time
 
 alter table transcript
   add column if not exists task_cost_id uuid
-    references research_task_cost(id) on delete restrict;
+    references research_task_cost(id) on delete cascade;
 
 create unique index if not exists uq_transcript_task_cost
   on transcript(task_cost_id)
