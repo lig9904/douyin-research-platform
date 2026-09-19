@@ -3,15 +3,35 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Callable
 
 import psycopg
 
+from douyin_research.providers.endpoints import EndpointSpec
 from douyin_research.providers.errors import ProviderBudgetError
 
 
 class DailyBudgetGuard:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
+
+    def make_before_external_call(
+        self,
+        *,
+        provider: str,
+        budget_key: str,
+    ) -> Callable[[EndpointSpec], None]:
+        """Build a provider hook that reserves one uncached request at a time."""
+
+        def reserve(spec: EndpointSpec) -> None:
+            self.acquire(
+                provider=provider,
+                budget_key=budget_key,
+                requests=1,
+                estimated_cost=float(spec.unit_cost_usd or 0.0),
+            )
+
+        return reserve
 
     def configure(self, *, provider: str, budget_key: str, max_requests: int | None,
                   max_cost: float | None, budget_date: date | None = None) -> None:
