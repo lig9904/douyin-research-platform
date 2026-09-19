@@ -217,16 +217,23 @@ create table if not exists video_comment (
   id uuid primary key default gen_random_uuid(),
   video_id uuid not null references source_video(id) on delete cascade,
   provider text not null,
+  source_endpoint text,
   platform_comment_id text,
+  parent_platform_comment_id text,
   text_content text,
   like_count bigint,
-  published_at timestamptz,
+  reply_count bigint,
+  sample_reason text not null default 'top',
+  raw_ref text,
   raw_payload jsonb,
-  captured_at timestamptz not null default now()
+  published_at timestamptz,
+  captured_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  observation_count bigint not null default 1
 );
 
-create unique index if not exists uq_video_comment_provider_id
-  on video_comment(provider, platform_comment_id)
+create unique index if not exists uq_video_comment_provider_video_id
+  on video_comment(provider, video_id, platform_comment_id)
   where platform_comment_id is not null;
 
 -- Low-cost visual preprocessing. Images themselves are temporary in V1;
