@@ -16,6 +16,7 @@ from .types import ProviderCallMeta, ProviderPage, VideoObservation
 class TikHubDouyinProvider:
     provider_name = "tikhub"
     platform_name = "douyin"
+    video_batch_size = 50
     capabilities = frozenset({
         "discover.low_fan",
         "discover.creator_material",
@@ -117,8 +118,8 @@ class TikHubDouyinProvider:
         deduped = list(dict.fromkeys(ids))
         results: list[VideoObservation] = []
         spec = get_endpoint("douyin.app.multi_video_v2")
-        for i in range(0, len(deduped), 50):
-            chunk = deduped[i : i + 50]
+        for i in range(0, len(deduped), self.video_batch_size):
+            chunk = deduped[i : i + self.video_batch_size]
             page = self._video_page(
                 spec,
                 {"body": chunk},
