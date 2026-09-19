@@ -20,6 +20,8 @@ create table if not exists account_metric_snapshot (
   id bigserial primary key,
   account_id uuid not null references source_account(id) on delete cascade,
   provider text not null,
+  source_endpoint text,
+  observation_key text,
   captured_at timestamptz not null default now(),
   follower_count bigint,
   following_count bigint,
@@ -49,6 +51,10 @@ create table if not exists source_video (
   published_at timestamptz,
   duration_ms integer,
   availability_status text not null default 'available',
+  research_level smallint not null default 0,
+  monitoring_status text not null default 'observe',
+  monitoring_priority numeric,
+  next_due_at timestamptz,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
   unique (platform, platform_video_id)
@@ -121,16 +127,20 @@ create table if not exists discovery_event (
   provider text not null,
   source_type text not null,
   source_key text,
+  observation_key text not null,
   discovered_at timestamptz not null default now(),
   rank_value numeric,
   rule_version text,
-  metadata jsonb
+  metadata jsonb,
+  unique(observation_key)
 );
 
 create table if not exists metric_snapshot (
   id bigserial primary key,
   video_id uuid not null references source_video(id) on delete cascade,
   provider text not null,
+  source_endpoint text,
+  observation_key text,
   captured_at timestamptz not null default now(),
   play_count bigint,
   like_count bigint,
@@ -446,6 +456,9 @@ create table if not exists daily_budget (
 );
 
 create index if not exists idx_account_metric_time on account_metric_snapshot(account_id, captured_at desc);
+create unique index if not exists uq_account_metric_observation
+  on account_metric_snapshot(observation_key)
+  where observation_key is not null;
 create index if not exists idx_provider_account_time on provider_account_snapshot(account_id, provider, captured_at desc);
 create index if not exists idx_video_published_at on source_video(published_at desc);
 create index if not exists idx_video_account on source_video(account_id);
@@ -454,6 +467,12 @@ create index if not exists idx_signal_type_seen on external_signal(signal_type, 
 create index if not exists idx_signal_snapshot_time on signal_snapshot(signal_id, captured_at desc);
 create index if not exists idx_discovery_video_time on discovery_event(video_id, discovered_at desc);
 create index if not exists idx_metric_video_time on metric_snapshot(video_id, captured_at desc);
+create unique index if not exists uq_metric_observation
+  on metric_snapshot(observation_key)
+  where observation_key is not null;
+create index if not exists idx_video_monitor_due
+  on source_video(monitoring_status, next_due_at)
+  where monitoring_status <> 'stopped';
 create index if not exists idx_comment_video on video_comment(video_id);
 create index if not exists idx_analysis_video_time on analysis_run(video_id, created_at desc);
 create index if not exists idx_analysis_signal_time on analysis_run(signal_id, created_at desc);
