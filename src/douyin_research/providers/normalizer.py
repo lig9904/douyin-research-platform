@@ -172,6 +172,8 @@ def normalize_comment_samples(
     endpoint_key: str,
     observed_at: datetime,
     sample_reason: str = "top",
+    parent_platform_comment_id: str | None = None,
+    raw_ref: str | None = None,
 ) -> list[CommentSample]:
     """Extract and deduplicate comments without leaking provider nesting upward."""
     validated = validate_tikhub_envelope(payload)
@@ -197,6 +199,7 @@ def normalize_comment_samples(
                 video_platform_id=video_platform_id,
                 platform_comment_id=comment_id,
                 text=text,
+                parent_platform_comment_id=parent_platform_comment_id,
                 like_count=_first_int(obj, "digg_count", "like_count"),
                 published_at=published_at,
                 reply_count=_first_int(
@@ -208,6 +211,7 @@ def normalize_comment_samples(
                 ),
                 sample_reason=sample_reason,
                 observed_at=observed_at,
+                raw_ref=raw_ref,
             )
         )
     return comments
