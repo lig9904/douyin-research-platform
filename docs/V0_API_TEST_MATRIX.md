@@ -45,6 +45,23 @@
 
 结论边界：本轮证明认证、SDK 调用路径和四个端点当前可用，因此对应矩阵标记为 PARTIAL；尚未证明字段完整性、普通小号/中腰部/星图覆盖率、分页稳定性、删除/私密映射、准确性、计费和长期稳定性，不能标记 PASS，也不满足冻结条件。
 
+## A3. 正式 Key 第二批：账号到评论链路
+
+2026-09-19 第二批累计严格限制为 10 次请求：
+
+- [首次运行](https://github.com/lig9904/douyin-research-platform/actions/runs/35436732311)完成 3 次：daily usage、评论端点 calculate_price、账号搜索 V2 均返回 `code=200`；因 V2 响应未被原解析器识别出稳定 `sec_uid`，程序立即停止，后续 7 次未执行。
+- PR #15 增加字符串化嵌套 JSON 解析、账号搜索 V1 恢复路径和独立 `BATCH2_RESUME7` 七调用硬闸门。
+- [恢复运行](https://github.com/lig9904/douyin-research-platform/actions/runs/35436920483)完成 7 次；两次合计正好 10 次，SDK 重试为 0。
+- 账号搜索 V1 返回 10 个稳定候选，自动选择到 1万–10万粉丝档的公开普通账号。
+- 用户详情返回粉丝数、关注数、总获赞字段。
+- 用户作品第一页返回 11 个唯一视频，且 11/11 均存在播放、点赞、评论、分享、收藏指标；同时返回 cursor 和 `has_more=1`。
+- App V3 批量详情对其中 1 个视频返回 1 项，五项核心指标均存在。
+- 评论第一页返回 20 条唯一评论，同时返回 cursor 和 `has_more=1`。
+- daily usage 前后共有 6 个数值字段发生变化，包含请求量与余额用量相关字段；日志不公开账户总量或余额值。
+- 所有日志仅保留字段存在性、数量、粉丝档位和分页信号；未输出 API Key、完整 request ID、账号/作品/评论 ID 或昵称。原始响应未上传并已清理。
+
+结论边界：账号搜索、账号详情、账号作品、普通作品播放量、批量详情、评论第一页、calculate_price 和 daily usage 已获得真实证据，但样本量仍小；第二页、评论回复、删除/私密作品、星图账号、更多粉丝档、准确性对照及数据库账单对账尚未完成，因此均保持 PARTIAL。
+
 ## B. Billboard / 发现层
 
 | 能力 | 预期用途 | L层 | 实测重点 | 生产频率候选 | 状态 |
@@ -71,7 +88,7 @@
 | 能力 | 用途 | L层 | 实测重点 | 状态 |
 |---|---|---:|---|---|
 | 普通视频搜索 | 关键词研究 | L0/L1 | search_id/cursor、分页、排序 | PARTIAL |
-| 普通账号搜索 | 低粉账号/对标 | L0/L1 | 粉丝档筛选、分页、ID | PENDING |
+| 普通账号搜索 | 低粉账号/对标 | L0/L1 | 粉丝档筛选、分页、ID | PARTIAL |
 | Index 视频查询 | 结构化样本池 | L0/L1 | low-fan/high-completion等筛选 | PENDING |
 | Index filter options | 动态枚举 | L0 | tags/categories是否稳定 | PENDING |
 | 多关键词热度趋势 | 趋势事实层 | Intelligence | 日期、地域、指标 | PENDING |
@@ -97,10 +114,10 @@
 |---|---|---:|---|---|
 | 批量视频详情 V2 | metric snapshot主链 | L1/L2 | 50条上限、字段完整性、删除/私密状态 | PARTIAL |
 | 单视频详情 | fallback | L2 | 与batch字段差异 | PENDING |
-| 用户详情 | 重点账号补充 | L2 | follower等指标 | PENDING |
-| 用户作品 normal | 账号监控 | L1 | 最新作品、cursor | PENDING |
+| 用户详情 | 重点账号补充 | L2 | follower等指标 | PARTIAL |
+| 用户作品 normal | 账号监控 | L1 | 最新作品、cursor | PARTIAL |
 | 用户作品 lite | normal fallback | L1 | 与normal差异 | PENDING |
-| 视频评论 | 重点Case | L2/L3 | default count、cursor、排序 | PENDING |
+| 视频评论 | 重点Case | L2/L3 | default count、cursor、排序 | PARTIAL |
 | 评论回复 | 深研 | L3 | pagination/成本 | PENDING |
 | 分享链接解析 | 人工提交URL | L1 | URL类型兼容 | PENDING |
 
@@ -118,8 +135,8 @@
 
 | 能力 | 重点验证 | 状态 |
 |---|---|---|
-| calculate_price | 每个生产endpoint的真实阶梯报价 | PENDING |
-| get_user_daily_usage | 与本地 external_api_call 对账 | PENDING |
+| calculate_price | 每个生产endpoint的真实阶梯报价 | PARTIAL |
+| get_user_daily_usage | 与本地 external_api_call 对账 | PARTIAL |
 | 429 | Retry-After / SDK异常类型 / 是否计费 | PENDING |
 | 402/余额不足 | SDK异常类型、是否重试 | PENDING |
 | 5xx | SDK重试次数、实际退避 | PENDING |
