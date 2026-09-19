@@ -167,6 +167,84 @@ create unique index if not exists uq_video_comment_provider_id
   on video_comment(provider, platform_comment_id)
   where platform_comment_id is not null;
 
+-- Low-cost visual preprocessing. Images themselves are temporary in V1;
+-- only deterministic metadata, timestamps and OCR output are persisted.
+create table if not exists visual_probe (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid not null references source_video(id) on delete cascade,
+  source_provider text,
+  source_fingerprint text not null,
+  probe_version text not null,
+  duration_ms bigint,
+  width integer,
+  height integer,
+  fps numeric,
+  frame_count bigint,
+  video_codec text,
+  audio_present boolean,
+  audio_codec text,
+  bitrate bigint,
+  scene_threshold numeric,
+  scene_change_count integer,
+  hook_scene_change_count integer,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  unique(video_id, source_fingerprint, probe_version)
+);
+
+create table if not exists visual_frame_event (
+  id bigserial primary key,
+  probe_id uuid not null references visual_probe(id) on delete cascade,
+  frame_type text not null,
+  timestamp_ms bigint not null,
+  scene_score numeric,
+  frame_hash text,
+  selected_for_visual boolean not null default false,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create index if not exists idx_visual_frame_probe_time
+  on visual_frame_event(probe_id, timestamp_ms);
+
+create table if not exists ocr_run (
+  id uuid primary key default gen_random_uuid(),
+  video_id uuid not null references source_video(id) on delete cascade,
+  source_fingerprint text not null,
+  engine text not null,
+  model_det text,
+  model_rec text,
+  engine_version text,
+  sampling_profile text not null,
+  resize_profile text,
+  stage text not null,
+  status text not null default 'completed',
+  frame_count integer,
+  detected_text_frames integer,
+  unique_text_chars integer,
+  mean_confidence numeric,
+  processing_ms bigint,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists ocr_segment (
+  id bigserial primary key,
+  run_id uuid not null references ocr_run(id) on delete cascade,
+  start_ms bigint not null,
+  end_ms bigint not null,
+  text_content text not null,
+  normalized_text text,
+  confidence numeric,
+  bbox jsonb,
+  source_frame_count integer not null default 1,
+  metadata jsonb not null default '{}'::jsonb
+);
+
+create index if not exists idx_ocr_run_video_time
+  on ocr_run(video_id, created_at desc);
+create index if not exists idx_ocr_segment_run_time
+  on ocr_segment(run_id, start_ms);
+
 create table if not exists transcript (
   id uuid primary key default gen_random_uuid(),
   video_id uuid not null references source_video(id) on delete cascade,
