@@ -391,6 +391,7 @@ def main(
                   and c.status='completed'
                   and c.task_type=%s
                   and c.task_version=%s
+                  and c.video_id=a.video_id
                   and c.input_fingerprint=a.input_fingerprint
                   and c.output_fingerprint=a.output_fingerprint
                 order by a.created_at desc, a.id desc

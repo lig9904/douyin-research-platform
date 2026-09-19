@@ -379,14 +379,34 @@ def test_video_library_l3_empty_state_excludes_incomplete_and_failed_records() -
     module = load_backend()
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into source_video(platform, platform_video_id, research_level)
+            values ('douyin', 'video-lib-other-cost-owner', 3)
+            returning id
+            """
+        )
+        other_video_id = cur.fetchone()[0]
         invalid_cost_ids = []
-        for task_key, schema_version, fingerprint in (
+        for task_key, schema_version, fingerprint, cost_video_id in (
             (
                 "video-library-l3-private",
                 "l3-research-v1.0.0",
                 "private-review-input",
+                video_id,
             ),
-            ("video-library-l3-wrong-schema", "wrong-schema", "wrong-schema-input"),
+            (
+                "video-library-l3-wrong-schema",
+                "wrong-schema",
+                "wrong-schema-input",
+                video_id,
+            ),
+            (
+                "video-library-l3-cross-video",
+                "l3-research-v1.0.0",
+                "cross-video-input",
+                other_video_id,
+            ),
         ):
             cur.execute(
                 """
@@ -402,7 +422,7 @@ def test_video_library_l3_empty_state_excludes_incomplete_and_failed_records() -
                 (
                     task_key,
                     schema_version,
-                    video_id,
+                    cost_video_id,
                     fingerprint,
                     f"{fingerprint}-output",
                 ),
@@ -432,7 +452,11 @@ def test_video_library_l3_empty_state_excludes_incomplete_and_failed_records() -
               (%s, 'l3_structured_research', 'L3', 'completed',
                'l3-research-v1.0.0', 'orphan-input', 'orphan-output',
                '{"privacy_reviewed":true,"narrative_structure":["orphan"]}'::jsonb,
-               null, now()+interval '3 minutes')
+               null, now()+interval '3 minutes'),
+              (%s, 'l3_structured_research', 'L3', 'completed',
+               'l3-research-v1.0.0', 'cross-video-input', 'cross-video-input-output',
+               '{"privacy_reviewed":true,"narrative_structure":["cross video"]}'::jsonb,
+               %s, now()+interval '4 minutes')
             """,
             (
                 video_id,
@@ -442,6 +466,8 @@ def test_video_library_l3_empty_state_excludes_incomplete_and_failed_records() -
                 video_id,
                 invalid_cost_ids[1],
                 video_id,
+                video_id,
+                invalid_cost_ids[2],
             ),
         )
         conn.commit()
