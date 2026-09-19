@@ -1,0 +1,97 @@
+name: douyin-research-platform
+
+x-windmill-common: &windmill-common
+  image: ghcr.io/windmill-labs/windmill:${WINDMILL_VERSION:-1.815.0}
+  restart: unless-stopped
+  environment:
+    DATABASE_URL: ${WINDMILL_DATABASE_URL}
+    BASE_URL: ${WINDMILL_BASE_URL:-http://localhost:8000}
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - research
+  logging:
+    driver: json-file
+    options:
+      max-size: "20m"
+      max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    shm_size: 512m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-windmill}
+      RESEARCH_DB_NAME: ${RESEARCH_DB_NAME:-douyin_research}
+      RESEARCH_DB_USER: ${RESEARCH_DB_USER:-douyin_research}
+      RESEARCH_DB_PASSWORD: ${RESEARCH_DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./db/init/01-bootstrap-research.sh:/docker-entrypoint-initdb.d/01-bootstrap-research.sh:ro
+      - ./db/schema.sql:/bootstrap/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-windmill}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - research
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  windmill_server:
+    <<: *windmill-common
+    environment:
+      DATABASE_URL: ${WINDMILL_DATABASE_URL}
+      BASE_URL: ${WINDMILL_BASE_URL:-http://localhost:8000}
+      MODE: server
+    ports:
+      - "${WINDMILL_BIND_HOST:-127.0.0.1}:${WINDMILL_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/version >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    volumes:
+      - windmill_worker_logs:/tmp/windmill/logs
+
+  windmill_worker:
+    <<: *windmill-common
+    environment:
+      DATABASE_URL: ${WINDMILL_DATABASE_URL}
+      BASE_URL: ${WINDMILL_BASE_URL:-http://windmill_server:8000}
+      MODE: worker
+      WORKER_GROUP: default
+    volumes:
+      - windmill_worker_cache:/tmp/windmill/cache
+      - windmill_worker_logs:/tmp/windmill/logs
+
+  windmill_worker_native:
+    <<: *windmill-common
+    environment:
+      DATABASE_URL: ${WINDMILL_DATABASE_URL}
+      BASE_URL: ${WINDMILL_BASE_URL:-http://windmill_server:8000}
+      MODE: worker
+      WORKER_GROUP: native
+      NATIVE_MODE: "true"
+      SLEEP_QUEUE: "200"
+    volumes:
+      - windmill_worker_logs:/tmp/windmill/logs
+
+volumes:
+  postgres_data:
+  windmill_worker_cache:
+  windmill_worker_logs:
+
+networks:
+  research:
+    driver: bridge
