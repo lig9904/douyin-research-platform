@@ -279,6 +279,7 @@ class TikHubDouyinProvider:
             },
             video_id=video_id,
             sample_reason="thread_root",
+            parent_comment_id=comment_id,
             force_refresh=force_refresh,
         )
 
@@ -290,6 +291,7 @@ class TikHubDouyinProvider:
         video_id: str,
         sample_reason: str,
         force_refresh: bool,
+        parent_comment_id: str | None = None,
     ) -> ProviderPage[CommentSample]:
         payload, fp, cached, raw_ref = self._call(
             spec,
@@ -302,6 +304,8 @@ class TikHubDouyinProvider:
             endpoint_key=spec.key,
             observed_at=utcnow(),
             sample_reason=sample_reason,
+            parent_platform_comment_id=parent_comment_id,
+            raw_ref=raw_ref,
         )
         return ProviderPage(
             items=items,
