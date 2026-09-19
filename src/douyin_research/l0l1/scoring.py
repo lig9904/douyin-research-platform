@@ -28,6 +28,7 @@ class Candidate:
     comment_count: int | None
     share_count: int | None
     followers: int | None
+    current_captured_at: datetime | None
     previous_captured_at: datetime | None
     previous_play_count: int | None
     previous_like_count: int | None
@@ -149,9 +150,7 @@ class L1Scorer:
                  max(nullif(d.metadata->>'source_count','')::int) as source_count
           from discovery_event d
           join vids v on v.video_id=d.video_id
-          join pipeline_run pr on pr.id=%s
-          where d.discovered_at between pr.started_at - interval '5 minutes'
-                                    and coalesce(pr.finished_at, now()) + interval '5 minutes'
+          where d.metadata->>'run_id' = %s
           group by d.video_id
         ),
         signals as (
@@ -192,6 +191,7 @@ class L1Scorer:
           coalesce(sc.snapshot_count,0),
           cm.play_count, cm.like_count, cm.comment_count, cm.share_count,
           cm.author_follower_count,
+          cm.captured_at,
           pm.captured_at,
           pm.play_count, pm.like_count, pm.comment_count, pm.share_count,
           b.like_median,
@@ -207,7 +207,7 @@ class L1Scorer:
         order by sv.id
         """
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (run_id, run_id))
+            cur.execute(sql, (run_id, str(run_id)))
             rows = cur.fetchall()
         return [Candidate(*row) for row in rows]
 
@@ -238,11 +238,11 @@ def _follower_efficiency(c: Candidate) -> float | None:
 
 
 def _velocity(c: Candidate) -> float | None:
-    if c.previous_captured_at is None:
+    if c.previous_captured_at is None or c.current_captured_at is None:
         return None
-    # Current snapshot timestamp is not carried separately; use metric deltas only
-    # when at least one previous metric exists.  The DB query will be tightened
-    # after V0 fixtures freeze timestamp semantics.
+    elapsed_hours = (c.current_captured_at - c.previous_captured_at).total_seconds() / 3600
+    if elapsed_hours <= 0:
+        return None
     deltas: list[float] = []
     for current, previous in (
         (c.play_count, c.previous_play_count),
@@ -251,7 +251,8 @@ def _velocity(c: Candidate) -> float | None:
         (c.share_count, c.previous_share_count),
     ):
         if current is not None and previous is not None and current >= previous:
-            deltas.append(math.log1p(current - previous))
+            per_hour = (current - previous) / elapsed_hours
+            deltas.append(math.log1p(per_hour))
     return statistics.mean(deltas) if deltas else None
 
 
