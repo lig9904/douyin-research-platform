@@ -121,3 +121,11 @@ Windmill Data Tables 虽然能减少数据库接入配置，但当前官方明�
 - 不将底层业务库作为 workspace-wide Data Table 暴露
 
 Data Tables 后续仅可用于不敏感的临时/辅助数据，不作为研究历史事实库。
+
+## ADR-020：Codex Cloud 开发采用独立分支与人工合并
+
+Codex Cloud 作为当前主要实现端，但 GitHub 仍是源码和开发状态的唯一事实来源。
+
+每个可验收任务必须从最新 `main` 创建独立分支并提交 PR。Codex Cloud 可以实现、测试和修复 CI，但 CI 通过后应停止，禁止自动合并；合并前由人工审查范围、Diff、测试证据、成本和生产闸门。
+
+不同执行端不得同时修改同一分支。正式密钥仅存放在受控环境 Secrets 中；未获得单独明确授权，不得执行真实或付费 ASR/LLM 调用。
