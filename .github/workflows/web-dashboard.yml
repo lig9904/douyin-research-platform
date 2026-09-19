@@ -1,0 +1,46 @@
+name: web-dashboard
+
+on:
+  push:
+    paths:
+      - "windmill/f/content_research/research_dashboard.raw_app/**"
+      - ".github/workflows/web-dashboard.yml"
+  pull_request:
+    paths:
+      - "windmill/f/content_research/research_dashboard.raw_app/**"
+      - ".github/workflows/web-dashboard.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: windmill/f/content_research/research_dashboard.raw_app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: windmill/f/content_research/research_dashboard.raw_app/package.json
+
+      - name: Install frontend dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Bundle React homepage
+        run: >
+          npx esbuild index.tsx
+          --bundle
+          --external:./wmill
+          --outdir=/tmp/content-research-dashboard
+          --log-level=warning
+
+      - name: Compile Windmill Python backend
+        run: python -m py_compile backend/get_home_overview.py
