@@ -290,7 +290,7 @@ function App() {
                 ]}
               />
               <Button type="primary" onClick={() => load()}>刷新数据</Button>
-              <Button>导出日报</Button>
+              <Button disabled title="日报导出将在后续页面阶段启用">导出日报</Button>
             </div>
           </header>
 
@@ -363,7 +363,7 @@ function App() {
               <article className="panel card blackhorse-panel">
                 <div className="panel-head">
                   <h2><span>▶</span> 今日黑马视频</h2>
-                  <button>查看更多 ›</button>
+                  <button disabled title="对应详情页将在下一阶段启用">查看更多 ›</button>
                 </div>
                 <div className="table-wrap">
                   <table className="data-table">
@@ -421,7 +421,7 @@ function App() {
               <article className="panel card trend-panel">
                 <div className="panel-head">
                   <h2><span>▦</span> 热点趋势</h2>
-                  <button>查看更多 ›</button>
+                  <button disabled title="对应详情页将在下一阶段启用">查看更多 ›</button>
                 </div>
                 <div className="trend-layout">
                   <div>
@@ -445,7 +445,7 @@ function App() {
               <article className="panel card cases-panel">
                 <div className="panel-head">
                   <h2><span>▣</span> 重点 Case</h2>
-                  <button>查看更多 ›</button>
+                  <button disabled title="对应详情页将在下一阶段启用">查看更多 ›</button>
                 </div>
                 <div className="case-grid">
                   {(data?.cases || []).map((item, idx) => (
@@ -477,7 +477,7 @@ function App() {
               <article className="panel card accounts-panel">
                 <div className="panel-head">
                   <h2><span>◉</span> 重点对标账号</h2>
-                  <button>查看更多 ›</button>
+                  <button disabled title="对应详情页将在下一阶段启用">查看更多 ›</button>
                 </div>
                 <div className="account-table">
                   <div className="account-head"><span>账号</span><span>粉丝数</span><span>近期黑马</span><span /></div>
@@ -486,7 +486,7 @@ function App() {
                       <div><span className="avatar">{(a.nickname || '?').slice(0, 1)}</span>{a.nickname || '未命名账号'}</div>
                       <span>{formatCount(a.follower_count)}</span>
                       <span>{a.blackhorse_count || 0}</span>
-                      <button>查看详情</button>
+                      <button disabled>查看详情</button>
                     </div>
                   ))}
                   {!data?.accounts?.length && <div className="empty-row">暂无对标账号</div>}
@@ -525,7 +525,7 @@ function App() {
               <article className="panel card history-panel">
                 <div className="panel-head">
                   <h2><span>◷</span> 历史回看</h2>
-                  <button>查看更多 ›</button>
+                  <button disabled title="对应详情页将在下一阶段启用">查看更多 ›</button>
                 </div>
                 <div className="timeline">
                   {(data?.history || []).map((h) => (
