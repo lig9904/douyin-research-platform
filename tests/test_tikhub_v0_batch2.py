@@ -102,3 +102,31 @@ def test_usage_delta_summary_discloses_no_account_totals() -> None:
     assert "108" not in rendered
     assert "99.25" not in rendered
     assert "99.2" not in rendered
+
+
+def test_user_candidates_parse_stringified_nested_json() -> None:
+    probe = _load_batch2()
+    payload = {
+        "data": {
+            "cards": [
+                {
+                    "payload": (
+                        '{"user_info":{"sec_uid":"sec-hidden",'
+                        '"follower_count":28000}}'
+                    )
+                }
+            ]
+        }
+    }
+
+    candidates = probe.user_candidates(payload)
+
+    assert candidates == [{"sec_uid": "sec-hidden", "follower_count": 28000}]
+
+
+def test_resume_budget_plus_prior_calls_never_exceeds_ten() -> None:
+    probe = _load_batch2()
+    resume = probe.CallBudget(max_calls=probe.RESUME_MAX_CALLS)
+
+    assert resume.max_calls == 7
+    assert 3 + resume.max_calls == 10
