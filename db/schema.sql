@@ -571,7 +571,7 @@ create table if not exists research_promotion_batch (
   selected_count integer not null check (selected_count >= 0),
   created_at timestamptz not null default now(),
   unique (
-    source_run_id, quota_date, rule_version,
+    source_run_id, quota_date, quota_key, rule_version,
     requested_top_n, min_score, candidate_fingerprint
   )
 );
