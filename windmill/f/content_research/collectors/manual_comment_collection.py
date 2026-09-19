@@ -19,6 +19,7 @@ from douyin_research.l0l1 import (
     DailyBudgetGuard,
     L0L1Store,
 )
+from douyin_research.providers.errors import ProviderError, ProviderRateLimitError
 from douyin_research.providers.store import PostgresProviderStore
 from douyin_research.providers.tikhub_provider import TikHubProvider
 from douyin_research.providers.transport import TikHubTransport
@@ -180,12 +181,32 @@ def _load_api_key() -> str:
     return wmill.get_variable("f/content_research/tikhub_api_key")
 
 
+class _RedactingTransport:
+    """Keep upstream exception payloads out of DB metadata and Windmill logs."""
+
+    def __init__(self, transport: TikHubTransport) -> None:
+        self.transport = transport
+
+    def call(self, spec, kwargs):
+        try:
+            return self.transport.call(spec, kwargs)
+        except ProviderRateLimitError as exc:
+            raise ProviderRateLimitError(
+                "TikHub request was rate limited",
+                retry_after=exc.retry_after,
+            ) from None
+        except ProviderError as exc:
+            raise type(exc)("TikHub request failed") from None
+        except Exception:
+            raise RuntimeError("TikHub request failed") from None
+
+
 def _collect(dsn: str, api_key: str, request: ManualRequest):
     transport = TikHubTransport(api_key, max_retries=0)
     try:
         guard = DailyBudgetGuard(dsn)
         provider = TikHubProvider(
-            transport=transport,
+            transport=_RedactingTransport(transport),
             store=PostgresProviderStore(dsn),
             before_external_call=guard.make_before_external_call(
                 provider=PROVIDER,
