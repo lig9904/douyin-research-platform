@@ -1,0 +1,12 @@
+{
+  "value": {
+    "host": "postgres",
+    "port": 5432,
+    "user": "douyin_research",
+    "password": "$var:f/content_research/research_db_password",
+    "dbname": "douyin_research",
+    "sslmode": "disable"
+  },
+  "description": "多平台内容研究业务库（Windmill Docker 内网）",
+  "resource_type": "postgresql"
+}
