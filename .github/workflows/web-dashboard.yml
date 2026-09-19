@@ -42,5 +42,7 @@ jobs:
           --outdir=/tmp/content-research-dashboard
           --log-level=warning
 
-      - name: Compile Windmill Python backend
-        run: python -m py_compile backend/get_home_overview.py
+      - name: Compile Windmill Python backends
+        run: |
+          python -m py_compile backend/get_home_overview.py
+          python -m py_compile backend/get_video_library.py
