@@ -205,6 +205,7 @@ class TikHubDouyinProvider:
 
         items: list[CommentSample] = []
         seen: set[str] = set()
+        duplicates_removed = 0
         current_cursor: int | str = cursor
         pages: list[ProviderPage[CommentSample]] = []
 
@@ -219,6 +220,7 @@ class TikHubDouyinProvider:
             pages.append(page)
             for item in page.items:
                 if item.platform_comment_id in seen:
+                    duplicates_removed += 1
                     continue
                 seen.add(item.platform_comment_id)
                 items.append(item)
@@ -248,7 +250,7 @@ class TikHubDouyinProvider:
                 **last.pagination,
                 "pages_fetched": len(pages),
                 "unique_items": len(items),
-                "duplicates_removed": sum(len(page.items) for page in pages) - len(items),
+                "duplicates_removed": duplicates_removed,
             },
             raw_ref=last.raw_ref,
         )
