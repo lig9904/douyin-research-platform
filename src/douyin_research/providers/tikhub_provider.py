@@ -387,7 +387,7 @@ class TikHubDouyinProvider:
                     )
                 )
                 validate_tikhub_envelope(cached.payload)
-                return cached.payload, fp, True, f"cache:{fp}"
+                return cached.payload, fp, True, cached.raw_ref or f"cache:{fp}"
 
         if self.before_external_call is not None:
             self.before_external_call(spec)
