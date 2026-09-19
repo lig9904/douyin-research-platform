@@ -710,6 +710,7 @@ create table if not exists daily_budget (
   max_requests integer,
   spent_cost numeric(14,6) not null default 0,
   used_requests integer not null default 0,
+  cost_currency text not null default 'USD',
   updated_at timestamptz not null default now(),
   primary key (budget_date, provider, budget_key)
 );
