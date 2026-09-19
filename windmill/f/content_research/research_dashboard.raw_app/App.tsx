@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Button,
-  ConfigProvider,
   Input,
   Progress,
   Select,
@@ -12,6 +11,7 @@ import {
 } from 'antd'
 import { backend } from './wmill'
 import VideoLibrary from './VideoLibrary'
+import AppShell from './AppShell'
 
 type Platform = {
   key: string
@@ -225,86 +225,34 @@ function App() {
   }
 
   return (
-    <ConfigProvider
-      theme={{
-        token: {
-          colorPrimary: '#1677ff',
-          borderRadius: 10,
-          fontFamily:
-            '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-        },
-      }}
+    <AppShell
+      activeView="home"
+      onNavigate={(next) => next === 'videos' && setView('videos')}
+      title="内容研究台"
+      subtitle="多平台内容研究平台 · 热点采集 / 对标拆解 / 趋势洞察 / IP追踪"
+      actions={
+        <>
+          <Input.Search
+            className="global-search"
+            placeholder="搜索当前首页的视频、账号、来源..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            allowClear
+          />
+          <Select
+            value={hours}
+            onChange={setHours}
+            options={[
+              { value: 24, label: '近24小时' },
+              { value: 168, label: '近7天' },
+              { value: 720, label: '近30天' },
+            ]}
+          />
+          <Button type="primary" onClick={() => load()}>刷新数据</Button>
+          <Button disabled title="日报导出将在后续页面阶段启用">导出日报</Button>
+        </>
+      }
     >
-      <div className="app-shell">
-        <aside className="sidebar">
-          <div className="brand">
-            <div className="brand-mark"><span /><span /><span /><span /></div>
-            <div>
-              <strong>内容研究台</strong>
-              <small>多平台洞察 · 研究资产</small>
-            </div>
-          </div>
-
-          <nav className="nav">
-            {[
-              ['⌂', '首页总览', true],
-              ['▱', '平台总览', false],
-              ['♨', '今日发现', false],
-              ['▶', '视频库', false],
-              ['♟', '账号库', false],
-              ['◆', '热点库', false],
-              ['▤', '历史研究', false],
-              ['★', '收藏专题', false],
-              ['▥', '跨平台对比', false],
-              ['◔', '成本与预算', false],
-              ['⚙', '系统设置', false],
-            ].map(([icon, label, active]) => (
-              <button
-                key={String(label)}
-                className={active ? 'nav-item active' : 'nav-item'}
-                onClick={() => label === '视频库' && setView('videos')}
-                disabled={label !== '首页总览' && label !== '视频库'}
-              >
-                <span>{icon}</span>{label}
-              </button>
-            ))}
-          </nav>
-
-          <div className="sidebar-quote">
-            <div>从内容中</div>
-            <strong>发现下一个可能</strong>
-          </div>
-          <div className="sidebar-foot">v1.0 · 数据事实优先</div>
-        </aside>
-
-        <main className="main">
-          <header className="topbar">
-            <div>
-              <h1>内容研究台</h1>
-              <p>多平台内容研究平台 · 热点采集 / 对标拆解 / 趋势洞察 / IP追踪</p>
-            </div>
-            <div className="top-actions">
-              <Input.Search
-                className="global-search"
-                placeholder="搜索当前首页的视频、账号、来源..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                allowClear
-              />
-              <Select
-                value={hours}
-                onChange={setHours}
-                options={[
-                  { value: 24, label: '近24小时' },
-                  { value: 168, label: '近7天' },
-                  { value: 720, label: '近30天' },
-                ]}
-              />
-              <Button type="primary" onClick={() => load()}>刷新数据</Button>
-              <Button disabled title="日报导出将在后续页面阶段启用">导出日报</Button>
-            </div>
-          </header>
-
           <section className="platform-strip card">
             <div className="platform-title">平台分类</div>
             <div className="platform-tabs">
@@ -556,9 +504,7 @@ function App() {
               </article>
             </section>
           </Spin>
-        </main>
-      </div>
-    </ConfigProvider>
+    </AppShell>
   )
 }
 
