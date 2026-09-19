@@ -1,4 +1,4 @@
--- Douyin Research Platform V1
+-- Multi-platform Content Research Platform V1
 -- Canonical business schema. External provider payloads are stored separately.
 -- Fields will be refined after V0 interface verification.
 
@@ -67,7 +67,7 @@ create table if not exists provider_account_snapshot (
 -- Canonical video identity: provider-independent.
 create table if not exists source_video (
   id uuid primary key default gen_random_uuid(),
-  platform text not null default 'douyin',
+  platform text not null references platform_registry(platform_key),
   platform_video_id text not null,
   account_id uuid references source_account(id),
   title text,
@@ -112,7 +112,7 @@ create table if not exists provider_entity_lineage (
 create table if not exists external_signal (
   id uuid primary key default gen_random_uuid(),
   provider text not null,
-  platform text not null default 'douyin',
+  platform text not null references platform_registry(platform_key),
   signal_type text not null,
   provider_signal_id text,
   signal_key text not null,
