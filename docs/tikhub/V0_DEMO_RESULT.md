@@ -4,9 +4,12 @@
 
 ## 已可无需 API Key 验证
 
-TikHub 提供固定抖音作品 Demo：
+TikHub 提供四个免费 Demo：
 
-`GET /api/v1/demo/douyin/web/fetch_one_video`
+- `GET /api/v1/demo/douyin/app/fetch_one_video`
+- `GET /api/v1/demo/douyin/web/fetch_one_video`
+- `GET /api/v1/demo/douyin_search/app/general_search`
+- `GET /api/v1/demo/demo/cache_status`
 
 官方说明：
 - 固定 aweme_id：7534641277405531446
@@ -16,12 +19,26 @@ TikHub 提供固定抖音作品 Demo：
 
 ## 本轮在线验证
 
-实际响应：
-- HTTP 可访问
+四个端点实际响应：
+- HTTP 200
 - TikHub envelope `code=200`
 - 有 `request_id`
-- router 为 demo Douyin Web endpoint
+- `router` 与各自 Demo endpoint 一致
+
+App/Web 固定作品：
 - `data.aweme_detail` 存在
+- 都存在 `statistics.play_count`
+
+综合搜索：
+- 顶层卡片 19 个
+- `cursor=20`
+- `has_more=1`
+- 有 `backtrace`
+- 卡片内可提取稳定 `aweme_id`
+
+Cache status：
+- 有 `total_cached_items`
+- 每项有剩余缓存秒数与过期状态
 
 已观察到可用于 canonical normalize 的字段：
 - `aweme_id`
@@ -54,9 +71,15 @@ python scripts/tikhub/v0_smoke.py demo
 特点：
 - 不需要 API Key
 - 不计费
-- 校验 envelope
-- 校验 canonical 最小字段
+- 一次验证四个免费端点
+- 校验 envelope、视频 canonical 最小字段、搜索分页/ID 和缓存状态结构
 - raw response 写入 `tmp/tikhub-v0/`（已 gitignore）
+
+输出到终端的摘要不包含完整 `request_id`、作者 ID 或原始搜索结果；这些只保存在本地 gitignored raw 文件中。
+
+## 结论边界
+
+免费固定样本已经证明 App/Web 返回结构中存在播放量字段，但不能据此认定所有普通账号作品都稳定返回播放量。普通小号、中腰部账号、星图达人、删除/私密作品的覆盖率与准确性仍需正式 Key 交叉实测。
 
 ## 付费 Smoke 安全闸门
 

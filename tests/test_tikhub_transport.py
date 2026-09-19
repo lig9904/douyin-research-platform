@@ -4,7 +4,12 @@ import httpx
 import pytest
 
 from douyin_research.providers.endpoints import EndpointSpec
-from douyin_research.providers.errors import ProviderTemporaryError
+from douyin_research.providers.errors import (
+    ProviderAuthError,
+    ProviderBalanceError,
+    ProviderRateLimitError,
+    ProviderTemporaryError,
+)
 from douyin_research.providers.transport import TikHubTransport
 
 
@@ -72,3 +77,62 @@ def test_rest_fallback_has_hard_retry_limit(monkeypatch) -> None:
         transport.call(_rest_spec(), {})
 
     assert calls == 3
+
+
+def test_rest_fallback_honors_retry_after_then_succeeds(monkeypatch) -> None:
+    calls = 0
+    sleeps: list[float] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(429, headers={"Retry-After": "2"})
+        return httpx.Response(200, json={"code": 200, "request_id": "ok", "data": {}})
+
+    monkeypatch.setattr("douyin_research.providers.transport.time.sleep", sleeps.append)
+    client = httpx.Client(base_url="https://api.tikhub.io", transport=httpx.MockTransport(handler))
+    transport = TikHubTransport("fake", max_retries=3, http_client=client)
+
+    result = transport.call(_rest_spec(), {})
+
+    assert calls == 2
+    assert sleeps == [2.0]
+    assert result.retry_count == 1
+
+
+def test_rest_fallback_exposes_retry_after_at_hard_limit(monkeypatch) -> None:
+    monkeypatch.setattr("douyin_research.providers.transport.time.sleep", lambda _: None)
+    client = httpx.Client(
+        base_url="https://api.tikhub.io",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(429, headers={"Retry-After": "7"})
+        ),
+    )
+    transport = TikHubTransport("fake", max_retries=2, http_client=client)
+
+    with pytest.raises(ProviderRateLimitError) as captured:
+        transport.call(_rest_spec(), {})
+
+    assert captured.value.retry_after == 7.0
+
+
+@pytest.mark.parametrize(
+    ("status", "error_type"),
+    [(401, ProviderAuthError), (402, ProviderBalanceError)],
+)
+def test_rest_fallback_does_not_retry_permanent_account_errors(status, error_type) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(status, text="account error")
+
+    client = httpx.Client(base_url="https://api.tikhub.io", transport=httpx.MockTransport(handler))
+    transport = TikHubTransport("fake", max_retries=3, http_client=client)
+
+    with pytest.raises(error_type):
+        transport.call(_rest_spec(), {})
+
+    assert calls == 1
