@@ -89,8 +89,21 @@ Douyin Index / Billboard / Creator Center 已提供关键词趋势、关联词�
 
 趋势报告必须先使用这些结构化数据、SQL 和代码生成事实层；只有复杂解释和跨案例语义归纳才允许调用 LLM。
 
-## ADR-017：Creator V2 仅用于未来自有账号回流
+## ADR-017：自有账号回流优先使用抖音官方 OpenAPI
 
-需要 Douyin Creator Platform Cookie 的 Creator V2 不进入 V1 外部对标采集。
+V2 自有账号效果回流首先评估抖音开放平台的官方授权数据能力，包括视频播放、平均播放时长、赞评转、粉丝、主页访问和授权评论等。
 
-未来只连接我们自己的创作者账号，用于留存、跳出、流量来源、搜索关键词、观众画像等真实效果反馈。不得使用第三方账号 Cookie 或尝试绕过登录。
+需要 Douyin Creator Platform Cookie 的 TikHub Creator V2 只作为官方接口缺失的高阶补充，不进入 V1；启用前必须单独完成安全与条款评估。不得使用第三方账号 Cookie 或尝试绕过登录。
+
+
+## ADR-018：不修改 Windmill Community Edition 本体
+
+V1 使用官方 Windmill Community Edition 镜像，不 fork、不修改 Windmill 核心代码。
+
+我们的 scripts、flows、Full-code App 和数据库逻辑保持在独立 GitHub 仓库中。这样减少升级维护成本，也避免因为修改 AGPLv3 软件本体而引入额外的发布源码义务判断。
+
+## ADR-019：第三方数据必须保留来源和可清理边界
+
+TikHub 当前 Terms 明确提示平台政策/能力可能变化，并在服务终止条款中要求停止使用且删除通过服务获得的缓存或存储数据。
+
+因此所有第三方原始数据必须保留 provider/provenance，系统必须能够按 provider、实体和时间范围定位并删除外部源数据。原始数据、人工标注和衍生研究结果不得设计成不可拆分的单一 JSON。
