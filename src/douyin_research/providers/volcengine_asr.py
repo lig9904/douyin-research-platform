@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Mapping
+from dataclasses import asdict, dataclass
 from decimal import Decimal
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, uuid5
 
@@ -27,7 +30,6 @@ from .execution_contracts import (
     validate_execution_contract,
 )
 
-
 VOLCENGINE_ASR_PROVIDER = "volcengine-doubao-asr"
 VOLCENGINE_ASR_MODEL_ID = "bigmodel"
 VOLCENGINE_ASR_MODEL_REVISION = "2.0"
@@ -42,14 +44,152 @@ _SUCCESS = "20000000"
 _RUNNING = frozenset({"20000001", "20000002"})
 _NO_SPEECH = "20000003"
 _ALLOWED_FORMATS = frozenset({"raw", "wav", "mp3", "ogg"})
+VOLCENGINE_ASR_READINESS_VERSION = "volcengine-doubao-asr-readiness-v1.0.0"
+
+
+@dataclass(frozen=True, slots=True)
+class VolcengineASRReadinessFacts:
+    """Non-secret, operator-supplied facts used for a local readiness review.
+
+    This deliberately accepts only booleans and version labels.  It does not
+    accept an API key, account identifier, endpoint override, signed URL, or
+    any other credential-bearing value.
+    """
+
+    secret_configured: bool
+    model_enabled: bool
+    media_delivery_verified: bool
+    price_catalog_version: str | None
+    cost_reconciliation_version: str | None
+    polling_policy_version: str | None
+    polling_billed: bool | None
+
+
+@dataclass(frozen=True, slots=True)
+class VolcengineASRReadinessReport:
+    """Auditable local readiness result; never authorizes a paid call."""
+
+    readiness_version: str
+    provider: str
+    model_id: str
+    model_revision: str
+    engine_version: str
+    documentation_fingerprint: str
+    production_ready: bool
+    review_complete: bool
+    blockers: tuple[str, ...]
+    facts: VolcengineASRReadinessFacts
+    report_fingerprint: str
+
+    def to_dict(self) -> dict[str, object]:
+        """Return only non-secret facts suitable for a review artifact."""
+
+        return {
+            "readiness_version": self.readiness_version,
+            "provider": self.provider,
+            "model_id": self.model_id,
+            "model_revision": self.model_revision,
+            "engine_version": self.engine_version,
+            "documentation_fingerprint": self.documentation_fingerprint,
+            "production_ready": self.production_ready,
+            "review_complete": self.review_complete,
+            "blockers": list(self.blockers),
+            "facts": asdict(self.facts),
+            "report_fingerprint": self.report_fingerprint,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class _VolcengineASRWireRequest:
+    """Non-secret wire shape, intentionally without a transport operation."""
+
+    path: str
+    provider_task_ref: str
+    headers: tuple[tuple[str, str], ...]
+    payload: Mapping[str, object]
+
+
+def assess_volcengine_asr_readiness(
+    facts: VolcengineASRReadinessFacts,
+) -> VolcengineASRReadinessReport:
+    """Assess ASR launch prerequisites locally, without opening an HTTP client.
+
+    A complete report is evidence for an independent production-code review,
+    not a runtime switch: ``production_ready`` is intentionally always false.
+    """
+
+    if not isinstance(facts, VolcengineASRReadinessFacts):
+        raise TypeError("Volcengine ASR readiness facts are required")
+
+    blockers: list[str] = []
+    for name in ("secret_configured", "model_enabled", "media_delivery_verified"):
+        if type(getattr(facts, name)) is not bool:
+            raise ValueError(f"Volcengine ASR readiness fact must be boolean: {name}")
+
+    if not facts.secret_configured:
+        blockers.append("secret_not_configured")
+    if not facts.model_enabled:
+        blockers.append("model_not_enabled")
+    if not facts.media_delivery_verified:
+        blockers.append("media_delivery_not_verified")
+
+    for name in (
+        "price_catalog_version",
+        "cost_reconciliation_version",
+        "polling_policy_version",
+    ):
+        value = getattr(facts, name)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"Volcengine ASR readiness version is invalid: {name}")
+        if value is None:
+            blockers.append(f"{name}_missing")
+
+    if type(facts.polling_billed) is not bool:
+        blockers.append("polling_billing_fact_missing")
+    elif facts.polling_billed:
+        blockers.append("polling_billed_not_supported")
+
+    immutable = {
+        "readiness_version": VOLCENGINE_ASR_READINESS_VERSION,
+        "provider": VOLCENGINE_ASR_PROVIDER,
+        "model_id": VOLCENGINE_ASR_MODEL_ID,
+        "model_revision": VOLCENGINE_ASR_MODEL_REVISION,
+        "engine_version": VOLCENGINE_ASR_ENGINE_VERSION,
+        "documentation_fingerprint": VOLCENGINE_ASR_DOC_FINGERPRINT,
+        "production_ready": False,
+        "review_complete": not blockers,
+        "blockers": blockers,
+        "facts": asdict(facts),
+    }
+    fingerprint = hashlib.sha256(
+        json.dumps(
+            immutable,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    return VolcengineASRReadinessReport(
+        readiness_version=VOLCENGINE_ASR_READINESS_VERSION,
+        provider=VOLCENGINE_ASR_PROVIDER,
+        model_id=VOLCENGINE_ASR_MODEL_ID,
+        model_revision=VOLCENGINE_ASR_MODEL_REVISION,
+        engine_version=VOLCENGINE_ASR_ENGINE_VERSION,
+        documentation_fingerprint=VOLCENGINE_ASR_DOC_FINGERPRINT,
+        production_ready=False,
+        review_complete=not blockers,
+        blockers=tuple(blockers),
+        facts=facts,
+        report_fingerprint=fingerprint,
+    )
 
 
 class VolcengineDoubaoASRProvider:
     """Map the official HTTP contract into provider-neutral ASR evidence.
 
-    The adapter defaults to production_ready=False. Turning it on is an
-    operator assertion that account-side billing and polling semantics were
-    checked; the API key itself is never part of the execution contract.
+    The adapter is permanently non-production. A separate code review must
+    deliberately replace this boundary after the local readiness report is
+    complete; callers cannot switch it on at runtime.
     """
 
     provider_name = VOLCENGINE_ASR_PROVIDER
@@ -65,7 +205,6 @@ class VolcengineDoubaoASRProvider:
         cost_currency: str = "CNY",
         source_provider: str | None = None,
         timeout_seconds: int = 30,
-        production_ready: bool = False,
         client: httpx.Client | None = None,
     ) -> None:
         if not api_key.strip():
@@ -107,7 +246,7 @@ class VolcengineDoubaoASRProvider:
             max_retries=0,
             timeout_seconds=timeout_seconds,
             verified_source_fingerprint=VOLCENGINE_ASR_DOC_FINGERPRINT,
-            production_ready=production_ready,
+            production_ready=False,
         )
 
     def __repr__(self) -> str:
@@ -124,79 +263,28 @@ class VolcengineDoubaoASRProvider:
 
     def submit(self, request: ASRProviderRequest) -> ASRProviderState:
         self._assert_ready(request)
-        _validate_media_ref(request.media_ref)
-        provider_task_ref = _provider_task_ref(request.task_key)
-        response = self._post(
-            VOLCENGINE_ASR_SUBMIT_PATH,
-            task_ref=provider_task_ref,
-            include_sequence=True,
-            payload={
-                "user": {"uid": "douyin-research-platform"},
-                "audio": {
-                    "format": self._audio_format,
-                    "url": request.media_ref,
-                    "language": self._language,
-                },
-                "request": {
-                    "model_name": VOLCENGINE_ASR_MODEL_ID,
-                    "enable_itn": True,
-                    "enable_punc": True,
-                    "enable_ddc": False,
-                    "show_utterances": True,
-                    "enable_emotion_detection": False,
-                    "enable_gender_detection": False,
-                },
-            },
+        wire = _submit_wire_request(
+            request,
+            audio_format=self._audio_format,
+            language=self._language,
         )
-        status = _status_code(response)
-        if status == _SUCCESS:
-            return ASRProviderState(
-                status="submitted",
-                provider_task_ref=provider_task_ref,
-            )
-        return ASRProviderState(
-            status="failed",
-            provider_task_ref=provider_task_ref,
-            cost=self._unknown_cost(),
-            error_code=_provider_error_code(status),
+        response = self._post(wire)
+        return _map_submit_state(
+            _status_code(response),
+            wire.provider_task_ref,
+            unknown_cost=self._unknown_cost(),
         )
 
     def poll(self, provider_task_ref: str) -> ASRProviderState:
         if not provider_task_ref.strip():
             raise ValueError("Volcengine ASR provider task reference is required")
         self._assert_contract_ready()
-        response = self._post(
-            VOLCENGINE_ASR_QUERY_PATH,
-            task_ref=provider_task_ref,
-            include_sequence=False,
-            payload={},
-        )
-        status = _status_code(response)
-        if status in _RUNNING:
-            return ASRProviderState(
-                status="running",
-                provider_task_ref=provider_task_ref,
-            )
-        if status == _NO_SPEECH:
-            return ASRProviderState(
-                status="completed",
-                provider_task_ref=provider_task_ref,
-                evidence=self._evidence({}, quality_status="no_speech"),
-                cost=self._unknown_cost(),
-            )
-        if status != _SUCCESS:
-            return ASRProviderState(
-                status="failed",
-                provider_task_ref=provider_task_ref,
-                cost=self._unknown_cost(),
-                error_code=_provider_error_code(status),
-            )
-
-        payload = _json_object(response)
-        return ASRProviderState(
-            status="completed",
-            provider_task_ref=provider_task_ref,
-            evidence=self._evidence(payload),
+        response = self._post(_poll_wire_request(provider_task_ref))
+        return _map_poll_state(
+            _status_code(response),
+            provider_task_ref,
+            payload=_json_object(response) if _status_code(response) == _SUCCESS else None,
+            evidence_builder=self._evidence,
             cost=self._unknown_cost(),
         )
 
@@ -227,32 +315,20 @@ class VolcengineDoubaoASRProvider:
             expected_currency=self._cost_currency,
         )
 
-    def _post(
-        self,
-        path: str,
-        *,
-        task_ref: str,
-        include_sequence: bool,
-        payload: Mapping[str, object],
-    ) -> httpx.Response:
-        headers = {
-            "Content-Type": "application/json",
-            "X-Api-Key": self._api_key,
-            "X-Api-Resource-Id": VOLCENGINE_ASR_ENGINE_VERSION,
-            "X-Api-Request-Id": task_ref,
-        }
-        if include_sequence:
-            headers["X-Api-Sequence"] = "-1"
+    def _post(self, wire: _VolcengineASRWireRequest) -> httpx.Response:
+        self._assert_contract_ready()
+        headers = dict(wire.headers)
+        headers["X-Api-Key"] = self._api_key
         try:
             response = self._client.post(
-                VOLCENGINE_ASR_BASE_URL + path,
+                VOLCENGINE_ASR_BASE_URL + wire.path,
                 headers=headers,
-                json=payload,
+                json=wire.payload,
             )
             response.raise_for_status()
             return response
         except httpx.HTTPError:
-            raise RuntimeError("Volcengine ASR HTTP request failed") from None
+            _raise_sanitized_http_failure()
 
     def _evidence(
         self,
@@ -310,6 +386,114 @@ def _provider_task_ref(task_key: str) -> str:
     return str(uuid5(NAMESPACE_URL, f"volcengine-doubao-asr:{task_key}"))
 
 
+def _submit_wire_request(
+    request: ASRProviderRequest,
+    *,
+    audio_format: str,
+    language: str,
+) -> _VolcengineASRWireRequest:
+    """Build the inspectable non-secret submit shape; never sends it."""
+
+    _validate_media_ref(request.media_ref)
+    provider_task_ref = _provider_task_ref(request.task_key)
+    return _VolcengineASRWireRequest(
+        path=VOLCENGINE_ASR_SUBMIT_PATH,
+        provider_task_ref=provider_task_ref,
+        headers=(
+            ("Content-Type", "application/json"),
+            ("X-Api-Resource-Id", VOLCENGINE_ASR_ENGINE_VERSION),
+            ("X-Api-Request-Id", provider_task_ref),
+            ("X-Api-Sequence", "-1"),
+        ),
+        payload={
+            "user": {"uid": "douyin-research-platform"},
+            "audio": {
+                "format": audio_format,
+                "url": request.media_ref,
+                "language": language,
+            },
+            "request": {
+                "model_name": VOLCENGINE_ASR_MODEL_ID,
+                "enable_itn": True,
+                "enable_punc": True,
+                "enable_ddc": False,
+                "show_utterances": True,
+                "enable_emotion_detection": False,
+                "enable_gender_detection": False,
+            },
+        },
+    )
+
+
+def _poll_wire_request(provider_task_ref: str) -> _VolcengineASRWireRequest:
+    """Build the inspectable non-secret poll shape; never sends it."""
+
+    if not provider_task_ref.strip():
+        raise ValueError("Volcengine ASR provider task reference is required")
+    return _VolcengineASRWireRequest(
+        path=VOLCENGINE_ASR_QUERY_PATH,
+        provider_task_ref=provider_task_ref,
+        headers=(
+            ("Content-Type", "application/json"),
+            ("X-Api-Resource-Id", VOLCENGINE_ASR_ENGINE_VERSION),
+            ("X-Api-Request-Id", provider_task_ref),
+        ),
+        payload={},
+    )
+
+
+def _map_submit_state(
+    status: str,
+    provider_task_ref: str,
+    *,
+    unknown_cost: TaskCost,
+) -> ASRProviderState:
+    if status == _SUCCESS:
+        return ASRProviderState(status="submitted", provider_task_ref=provider_task_ref)
+    return ASRProviderState(
+        status="failed",
+        provider_task_ref=provider_task_ref,
+        cost=unknown_cost,
+        error_code=_provider_error_code(status),
+    )
+
+
+def _map_poll_state(
+    status: str,
+    provider_task_ref: str,
+    *,
+    payload: Mapping[str, Any] | None,
+    evidence_builder: Callable[..., TranscriptEvidence],
+    cost: TaskCost,
+) -> ASRProviderState:
+    """Map documented provider outcomes without a transport dependency."""
+
+    if status in _RUNNING:
+        return ASRProviderState(status="running", provider_task_ref=provider_task_ref)
+    if status == _NO_SPEECH:
+        return ASRProviderState(
+            status="completed",
+            provider_task_ref=provider_task_ref,
+            evidence=evidence_builder({}, quality_status="no_speech"),
+            cost=cost,
+        )
+    if status != _SUCCESS:
+        return ASRProviderState(
+            status="failed",
+            provider_task_ref=provider_task_ref,
+            cost=cost,
+            error_code=_provider_error_code(status),
+        )
+    if payload is None:
+        raise ValueError("Volcengine ASR completed response payload is required")
+    return ASRProviderState(
+        status="completed",
+        provider_task_ref=provider_task_ref,
+        evidence=evidence_builder(payload),
+        cost=cost,
+    )
+
+
 def _validate_media_ref(media_ref: str) -> None:
     parsed = urlsplit(media_ref)
     if (
@@ -331,6 +515,12 @@ def _status_code(response: httpx.Response) -> str:
 
 def _provider_error_code(status: str) -> str:
     return f"volcengine_{status}" if status.isdigit() else "volcengine_unknown"
+
+
+def _raise_sanitized_http_failure() -> None:
+    """Erase upstream request/response details before surfacing a failure."""
+
+    raise RuntimeError("Volcengine ASR HTTP request failed") from None
 
 
 def _json_object(response: httpx.Response) -> Mapping[str, Any]:
