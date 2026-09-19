@@ -1,12 +1,20 @@
 """L0/L1 ingestion and deterministic scoring."""
 
 from .budget import DailyBudgetGuard
-from .comments import CommentEvidenceStore, CommentIngestContext, CommentIngestResult
+from .comments import (
+    CommentCollectionSummary,
+    CommentCollector,
+    CommentEvidenceStore,
+    CommentIngestContext,
+    CommentIngestResult,
+)
 from .ingest import DiscoveryContext, IngestResult, L0L1Store
 from .runner import DiscoverySource, L0L1Runner
 from .scoring import L1Scorer, RULE_VERSION
 
 __all__ = [
+    "CommentCollectionSummary",
+    "CommentCollector",
     "CommentEvidenceStore",
     "CommentIngestContext",
     "CommentIngestResult",
