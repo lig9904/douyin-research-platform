@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from .endpoints import EndpointSpec, get_endpoint
 from .fingerprint import request_fingerprint
-from .normalizer import extract_pagination, normalize_video_observations, validate_tikhub_envelope
+from .normalizer import (
+    extract_pagination,
+    normalize_comment_samples,
+    normalize_video_observations,
+    validate_tikhub_envelope,
+)
 from .store import ProviderStore, utcnow
 from .transport import ProviderTransport
-from .types import ProviderCallMeta, ProviderPage, VideoObservation
+from .types import CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
 
 
 class TikHubDouyinProvider:
@@ -23,6 +28,8 @@ class TikHubDouyinProvider:
         "search.videos",
         "video.batch_detail",
         "account.posts",
+        "comments.list",
+        "comments.replies",
     })
 
     def __init__(
@@ -31,10 +38,12 @@ class TikHubDouyinProvider:
         transport: ProviderTransport,
         store: ProviderStore,
         auth_scope: str = "default",
+        before_external_call: Callable[[EndpointSpec], None] | None = None,
     ) -> None:
         self.transport = transport
         self.store = store
         self.auth_scope = auth_scope
+        self.before_external_call = before_external_call
 
     def discover(
         self,
@@ -151,6 +160,156 @@ class TikHubDouyinProvider:
         }
         return self._video_page(spec, kwargs, force_refresh=force_refresh)
 
+    def fetch_comments_page(
+        self,
+        video_id: str,
+        *,
+        cursor: int | str = 0,
+        count: int = 20,
+        sample_reason: str = "top",
+        force_refresh: bool = False,
+    ) -> ProviderPage[CommentSample]:
+        if not video_id.strip():
+            raise ValueError("video_id is required")
+        if count < 1 or count > 20:
+            raise ValueError("TikHub comment count must be between 1 and 20")
+        spec = get_endpoint("douyin.app.comments")
+        return self._comment_page(
+            spec,
+            {
+                "aweme_id": video_id,
+                "cursor": cursor,
+                "count": count,
+            },
+            video_id=video_id,
+            sample_reason=sample_reason,
+            force_refresh=force_refresh,
+        )
+
+    def fetch_comments(
+        self,
+        video_id: str,
+        *,
+        cursor: int | str = 0,
+        count: int = 20,
+        max_pages: int = 1,
+        max_items: int = 20,
+        sample_reason: str = "top",
+        force_refresh: bool = False,
+    ) -> ProviderPage[CommentSample]:
+        """Fetch bounded pages and deduplicate stable comment IDs across pages."""
+        if max_pages < 1:
+            raise ValueError("max_pages must be at least 1")
+        if max_items < 1:
+            raise ValueError("max_items must be at least 1")
+
+        items: list[CommentSample] = []
+        seen: set[str] = set()
+        current_cursor: int | str = cursor
+        pages: list[ProviderPage[CommentSample]] = []
+
+        for _ in range(max_pages):
+            page = self.fetch_comments_page(
+                video_id,
+                cursor=current_cursor,
+                count=count,
+                sample_reason=sample_reason,
+                force_refresh=force_refresh,
+            )
+            pages.append(page)
+            for item in page.items:
+                if item.platform_comment_id in seen:
+                    continue
+                seen.add(item.platform_comment_id)
+                items.append(item)
+                if len(items) >= max_items:
+                    break
+            if len(items) >= max_items:
+                break
+
+            has_more = page.pagination.get("has_more")
+            next_cursor = page.pagination.get("cursor")
+            if next_cursor is None:
+                next_cursor = page.pagination.get("max_cursor")
+            if has_more in (None, False, 0, "0"):
+                break
+            if next_cursor in (None, "") or str(next_cursor) == str(current_cursor):
+                break
+            current_cursor = next_cursor
+
+        first = pages[0]
+        last = pages[-1]
+        return ProviderPage(
+            items=items,
+            endpoint_key=first.endpoint_key,
+            request_fingerprint=first.request_fingerprint,
+            cached=all(page.cached for page in pages),
+            pagination={
+                **last.pagination,
+                "pages_fetched": len(pages),
+                "unique_items": len(items),
+                "duplicates_removed": sum(len(page.items) for page in pages) - len(items),
+            },
+            raw_ref=last.raw_ref,
+        )
+
+    def fetch_comment_replies(
+        self,
+        video_id: str,
+        comment_id: str,
+        *,
+        cursor: int | str = 0,
+        count: int = 20,
+        force_refresh: bool = False,
+    ) -> ProviderPage[CommentSample]:
+        if not video_id.strip() or not comment_id.strip():
+            raise ValueError("video_id and comment_id are required")
+        if count < 1 or count > 20:
+            raise ValueError("TikHub reply count must be between 1 and 20")
+        spec = get_endpoint("douyin.app.comment_replies")
+        return self._comment_page(
+            spec,
+            {
+                "item_id": video_id,
+                "comment_id": comment_id,
+                "cursor": cursor,
+                "count": count,
+            },
+            video_id=video_id,
+            sample_reason="thread_root",
+            force_refresh=force_refresh,
+        )
+
+    def _comment_page(
+        self,
+        spec: EndpointSpec,
+        kwargs: dict[str, Any],
+        *,
+        video_id: str,
+        sample_reason: str,
+        force_refresh: bool,
+    ) -> ProviderPage[CommentSample]:
+        payload, fp, cached, raw_ref = self._call(
+            spec,
+            kwargs,
+            force_refresh=force_refresh,
+        )
+        items = normalize_comment_samples(
+            payload,
+            video_platform_id=video_id,
+            endpoint_key=spec.key,
+            observed_at=utcnow(),
+            sample_reason=sample_reason,
+        )
+        return ProviderPage(
+            items=items,
+            endpoint_key=spec.key,
+            request_fingerprint=fp,
+            cached=cached,
+            pagination=extract_pagination(payload),
+            raw_ref=raw_ref,
+        )
+
     def _video_page(
         self,
         spec: EndpointSpec,
@@ -223,6 +382,9 @@ class TikHubDouyinProvider:
                 )
                 validate_tikhub_envelope(cached.payload)
                 return cached.payload, fp, True, f"cache:{fp}"
+
+        if self.before_external_call is not None:
+            self.before_external_call(spec)
 
         try:
             result = self.transport.call(spec, kwargs)
