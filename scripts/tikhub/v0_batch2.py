@@ -11,7 +11,6 @@ The probe is deliberately narrow:
 
 from __future__ import annotations
 
-import hashlib
 import inspect
 import json
 import os
@@ -78,10 +77,6 @@ def save_raw(label: str, payload: dict[str, Any]) -> Path:
     path = OUT_DIR / f"{now_slug()}_{label}.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
-
-
-def opaque_id(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:10]
 
 
 @dataclass
