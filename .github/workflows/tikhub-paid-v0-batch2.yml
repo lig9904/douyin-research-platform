@@ -1,6 +1,9 @@
 name: tikhub-paid-v0-batch2
 
 on:
+  push:
+    branches:
+      - "run/tikhub-paid-v0-batch2-resume7-20260919"
   workflow_dispatch:
     inputs:
       confirmation:
@@ -17,7 +20,7 @@ concurrency:
 
 jobs:
   batch2:
-    if: ${{ inputs.confirmation == 'BATCH2_10' || inputs.confirmation == 'BATCH2_RESUME7' }}
+    if: ${{ github.event_name == 'push' || inputs.confirmation == 'BATCH2_10' || inputs.confirmation == 'BATCH2_RESUME7' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -42,7 +45,7 @@ jobs:
       - name: Run capped paid batch two
         env:
           TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
-          TIKHUB_ENABLE_PAID_BATCH2: ${{ inputs.confirmation }}
+          TIKHUB_ENABLE_PAID_BATCH2: ${{ github.event_name == 'push' && 'BATCH2_RESUME7' || inputs.confirmation }}
         run: python scripts/tikhub/v0_batch2.py
 
       - name: Remove ephemeral raw responses
