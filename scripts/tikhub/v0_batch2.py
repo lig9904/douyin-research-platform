@@ -448,7 +448,6 @@ def run() -> int:
             {
                 "unique_video_count": len(detail_videos),
                 "metric_coverage": metric_coverage(detail_videos),
-                "selected_video_fingerprint": opaque_id(selected_video["aweme_id"]),
             }
         )
         summaries.append(detail_summary)
