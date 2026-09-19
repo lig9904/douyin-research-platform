@@ -1,0 +1,274 @@
+.hotspot-library-main { padding-bottom: 18px; }
+
+.hotspot-filter-card { padding: 14px; margin-bottom: 12px; }
+.hotspot-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  gap: 12px 14px;
+  align-items: end;
+}
+.hotspot-filter-grid label { display: grid; gap: 6px; min-width: 0; }
+.hotspot-filter-grid label > span { color: #65758a; font-size: 11px; font-weight: 600; }
+.hotspot-filter-grid .ant-select,
+.hotspot-filter-grid .ant-input { width: 100%; }
+.hotspot-keyword-filter { grid-column: span 2; }
+
+.hotspot-library-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 370px;
+  gap: 12px;
+  align-items: start;
+}
+
+.hotspot-list-panel { overflow: hidden; min-width: 0; }
+.hotspot-list-head {
+  min-height: 52px;
+  padding: 11px 14px;
+  border-bottom: 1px solid #edf1f6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.hotspot-list-head strong { color: #132b4e; font-size: 14px; }
+.hotspot-list-table-wrap { overflow: auto; }
+
+.hotspot-list-table {
+  width: 100%;
+  min-width: 1160px;
+  border-collapse: collapse;
+}
+.hotspot-list-table th {
+  background: #f7f9fc;
+  color: #68778b;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+  padding: 8px 7px;
+  border-bottom: 1px solid #e9eef5;
+  text-align: left;
+}
+.hotspot-list-table td {
+  color: #405067;
+  font-size: 10px;
+  padding: 9px 7px;
+  border-bottom: 1px solid #edf1f6;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.hotspot-list-table tbody tr { cursor: pointer; }
+.hotspot-list-table tbody tr:hover { background: #f8fbff; }
+.hotspot-list-table tbody tr.selected-hotspot-row { background: #eef6ff; }
+.hotspot-list-table .check-col { width: 32px; }
+.hotspot-list-table .hotspot-info-col { min-width: 230px; }
+
+.hotspot-list-info { display: flex; align-items: center; gap: 9px; }
+.hotspot-thumb {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(145deg, #ed9455, #314f80);
+  font-size: 17px;
+  flex: 0 0 auto;
+}
+.hotspot-list-info strong { display: block; color: #263950; }
+.hotspot-list-info small { display: block; color: #8f9bad; font-size: 9px; margin-top: 2px; }
+.heat-value { color: #ef4c4c !important; font-weight: 700; }
+
+.hotspot-list-footer {
+  min-height: 58px;
+  padding: 10px 14px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #edf1f6;
+}
+
+.hotspot-detail-panel {
+  position: sticky;
+  top: 14px;
+  padding: 14px;
+  max-height: calc(100vh - 28px);
+  overflow: auto;
+}
+.hotspot-detail-empty {
+  min-height: 440px;
+  display: grid;
+  place-items: center;
+  color: #9ca9b9;
+  font-size: 12px;
+}
+.hotspot-detail-head h2 { margin: 0 0 12px; color: #16325a; font-size: 17px; }
+
+.hotspot-profile {
+  display: grid;
+  grid-template-columns: 66px 1fr auto;
+  gap: 10px;
+  align-items: start;
+}
+.hotspot-detail-thumb {
+  width: 66px;
+  height: 66px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(145deg, #f0a35e, #304f7c);
+  font-size: 24px;
+}
+.hotspot-profile strong { display: block; color: #10274a; font-size: 15px; }
+.hotspot-profile small { display: block; color: #7f8da0; font-size: 9px; margin-top: 2px; }
+.hotspot-profile p {
+  margin: 6px 0 0;
+  color: #596a80;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.hotspot-meta-row {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 11px 0 8px;
+  margin-top: 10px;
+  border-top: 1px solid #edf1f6;
+  color: #738197;
+  font-size: 9px;
+}
+.hotspot-meta-row i { width: 1px; height: 14px; background: #dce3ec; }
+
+.hotspot-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 4px;
+  border-top: 1px solid #edf1f6;
+  border-bottom: 1px solid #edf1f6;
+}
+.hotspot-summary-grid > div {
+  text-align: center;
+  padding: 11px 3px;
+  border-right: 1px solid #edf1f6;
+}
+.hotspot-summary-grid > div:last-child { border-right: 0; }
+.hotspot-summary-grid strong { display: block; color: #122b50; font-size: 16px; }
+.hotspot-summary-grid > div:first-child strong { color: #ef4c4c; }
+.hotspot-summary-grid span { display: block; color: #8492a5; font-size: 8px; margin-top: 2px; }
+
+.hotspot-tags { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px 0 2px; }
+.hotspot-tags .ant-tag { margin: 0; font-size: 9px; }
+
+.hotspot-detail-section {
+  padding-top: 10px;
+  margin-top: 8px;
+  border-top: 1px solid #edf1f6;
+}
+.hotspot-detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.hotspot-detail-section-head h4 {
+  margin: 0;
+  color: #15335c;
+  font-size: 13px;
+  border-left: 3px solid #1677ff;
+  padding-left: 7px;
+}
+.hotspot-detail-section-head span { color: #8593a6; font-size: 9px; }
+
+.hotspot-trend-chart svg { width: 100%; height: 150px; }
+.hotspot-chart-grid { stroke: #e8eef6; stroke-width: 1; }
+.hotspot-chart-area { fill: rgba(22,119,255,.10); }
+.hotspot-chart-line { fill: none; stroke: #1677ff; stroke-width: 2.5; }
+.hotspot-chart-dot { fill: #fff; stroke: #1677ff; stroke-width: 2; }
+.hotspot-trend-empty {
+  min-height: 115px;
+  display: grid;
+  place-items: center;
+  color: #9aa7b7;
+  font-size: 9px;
+  background: #fafcff;
+  border-radius: 8px;
+}
+
+.hotspot-related-videos { display: grid; gap: 8px; }
+.hotspot-related-videos > div {
+  display: grid;
+  grid-template-columns: 22px 58px 1fr auto;
+  gap: 7px;
+  align-items: center;
+}
+.hotspot-related-videos > div > b {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #1677ff;
+  border-radius: 6px;
+  font-size: 9px;
+}
+.hotspot-video-thumb {
+  width: 58px;
+  height: 44px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(145deg, #294d6f, #d49b64);
+}
+.hotspot-related-videos strong {
+  display: block;
+  max-width: 190px;
+  color: #263950;
+  font-size: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hotspot-related-videos small,
+.hotspot-related-videos span {
+  display: block;
+  color: #8492a5;
+  font-size: 8px;
+  margin-top: 2px;
+}
+
+.hotspot-detail-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  position: sticky;
+  bottom: -14px;
+  background: #fff;
+  padding: 12px 0 4px;
+  margin-top: 8px;
+}
+
+.hotspot-library-page-note {
+  text-align: center;
+  color: #9aa6b7;
+  font-size: 9px;
+  margin-top: 10px;
+}
+
+@media (max-width: 1500px) {
+  .hotspot-library-layout { grid-template-columns: minmax(0, 1fr) 330px; }
+  .hotspot-filter-grid { grid-template-columns: repeat(4, minmax(140px, 1fr)); }
+}
+
+@media (max-width: 1150px) {
+  .hotspot-library-layout { grid-template-columns: 1fr; }
+  .hotspot-detail-panel { position: static; max-height: none; }
+  .hotspot-filter-grid { grid-template-columns: repeat(2, minmax(140px, 1fr)); }
+  .hotspot-keyword-filter { grid-column: span 1; }
+}
+
+@media (max-width: 760px) {
+  .hotspot-filter-grid { grid-template-columns: 1fr; }
+  .hotspot-list-footer { flex-direction: column; align-items: flex-start; }
+}
