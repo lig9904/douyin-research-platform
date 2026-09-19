@@ -17,10 +17,11 @@ GET https://api.tikhub.io/api/v1/demo/douyin/app/fetch_one_video
 - 免费
 - 无需 Authorization
 
-SDK 中已有：
-```python
-client.demo.douyin_app_fetch_one_video()
-```
+SDK 中虽然已有 `client.demo.douyin_app_fetch_one_video()`，但当前 SDK 的 BaseClient 构造器会强制解析 API Key；没有 Key 会抛 TikHubConfigError。
+
+因此拿正式 Key 前的 Demo 预验证直接使用 `httpx` / curl，不传 Authorization。不要为了统一 SDK 传假 Key。
+
+拿到正式 API Key 后，生产 Provider 再统一切换到官方 SDK。
 
 ### Douyin Web fixed video
 
