@@ -38,15 +38,22 @@ class L0L1Store:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
 
-    def create_run(self, run_type: str, run_version: str, triggered_by: str = "system") -> UUID:
+    def create_run(
+        self,
+        run_type: str,
+        run_version: str,
+        triggered_by: str = "system",
+        *,
+        platform: str | None = None,
+    ) -> UUID:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                insert into pipeline_run(run_type, run_version, triggered_by)
-                values (%s, %s, %s)
+                insert into pipeline_run(run_type, run_version, platform, triggered_by)
+                values (%s, %s, %s, %s)
                 returning id
                 """,
-                (run_type, run_version, triggered_by),
+                (run_type, run_version, platform, triggered_by),
             )
             run_id = cur.fetchone()[0]
             conn.commit()
@@ -98,6 +105,7 @@ class L0L1Store:
 
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             for obs in observations:
+                self._validate_observation(obs)
                 account_id = None
                 if obs.account is not None:
                     account_id = self._upsert_account(cur, obs, context)
@@ -114,6 +122,7 @@ class L0L1Store:
                         "discovery",
                         context.source_type,
                         context.source_key,
+                        obs.video.platform,
                         obs.video.platform_video_id,
                     )
                     rank = (context.ranks or {}).get(obs.video.platform_video_id)
@@ -151,6 +160,7 @@ class L0L1Store:
                         str(context.run_id),
                         "metric",
                         obs.metrics.source_endpoint,
+                        obs.video.platform,
                         obs.video.platform_video_id,
                     )
                     cur.execute(
@@ -194,6 +204,7 @@ class L0L1Store:
                         video_id,
                         Jsonb(
                             {
+                                "platform": obs.video.platform,
                                 "source_type": context.source_type,
                                 "source_key": context.source_key,
                             }
@@ -243,6 +254,7 @@ class L0L1Store:
                 str(context.run_id),
                 "account_metric",
                 context.source_type,
+                account.platform,
                 account.platform_account_id,
             )
             cur.execute(
@@ -308,6 +320,19 @@ class L0L1Store:
             ),
         )
         return cur.fetchone()
+
+    @staticmethod
+    def _validate_observation(obs: VideoObservation) -> None:
+        if not obs.video.platform:
+            raise ValueError("video.platform is required")
+        if obs.account is not None and obs.account.platform != obs.video.platform:
+            raise ValueError(
+                f"account platform {obs.account.platform} != video platform {obs.video.platform}"
+            )
+        if obs.metrics is not None and obs.metrics.platform != obs.video.platform:
+            raise ValueError(
+                f"metric platform {obs.metrics.platform} != video platform {obs.video.platform}"
+            )
 
     @staticmethod
     def _upsert_lineage(cur, entity_type: str, entity_id: UUID, provider: str) -> None:
