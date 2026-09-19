@@ -245,3 +245,83 @@ V1 只维护一张“九九项目词表”，版本化记录：
 - updated_at
 
 不要频繁按视频创建新词表。
+
+
+## 15. 本地 ASR 深挖后的最终结论（2026-09-19）
+
+继续核验了两个成熟本地候选：
+
+### SenseVoiceSmall / FunASR
+
+- SenseVoiceSmall：234M 参数
+- 中文 / 粤语 / 英文 / 日文 / 韩文
+- 官方中文 benchmark 相对 Whisper 有优势
+- FunASR 当前 release：1.4.16（2026-09-18）
+- FunASR/SenseVoice repo 源码 MIT
+- 官方 SenseVoiceSmall 权重采用 FunASR Model Open Source License Agreement v1.1
+- 官方维护者已澄清：遵守该模型协议时允许商业使用官方 SenseVoiceSmall 权重，但需保留出处/作者/模型名称
+
+### faster-whisper
+
+- 当前 release：1.2.1
+- MIT
+- Python >=3.9
+- CPU int8 可运行
+- 官方 benchmark：i7-12700K/8线程，Whisper-small 13分钟音频约1m42s、约1.48GB RAM
+- 多语种、VAD、时间戳生态成熟
+
+### 为什么 V1 仍不自建
+
+火山引擎官网当前豆包语音识别模型 2.0：
+
+- 录音文件识别：0.8 元/小时
+- 流式语音识别：1.0 元/小时
+
+本项目只对 L2/L3 少量视频 ASR。
+
+估算示例：
+
+```text
+100 条/月 × 平均 1 分钟 = 1.67 小时/月
+ASR ≈ 1.34 元/月
+
+500 条/月 × 平均 1 分钟 = 8.33 小时/月
+ASR ≈ 6.67 元/月
+
+100 小时/月
+ASR ≈ 80 元/月
+```
+
+即使实际价格因套餐/版本不同需要在控制台复核，量级已经足够说明：
+
+**V1 的主要成本不是 ASR。**
+
+因此为了省每月几元到几十元而维护：
+- 专用 worker image
+- 模型权重
+- CPU/GPU 资源
+- 模型升级
+- 中文准确率回归
+- 模型许可证/归属
+- 冷启动/缓存
+
+性价比不成立。
+
+### 最终决策
+
+V1：
+- 默认：火山引擎录音文件识别/极速版
+- 不部署本地 ASR worker
+
+后续触发以下任一条件再评估本地：
+- ASR 月成本持续明显高于本地运维成本
+- 音频不能出园区
+- 云 ASR 稳定性成为瓶颈
+- 需要离线批量超大规模转写
+- 需要 SenseVoice 特有的中文/粤语/情感事件能力
+
+未来本地 Provider 优先级：
+1. SenseVoiceSmall（中文优先）
+2. faster-whisper（多语种兜底）
+
+Provider Contract 保持可替换，因此未来切换无需改上层研究流程。
