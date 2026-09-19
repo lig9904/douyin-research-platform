@@ -9,6 +9,8 @@ on:
       - "db/schema.sql"
       - "db/migrations/**"
       - "windmill/f/content_research/research_dashboard.raw_app/backend/**"
+      - "windmill/f/content_research/analysis/**"
+      - "windmill/f/content_research/flows/**"
       - ".github/workflows/provider-tests.yml"
   pull_request:
     paths:
@@ -18,6 +20,8 @@ on:
       - "db/schema.sql"
       - "db/migrations/**"
       - "windmill/f/content_research/research_dashboard.raw_app/backend/**"
+      - "windmill/f/content_research/analysis/**"
+      - "windmill/f/content_research/flows/**"
       - ".github/workflows/provider-tests.yml"
 
 permissions:
