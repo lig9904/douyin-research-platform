@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Button,
@@ -192,24 +192,60 @@ function HotspotTrend({
 }: {
   data: NonNullable<HotspotItem['trend']>
 }) {
-  const points = (data || []).filter((x) => x.heat_value !== null && x.heat_value !== undefined)
-  if (points.length < 2) {
-    return <div className="hotspot-trend-empty">至少需要 2 个热度快照才能显示趋势</div>
+  const validPoints = (data || [])
+    .map((point) => {
+      const heatValue: unknown = point.heat_value
+
+      if (
+        point.captured_at == null ||
+        point.captured_at === '' ||
+        heatValue == null ||
+        heatValue === ''
+      ) {
+        return null
+      }
+
+      const timestamp = Date.parse(point.captured_at)
+      const heat =
+        typeof heatValue === 'number'
+          ? heatValue
+          : Number(heatValue)
+
+      if (!Number.isFinite(timestamp) || !Number.isFinite(heat)) return null
+      return { timestamp, heat }
+    })
+    .filter(
+      (point): point is { timestamp: number; heat: number } => point !== null,
+    )
+    .sort((a, b) => a.timestamp - b.timestamp)
+
+  if (!validPoints.length) {
+    return <div className="hotspot-trend-empty">暂无有效热度快照</div>
   }
 
   const width = 360
   const height = 160
   const padX = 28
   const padY = 22
-  const values = points.map((x) => Number(x.heat_value || 0))
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-  const range = Math.max(1, max - min)
+  const minValue = Math.min(...validPoints.map((point) => point.heat))
+  const maxValue = Math.max(...validPoints.map((point) => point.heat))
+  const valueSpan = Math.max(1, maxValue - minValue)
+  const minTime = validPoints[0].timestamp
+  const maxTime = validPoints[validPoints.length - 1].timestamp
+  const timeSpan = Math.max(1, maxTime - minTime)
 
-  const coords = points.map((item, idx) => {
-    const x = padX + (idx * (width - padX * 2)) / Math.max(1, points.length - 1)
-    const y = height - padY - ((Number(item.heat_value || 0) - min) / range) * (height - padY * 2)
-    return { x, y, item }
+  const coords = validPoints.map((point) => {
+    const x =
+      validPoints.length === 1
+        ? width / 2
+        : padX +
+          ((point.timestamp - minTime) / timeSpan) *
+            (width - padX * 2)
+    const y =
+      height -
+      padY -
+      ((point.heat - minValue) / valueSpan) * (height - padY * 2)
+    return { x, y }
   })
   const line = coords.map((p) => `${p.x},${p.y}`).join(' ')
 
@@ -251,32 +287,49 @@ export default function HotspotLibrary({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const requestSeq = useRef(0)
 
   const load = async (next: Filters, selected = selectedSignalId) => {
+    const requestId = ++requestSeq.current
     setLoading(true)
     setError('')
+
     try {
       const result = (await backend.get_hotspot_library({
         ...next,
         selected_signal_id: selected,
       })) as HotspotLibraryData
+
+      if (requestId !== requestSeq.current) return
+
       setData(result)
-      if (!selected && result.items.length) {
-        setSelectedSignalId(result.items[0].id)
-      }
-      if (selected && result.detail && 'id' in result.detail) {
-        setSelectedSignalId(String(result.detail.id || selected))
+
+      if (!selected) {
+        setSelectedSignalId(result.items[0]?.id || '')
+      } else if (result.detail && 'id' in result.detail) {
+        setSelectedSignalId(String(result.detail.id || ''))
+      } else {
+        setSelectedSignalId('')
       }
     } catch (e) {
+      if (requestId !== requestSeq.current) return
       setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (requestId === requestSeq.current) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
     load(filters, selectedSignalId)
   }, [filters])
+
+  useEffect(() => {
+    return () => {
+      requestSeq.current += 1
+    }
+  }, [])
 
   const detail =
     data?.detail && 'id' in data.detail ? (data.detail as HotspotItem) : null

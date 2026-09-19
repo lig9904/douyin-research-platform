@@ -19,7 +19,7 @@ class postgresql(TypedDict):
 
 def _json(value: Any) -> Any:
     if isinstance(value, Decimal):
-        return float(value)
+        return float(value) if value.is_finite() else None
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, dict):
@@ -82,7 +82,8 @@ def main(
         "recent_desc": "s.last_seen_at desc",
         "rank_asc": "rank_value asc nulls last, heat_value desc nulls last",
     }
-    order_by = sort_map.get(sort, sort_map["heat_desc"])
+    # A unique final key keeps tied rows from moving between pages.
+    order_by = sort_map.get(sort, sort_map["heat_desc"]) + ", s.id asc"
 
     base_cte = """
     with latest_snapshot as (
@@ -90,6 +91,7 @@ def main(
         id, signal_id, captured_at, rank_value, rank_change,
         heat_value, value_json
       from signal_snapshot
+      where captured_at <= now()
       order by signal_id, captured_at desc, id desc
     ),
     previous_snapshot as (
@@ -97,8 +99,9 @@ def main(
         ss.signal_id, ss.captured_at, ss.rank_value, ss.heat_value
       from signal_snapshot ss
       join latest_snapshot ls on ls.signal_id=ss.signal_id
-      where ss.id <> ls.id
-        and ss.captured_at <= ls.captured_at
+      -- Multiple ingestions at one observation time are not elapsed-time growth.
+      -- Highest id wins within a timestamp, consistently with latest/trend.
+      where ss.captured_at < ls.captured_at
       order by ss.signal_id, ss.captured_at desc, ss.id desc
     ),
     related_counts as (
@@ -162,7 +165,7 @@ def main(
       and (%s='all' or coalesce(s.category_key,'')=%s)
       and (%s < 0 or s.research_level=%s)
       and (%s='all' or s.monitoring_status=%s)
-      and (%s < 0 or coalesce(s.heat_value,0) >= %s)
+      and (%s < 0 or s.heat_value >= %s)
       and (
         %s=''
         or coalesce(s.title,'') ilike '%%' || %s || '%%'
@@ -264,7 +267,14 @@ def main(
             args + (page_size, offset),
         )
 
-        selected_id = selected_signal_id or (items[0]["id"] if items else "")
+        # Detail belongs to the visible, filtered page. A stale or malformed id
+        # must not bypass the platform/filter boundary or reach a UUID cast.
+        visible_ids = {item["id"] for item in items}
+        selected_id = (
+            selected_signal_id
+            if selected_signal_id in visible_ids
+            else (items[0]["id"] if items else "")
+        )
         detail: dict[str, Any] = {}
 
         if selected_id:
@@ -305,17 +315,19 @@ def main(
             trend = _fetch_all(
                 conn,
                 """
-                select
-                  captured_at,
-                  rank_value,
-                  rank_change,
-                  heat_value,
-                  value_json
-                from signal_snapshot
-                where signal_id=%s::uuid
-                  and captured_at >= now() - (%s || ' days')::interval
+                with recent_points as (
+                  select distinct on (captured_at)
+                    id, captured_at, rank_value, rank_change, heat_value, value_json
+                  from signal_snapshot
+                  where signal_id=%s::uuid
+                    and captured_at >= now() - (%s || ' days')::interval
+                    and captured_at <= now()
+                  order by captured_at desc, id desc
+                  limit 240
+                )
+                select captured_at, rank_value, rank_change, heat_value, value_json
+                from recent_points
                 order by captured_at asc, id asc
-                limit 240
                 """,
                 (selected_id, days),
             )
@@ -323,7 +335,14 @@ def main(
             related_videos = _fetch_all(
                 conn,
                 """
-                with latest_metric as (
+                with distinct_links as (
+                  select distinct on (video_id)
+                    video_id, relation_type, observed_at
+                  from signal_video_link
+                  where signal_id=%s::uuid
+                  order by video_id, observed_at desc, relation_type asc
+                ),
+                latest_metric as (
                   select distinct on (video_id)
                     video_id, play_count, like_count, comment_count, share_count, captured_at
                   from metric_snapshot
@@ -353,15 +372,15 @@ def main(
                   coalesce(sc.score,v.monitoring_priority,0)::numeric as priority,
                   l.relation_type,
                   l.observed_at
-                from signal_video_link l
+                from distinct_links l
                 join source_video v on v.id=l.video_id
                 left join source_account a on a.id=v.account_id
                 left join latest_metric m on m.video_id=v.id
                 left join latest_score sc on sc.video_id=v.id
-                where l.signal_id=%s::uuid
                 order by coalesce(sc.score,v.monitoring_priority,0) desc,
                          m.like_count desc nulls last,
-                         l.observed_at desc
+                         l.observed_at desc,
+                         v.id asc
                 limit 8
                 """,
                 (selected_id,),
