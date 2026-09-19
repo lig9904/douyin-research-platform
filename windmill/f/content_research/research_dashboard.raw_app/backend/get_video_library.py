@@ -51,6 +51,37 @@ def _connect(db: postgresql):
     )
 
 
+_L3_OUTPUT_LIST_FIELDS = (
+    "narrative_structure",
+    "hook_functions",
+    "comment_semantics",
+    "case_comparisons",
+    "mechanism_hypotheses",
+    "ip_fit",
+    "limitations",
+)
+_L3_OUTPUT_BOOL_FIELDS = (
+    "mechanism_hypotheses_are_inferences",
+    "privacy_reviewed",
+)
+
+
+def _public_l3_output(output: Any) -> dict[str, Any]:
+    """Return only the documented, display-safe L3 result fields."""
+    if not isinstance(output, dict):
+        return {}
+    public: dict[str, Any] = {}
+    for field in _L3_OUTPUT_LIST_FIELDS:
+        value = output.get(field)
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            public[field] = value
+    for field in _L3_OUTPUT_BOOL_FIELDS:
+        value = output.get(field)
+        if type(value) is bool:
+            public[field] = value
+    return public
+
+
 def main(
     db: postgresql,
     platform: str = "douyin",
@@ -330,8 +361,58 @@ def main(
                 """,
                 (selected_id,),
             )
+            l3_row = _fetch_one(
+                conn,
+                """
+                select
+                  a.analysis_type,
+                  a.model,
+                  a.model_revision,
+                  a.prompt_version,
+                  a.schema_version,
+                  a.output,
+                  a.created_at,
+                  c.api_cost,
+                  c.asr_cost,
+                  c.llm_cost,
+                  coalesce(c.total_cost, a.cost_amount) as total_cost,
+                  coalesce(c.cost_currency, a.cost_currency) as cost_currency,
+                  c.cost_basis
+                from analysis_run a
+                left join research_task_cost c on c.id=a.task_cost_id
+                where a.video_id=%s::uuid
+                  and a.analysis_level='L3'
+                  and a.analysis_type='l3_structured_research'
+                  and a.status='completed'
+                  and (a.task_cost_id is null or c.status='completed')
+                order by a.created_at desc, a.id desc
+                limit 1
+                """,
+                (selected_id,),
+            )
             detail["evidence"] = evidence
             detail["comments"] = comments
+            detail["l3_analysis"] = (
+                {
+                    "analysis_type": l3_row["analysis_type"],
+                    "model": l3_row["model"],
+                    "model_revision": l3_row["model_revision"],
+                    "prompt_version": l3_row["prompt_version"],
+                    "schema_version": l3_row["schema_version"],
+                    "created_at": l3_row["created_at"],
+                    "output": _public_l3_output(l3_row["output"]),
+                    "cost": {
+                        "api_cost": l3_row["api_cost"],
+                        "asr_cost": l3_row["asr_cost"],
+                        "llm_cost": l3_row["llm_cost"],
+                        "total_cost": l3_row["total_cost"],
+                        "currency": l3_row["cost_currency"],
+                        "basis": l3_row["cost_basis"],
+                    },
+                }
+                if l3_row
+                else None
+            )
 
     return {
         "platforms": platforms,
