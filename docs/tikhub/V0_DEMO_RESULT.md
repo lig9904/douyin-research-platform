@@ -100,14 +100,9 @@ export TIKHUB_ENABLE_PAID_SMOKE=YES
 
 `all-paid` 也硬限制为最多4次平台调用且不翻页。
 
-## 下一步
+## 已完成的正式 Key 验证
 
-有真实 Key 后只运行最小测试：
-1. low-fan billboard
-2. Creator travel material billboard
-3. Search V2
-4. App V3 one-ID batch
-
-四条通过后，再扩大到 Creator signal → related videos、comments、cost API 等。
-
-不在第一轮同时测全部接口。
+正式 Key 的分批结果与证据边界统一记录在 `docs/V0_API_TEST_MATRIX.md`。本机于
+2026-09-20 又以零重试方式单独复验一次 low-fan billboard；未把 Secret、原始响应或
+私有标识写入仓库。后续扩大样本仍必须走独立的调用上限、预算和结果审查，不因首轮端点
+可用就自动开启持续采集。

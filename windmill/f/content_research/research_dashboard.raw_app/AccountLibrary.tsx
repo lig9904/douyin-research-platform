@@ -12,6 +12,7 @@ import {
 } from 'antd'
 import { backend } from './wmill'
 import AppShell, { type ResearchView } from './AppShell'
+import PlatformIcon from './src/components/PlatformIcon'
 import './account-library.css'
 
 type Platform = {
@@ -128,16 +129,6 @@ const initialFilters: Filters = {
   page: 1,
   page_size: 10,
   sort: 'followers_desc',
-}
-
-const platformGlyph: Record<string, string> = {
-  all: '▦',
-  douyin: '♪',
-  kuaishou: '∞',
-  wechat_channels: '◉',
-  xiaohongshu: '小',
-  bilibili: 'B',
-  weibo: '◎',
 }
 
 const statusLabels: Record<string, string> = {
@@ -371,9 +362,7 @@ export default function AccountLibrary({
                 className={filters.platform === p.key ? 'platform-tab selected' : 'platform-tab'}
                 onClick={() => selectPlatform(p.key)}
               >
-                <span className={`platform-logo ${p.key}`}>
-                  {platformGlyph[p.key] || '•'}
-                </span>
+                <PlatformIcon platform={p.key} className="platform-logo" />
                 {p.name}
                 {!p.enabled && <i className="planned-dot" />}
               </button>
@@ -624,9 +613,7 @@ export default function AccountLibrary({
                         </div>
                       </td>
                       <td>
-                        <span className="platform-mini">
-                          {platformGlyph[item.platform] || '•'}
-                        </span>
+                        <PlatformIcon platform={item.platform} className="platform-mini" />
                       </td>
                       <td>{formatCount(item.follower_count)}</td>
                       <td>{item.posts_count ?? 0}</td>
@@ -776,7 +763,7 @@ export default function AccountLibrary({
                         {(detail.hot_videos || []).map((video) => (
                           <div key={video.id}>
                             <div className="account-video-thumb">
-                              {platformGlyph[detail.platform] || '▶'}
+                              <PlatformIcon platform={detail.platform} className="platform-icon-bare" />
                               <i>
                                 {video.duration_ms
                                   ? `${Math.floor(video.duration_ms / 60000)}:${String(

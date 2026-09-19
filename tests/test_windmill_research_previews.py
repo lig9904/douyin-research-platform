@@ -174,7 +174,7 @@ def test_preview_flows_are_manual_non_sensitive_and_have_no_secret_lookup() -> N
         lowered = flow.lower()
         assert "\nschedule:" not in lowered
         assert not lowered.startswith("schedule:")
-        assert "value:\n  concurrent_limit: 1" in flow
+        assert "\n  concurrent_limit: 1\n" in flow
         assert "default: false" in flow
         assert "$res:" not in flow
         assert "$var:" not in flow

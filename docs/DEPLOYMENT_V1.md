@@ -55,10 +55,14 @@ V1 可全部部署在同一台 Linux 主机。
 ## 4. 容器
 
 必需：
-- postgres:18
+- PostgreSQL 18（compose 默认固定到已验证的 OCI digest）
 - windmill_server
 - windmill_worker
 - windmill_worker_native
+
+仓库 compose 的 Windmill 与 PostgreSQL 默认值均使用镜像 digest，而不是浮动 tag；
+`WINDMILL_IMAGE` / `POSTGRES_IMAGE` 只用于受控升级或镜像代理覆盖。修改 digest 时必须
+连同数据库备份恢复、App、MCP 和本机全链路回归一起审查，不能只改 tag。
 
 可选：
 - reverse proxy（已有 nginx / traefik 可直接复用；否则 Caddy）
@@ -185,9 +189,9 @@ Windmill 作为 MCP Server 给 Codex。
 ## 13. 更新
 
 生产固定：
-- Windmill image version
+- Windmill image digest
 - TikHub SDK version
-- PostgreSQL major version
+- PostgreSQL image digest 与 major version
 
 升级流程：
 1. 备份

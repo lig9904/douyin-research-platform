@@ -3,47 +3,60 @@ description: |
   Zero-call readiness preview only. It does not accept a video ID or media
   reference, does not use a database resource, and cannot execute paid ASR
   until the relay contract and adapter are verified.
+lock: '!inline f/content_research/analysis/manual_asr_preview.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 1
 schema:
   type: object
   properties:
-    provider:
+    confirmation:
       type: string
-      description: Planned ASR provider identifier; no adapter is loaded.
-    model_id:
-      type: string
-    model_revision:
-      type: string
-    engine_version:
-      type: string
-    estimated_api_cost:
-      type: number
-      minimum: 0
-      description: Leave empty when unknown; unknown remains null.
-    estimated_asr_cost:
-      type: number
-      minimum: 0
-      description: Leave empty when unknown; unknown remains null.
+      description: Does not enable execution until the adapter is verified.
+      default: ''
+      originalType: string
     cost_currency:
       type: string
       default: CNY
-    max_polls:
-      type: integer
+      originalType: string
+    engine_version:
+      type: string
+      default: null
+      originalType: string
+    estimated_api_cost:
+      type: number
+      description: Leave empty when unknown; unknown remains null.
+      default: null
       minimum: 0
-      maximum: 3
-      default: 0
+    estimated_asr_cost:
+      type: number
+      description: Leave empty when unknown; unknown remains null.
+      default: null
+      minimum: 0
     execute:
       type: boolean
-      default: false
       description: Paid execution is disabled while adapter_status is blocked.
-    confirmation:
+      default: false
+    max_polls:
+      type: integer
+      default: 0
+      maximum: 3
+      minimum: 0
+    model_id:
       type: string
-      default: ""
-      description: Does not enable execution until the adapter is verified.
+      default: null
+      originalType: string
+    model_revision:
+      type: string
+      default: null
+      originalType: string
+    provider:
+      type: string
+      description: Planned ASR provider identifier; no adapter is loaded.
+      default: null
+      originalType: string
   required:
     - provider
     - model_id
     - model_revision
     - engine_version
-concurrent_limit: 1
-concurrency_time_window_s: 0
 timeout: 30

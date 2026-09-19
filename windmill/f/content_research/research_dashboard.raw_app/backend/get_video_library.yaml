@@ -2,4 +2,4 @@ type: inline
 fields:
   db:
     type: static
-    value: "$res:f/content_research/research_db"
+    value: $res:f/content_research/research_db

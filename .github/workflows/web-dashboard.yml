@@ -29,10 +29,10 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: windmill/f/content_research/research_dashboard.raw_app/package.json
+          cache-dependency-path: windmill/f/content_research/research_dashboard.raw_app/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm install --ignore-scripts --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Bundle React homepage
         run: >

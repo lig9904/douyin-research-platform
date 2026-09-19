@@ -1,11 +1,11 @@
 type: inline
 fields:
-  db:
-    type: static
-    value: "$res:f/content_research/research_db"
-  reviewer_allowlist:
-    type: static
-    value: "$var:f/content_research/l3_privacy_reviewers"
   budget_preview_config:
     type: static
-    value: "$var:f/content_research/l3_budget_preview_config"
+    value: $var:f/content_research/l3_budget_preview_config
+  db:
+    type: static
+    value: $res:f/content_research/research_db
+  reviewer_allowlist:
+    type: static
+    value: $var:f/content_research/l3_privacy_reviewers

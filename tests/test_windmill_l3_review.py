@@ -305,6 +305,16 @@ def test_review_backend_resources_are_static_and_no_secret_is_in_source() -> Non
         assert "$var:f/content_research/l3_privacy_reviewers" in metadata
         assert "WM_EMAIL" not in source
         assert "WM_USERNAME" not in source
+        assert (
+            "#douyin-research-platform@git+https://github.com/lig9904/"
+            "douyin-research-platform@1558677c40cc22239e660e269738619dfd05388d"
+        ) in source
+        assert "#psycopg[binary]==3.3.6" in source
+        lock = (BACKEND / f"{name}.lock").read_text()
+        assert "douyin-research-platform @ git+https://github.com/lig9904/" in lock
+        assert "psycopg==3.3.6" in lock
+        assert "psycopg-binary==3.3.6" in lock
+        assert "psycopg[binary]" not in lock
         assert "provider_factory" not in source
         assert "L3ExecutionCoordinator" not in source
         assert "execute:" not in metadata
@@ -318,3 +328,4 @@ def test_review_backend_resources_are_static_and_no_secret_is_in_source() -> Non
     ).read_text()
     assert "setError(e instanceof Error ? e.message" not in frontend
     assert "SENSITIVE" not in frontend
+    assert '<span>审核对象 ID</span><code>{videoId}</code>' in frontend

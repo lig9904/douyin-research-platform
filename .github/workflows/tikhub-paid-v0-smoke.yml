@@ -34,13 +34,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
 
       - name: Install pinned project dependencies
-        run: python -m pip install -e ".[dev]"
+        run: uv sync --extra dev --locked
 
       - name: Verify paid smoke safety tests
-        run: python -m pytest tests/test_tikhub_v0_smoke.py tests/test_tikhub_transport.py
+        run: uv run pytest tests/test_tikhub_v0_smoke.py tests/test_tikhub_transport.py
 
       - name: Run four-call paid smoke
         env:
@@ -48,7 +51,7 @@ jobs:
           TIKHUB_ENABLE_PAID_SMOKE: "YES"
           AWEME_ID: ${{ inputs.aweme_id }}
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import os
           import sys
 
@@ -57,7 +60,7 @@ jobs:
           if not os.environ.get("AWEME_ID", "").isdigit():
               sys.exit("aweme_id must contain digits only")
           PY
-          python scripts/tikhub/v0_smoke.py all-paid --aweme-id "$AWEME_ID"
+          uv run python scripts/tikhub/v0_smoke.py all-paid --aweme-id "$AWEME_ID"
 
       - name: Confirm ephemeral raw cleanup policy
         if: always()

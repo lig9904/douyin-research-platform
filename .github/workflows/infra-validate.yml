@@ -4,17 +4,27 @@ on:
   push:
     paths:
       - "docker-compose.yml"
+      - "docker-compose.l3-local.yml"
       - ".env.example"
+      - ".env.l3-local.example"
+      - "config/l3-local-*"
       - "db/**"
       - "scripts/backup.sh"
+      - "scripts/local-l3-env.sh"
+      - "scripts/local-windmill-sync.sh"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
   pull_request:
     paths:
       - "docker-compose.yml"
+      - "docker-compose.l3-local.yml"
       - ".env.example"
+      - ".env.l3-local.example"
+      - "config/l3-local-*"
       - "db/**"
       - "scripts/backup.sh"
+      - "scripts/local-l3-env.sh"
+      - "scripts/local-windmill-sync.sh"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
 
@@ -31,17 +41,28 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Prepare test env
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          cp .env.l3-local.example .env.l3-local
 
       - name: Validate shell syntax
         run: |
           bash -n db/init/01-bootstrap-research.sh
+          bash -n db/init/02-bootstrap-l3-local-reviewer.sh
           bash -n scripts/backup.sh
+          bash -n scripts/local-l3-env.sh
+          bash -n scripts/local-windmill-sync.sh
           bash -n scripts/verify-stack.sh
           bash -n scripts/tikhub/v0_smoke.py 2>/dev/null || true
 
       - name: Validate compose
-        run: docker compose config >/dev/null
+        run: |
+          docker compose config >/dev/null
+          docker compose \
+            --env-file .env.l3-local \
+            -f docker-compose.yml \
+            -f docker-compose.l3-local.yml \
+            config >/dev/null
 
       - name: Start PostgreSQL only
         run: docker compose up -d postgres
@@ -66,10 +87,74 @@ jobs:
           test "$count" -gt 10
           echo "research tables: $count"
 
+      - name: Start isolated reviewer PostgreSQL
+        run: |
+          docker compose -p l3-review-ci \
+            --env-file .env.l3-local \
+            -f docker-compose.yml \
+            -f docker-compose.l3-local.yml \
+            up -d postgres
+
+          for i in {1..30}; do
+            if docker compose -p l3-review-ci \
+              --env-file .env.l3-local \
+              -f docker-compose.yml \
+              -f docker-compose.l3-local.yml \
+              exec -T postgres pg_isready -U postgres -d windmill >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1
+
+      - name: Verify isolated reviewer permissions
+        run: |
+          compose=(docker compose -p l3-review-ci --env-file .env.l3-local -f docker-compose.yml -f docker-compose.l3-local.yml)
+
+          # Prove reprovisioning repairs privilege drift on a reused volume,
+          # rather than testing only the pristine first-start path.
+          printf '%s\n' \
+            'ALTER ROLE :"reviewer_user" INHERIT BYPASSRLS;' \
+            'GRANT pg_read_all_data TO :"reviewer_user";' \
+            | "${compose[@]}" exec -T postgres psql -U postgres -d windmill \
+              -v reviewer_user=l3_local_reviewer -v ON_ERROR_STOP=1
+          "${compose[@]}" exec -T postgres \
+            bash /docker-entrypoint-initdb.d/02-bootstrap-l3-local-reviewer.sh >/dev/null
+
+          role_row="$(printf '%s\n' \
+            "SELECT r.rolinherit, r.rolbypassrls, count(m.roleid) FROM pg_roles r LEFT JOIN pg_auth_members m ON m.member=r.oid WHERE r.rolname=:'reviewer_user' GROUP BY r.rolinherit, r.rolbypassrls;" \
+            | "${compose[@]}" exec -T postgres psql -U postgres -d windmill -At \
+              -v reviewer_user=l3_local_reviewer \
+            | tr -d '\r')"
+          test "$role_row" = "f|f|0"
+
+          permission_row="$("${compose[@]}" exec -T postgres bash -c '
+            PGPASSWORD="$L3_LOCAL_REVIEWER_PASSWORD" psql \
+              -h postgres -U "$L3_LOCAL_REVIEWER_USER" -d "$RESEARCH_DB_NAME" \
+              -At -v ON_ERROR_STOP=1 \
+              -c "SELECT current_setting('"'"'transaction_read_only'"'"'), has_table_privilege(current_user, '"'"'public.source_video'"'"', '"'"'SELECT'"'"'), has_table_privilege(current_user, '"'"'public.metric_snapshot'"'"', '"'"'SELECT'"'"'), has_table_privilege(current_user, '"'"'public.analysis_run'"'"', '"'"'SELECT'"'"'), has_table_privilege(current_user, '"'"'public.research_task_cost'"'"', '"'"'SELECT'"'"'), has_table_privilege(current_user, '"'"'public.daily_budget'"'"', '"'"'SELECT'"'"'), has_table_privilege(current_user, '"'"'public.human_annotation'"'"', '"'"'SELECT,INSERT'"'"'), has_table_privilege(current_user, '"'"'public.daily_budget'"'"', '"'"'UPDATE'"'"'), has_schema_privilege(current_user, '"'"'public'"'"', '"'"'CREATE'"'"'), has_database_privilege(current_user, current_database(), '"'"'CREATE'"'"'), has_database_privilege(current_user, current_database(), '"'"'TEMPORARY'"'"'), has_database_privilege(current_user, '"'"'windmill'"'"', '"'"'CONNECT'"'"');"
+          ' | tr -d '\r')"
+          test "$permission_row" = "on|t|t|t|t|t|f|f|f|f|f|f"
+
+          if "${compose[@]}" exec -T postgres bash -c '
+            PGPASSWORD="$L3_LOCAL_REVIEWER_PASSWORD" psql \
+              -h postgres -U "$L3_LOCAL_REVIEWER_USER" -d "$RESEARCH_DB_NAME" \
+              -v ON_ERROR_STOP=1 -c "insert into public.source_video default values;"
+          ' >/dev/null 2>&1; then
+            echo "reviewer write unexpectedly succeeded" >&2
+            exit 1
+          fi
+
       - name: PostgreSQL logs on failure
         if: failure()
         run: docker compose logs postgres
 
       - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: |
+          docker compose down -v
+          docker compose -p l3-review-ci \
+            --env-file .env.l3-local \
+            -f docker-compose.yml \
+            -f docker-compose.l3-local.yml \
+            down -v

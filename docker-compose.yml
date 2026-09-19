@@ -1,7 +1,7 @@
 name: douyin-research-platform
 
 x-windmill-common: &windmill-common
-  image: ghcr.io/windmill-labs/windmill:${WINDMILL_VERSION:-1.815.0}
+  image: ${WINDMILL_IMAGE:-ghcr.io/windmill-labs/windmill@sha256:9f175a520477de0cc24724e32f49104ab7aa2537fc684eb1353bf541c1f1142a}
   restart: unless-stopped
   depends_on:
     postgres:
@@ -16,7 +16,7 @@ x-windmill-common: &windmill-common
 
 services:
   postgres:
-    image: postgres:18
+    image: ${POSTGRES_IMAGE:-postgres@sha256:86c951e05bf56c93d95d397747fb8820ac76cc3bedb78f43abd83eedbe3666ae}
     restart: unless-stopped
     shm_size: 512m
     environment:

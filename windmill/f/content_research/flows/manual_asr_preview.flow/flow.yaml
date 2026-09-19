@@ -1,26 +1,22 @@
 summary: Manual ASR readiness preview
-description: |
+description: >
   Manual-only, zero-call preview with no schedule. It accepts no video or media
-  identifier. Paid execution remains disabled until the relay adapter is verified.
+
+  identifier. Paid execution remains disabled until the relay adapter is
+  verified.
 value:
-  concurrent_limit: 1
-  concurrency_time_window_s: 0
   modules:
     - id: preview_asr
       summary: Calculate bounded ASR calls and estimated cost
       value:
         type: script
-        path: f/content_research/analysis/manual_asr_preview
         input_transforms:
-          provider:
+          confirmation:
             type: javascript
-            expr: flow_input.provider
-          model_id:
+            expr: flow_input.confirmation
+          cost_currency:
             type: javascript
-            expr: flow_input.model_id
-          model_revision:
-            type: javascript
-            expr: flow_input.model_revision
+            expr: flow_input.cost_currency
           engine_version:
             type: javascript
             expr: flow_input.engine_version
@@ -30,27 +26,33 @@ value:
           estimated_asr_cost:
             type: javascript
             expr: flow_input.estimated_asr_cost
-          cost_currency:
-            type: javascript
-            expr: flow_input.cost_currency
-          max_polls:
-            type: javascript
-            expr: flow_input.max_polls
           execute:
             type: javascript
             expr: flow_input.execute
-          confirmation:
+          max_polls:
             type: javascript
-            expr: flow_input.confirmation
+            expr: flow_input.max_polls
+          model_id:
+            type: javascript
+            expr: flow_input.model_id
+          model_revision:
+            type: javascript
+            expr: flow_input.model_revision
+          provider:
+            type: javascript
+            expr: flow_input.provider
+        path: f/content_research/analysis/manual_asr_preview
+  concurrency_time_window_s: 0
+  concurrent_limit: 1
 schema:
   type: object
   properties:
-    provider:
+    confirmation:
       type: string
-    model_id:
+      default: ''
+    cost_currency:
       type: string
-    model_revision:
-      type: string
+      default: CNY
     engine_version:
       type: string
     estimated_api_cost:
@@ -59,21 +61,21 @@ schema:
     estimated_asr_cost:
       type: number
       minimum: 0
-    cost_currency:
-      type: string
-      default: CNY
-    max_polls:
-      type: integer
-      minimum: 0
-      maximum: 3
-      default: 0
     execute:
       type: boolean
-      default: false
       description: Must remain false while the adapter is blocked.
-    confirmation:
+      default: false
+    max_polls:
+      type: integer
+      default: 0
+      maximum: 3
+      minimum: 0
+    model_id:
       type: string
-      default: ""
+    model_revision:
+      type: string
+    provider:
+      type: string
   required:
     - provider
     - model_id

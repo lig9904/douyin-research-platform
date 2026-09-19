@@ -12,6 +12,7 @@ import {
 } from 'antd'
 import { backend } from './wmill'
 import AppShell, { type ResearchView } from './AppShell'
+import PlatformIcon from './src/components/PlatformIcon'
 import './hotspot-library.css'
 
 type Platform = {
@@ -109,16 +110,6 @@ const initialFilters: Filters = {
   page: 1,
   page_size: 10,
   sort: 'heat_desc',
-}
-
-const platformGlyph: Record<string, string> = {
-  all: '▦',
-  douyin: '♪',
-  kuaishou: '∞',
-  wechat_channels: '◉',
-  xiaohongshu: '小',
-  bilibili: 'B',
-  weibo: '◎',
 }
 
 const signalTypeLabels: Record<string, string> = {
@@ -422,9 +413,7 @@ export default function HotspotLibrary({
                 className={filters.platform === p.key ? 'platform-tab selected' : 'platform-tab'}
                 onClick={() => selectPlatform(p.key)}
               >
-                <span className={`platform-logo ${p.key}`}>
-                  {platformGlyph[p.key] || '•'}
-                </span>
+                <PlatformIcon platform={p.key} className="platform-logo" />
                 {p.name}
                 {!p.enabled && <i className="planned-dot" />}
               </button>
@@ -604,7 +593,7 @@ export default function HotspotLibrary({
                       <td>{(filters.page - 1) * filters.page_size + idx + 1}</td>
                       <td>
                         <div className="hotspot-list-info">
-                          <span className="hotspot-thumb">{platformGlyph[item.platform] || '◆'}</span>
+                          <span className="hotspot-thumb"><PlatformIcon platform={item.platform} className="platform-icon-bare" /></span>
                           <div>
                             <strong>{item.title || item.signal_key}</strong>
                             <small>{signalTypeName(item.signal_type)} · {item.signal_key}</small>
@@ -612,9 +601,7 @@ export default function HotspotLibrary({
                         </div>
                       </td>
                       <td>
-                        <span className="platform-mini">
-                          {platformGlyph[item.platform] || '•'}
-                        </span>
+                        <PlatformIcon platform={item.platform} className="platform-mini" />
                       </td>
                       <td><Tag color="blue">{signalTypeName(item.signal_type)}</Tag></td>
                       <td className="heat-value">{formatCount(item.heat_value)}</td>
@@ -678,7 +665,7 @@ export default function HotspotLibrary({
 
                 <div className="hotspot-profile">
                   <span className="hotspot-detail-thumb">
-                    {platformGlyph[detail.platform] || '◆'}
+                    <PlatformIcon platform={detail.platform} className="platform-icon-bare" />
                   </span>
                   <div>
                     <strong>{detail.title || detail.signal_key}</strong>
@@ -689,7 +676,7 @@ export default function HotspotLibrary({
                 </div>
 
                 <div className="hotspot-meta-row">
-                  <span className="platform-mini">{platformGlyph[detail.platform] || '•'}</span>
+                  <PlatformIcon platform={detail.platform} className="platform-mini" />
                   <strong>{platforms.find((p) => p.key === detail.platform)?.name || detail.platform}</strong>
                   <i />
                   <span>首次发现 {formatDate(detail.first_seen_at)}</span>
@@ -734,7 +721,7 @@ export default function HotspotLibrary({
                       <div key={video.id}>
                         <b>{idx + 1}</b>
                         <span className="hotspot-video-thumb">
-                          {platformGlyph[video.platform] || '▶'}
+                          <PlatformIcon platform={video.platform} className="platform-icon-bare" />
                         </span>
                         <div>
                           <strong>{video.title}</strong>

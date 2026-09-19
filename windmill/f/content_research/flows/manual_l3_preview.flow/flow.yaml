@@ -3,18 +3,24 @@ description: |
   Manual-only, zero-call preview with no schedule. It accepts no video or
   evidence body. Paid execution remains disabled until the adapter is verified.
 value:
-  concurrent_limit: 1
-  concurrency_time_window_s: 0
   modules:
     - id: preview_l3
       summary: Calculate the one-call L3 cost boundary
       value:
         type: script
-        path: f/content_research/analysis/manual_l3_preview
         input_transforms:
-          provider:
+          confirmation:
             type: javascript
-            expr: flow_input.provider
+            expr: flow_input.confirmation
+          cost_currency:
+            type: javascript
+            expr: flow_input.cost_currency
+          estimated_llm_cost:
+            type: javascript
+            expr: flow_input.estimated_llm_cost
+          execute:
+            type: javascript
+            expr: flow_input.execute
           model_id:
             type: javascript
             expr: flow_input.model_id
@@ -24,42 +30,36 @@ value:
           prompt_version:
             type: javascript
             expr: flow_input.prompt_version
-          estimated_llm_cost:
+          provider:
             type: javascript
-            expr: flow_input.estimated_llm_cost
-          cost_currency:
-            type: javascript
-            expr: flow_input.cost_currency
-          execute:
-            type: javascript
-            expr: flow_input.execute
-          confirmation:
-            type: javascript
-            expr: flow_input.confirmation
+            expr: flow_input.provider
+        path: f/content_research/analysis/manual_l3_preview
+  concurrency_time_window_s: 0
+  concurrent_limit: 1
 schema:
   type: object
   properties:
-    provider:
+    confirmation:
       type: string
+      default: ''
+    cost_currency:
+      type: string
+      default: CNY
+    estimated_llm_cost:
+      type: number
+      minimum: 0
+    execute:
+      type: boolean
+      description: Must remain false while the adapter is blocked.
+      default: false
     model_id:
       type: string
     model_revision:
       type: string
     prompt_version:
       type: string
-    estimated_llm_cost:
-      type: number
-      minimum: 0
-    cost_currency:
+    provider:
       type: string
-      default: CNY
-    execute:
-      type: boolean
-      default: false
-      description: Must remain false while the adapter is blocked.
-    confirmation:
-      type: string
-      default: ""
   required:
     - provider
     - model_id

@@ -29,21 +29,24 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
 
       - name: Install pinned project dependencies
-        run: python -m pip install -e ".[dev]"
+        run: uv sync --extra dev --locked
 
       - name: Verify SDK probe safety
         run: |
-          python -m compileall -q scripts/tikhub/v0_batch2.py
-          python -m pytest tests/test_tikhub_v0_batch2.py tests/test_tikhub_transport.py
+          uv run python -m compileall -q scripts/tikhub/v0_batch2.py
+          uv run pytest tests/test_tikhub_v0_batch2.py tests/test_tikhub_transport.py
 
       - name: Run capped paid batch two
         env:
           TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
           TIKHUB_ENABLE_PAID_BATCH2: ${{ inputs.confirmation }}
-        run: python scripts/tikhub/v0_batch2.py
+        run: uv run python scripts/tikhub/v0_batch2.py
 
       - name: Remove ephemeral raw responses
         if: always()

@@ -31,6 +31,15 @@
 
 ## A2. 正式 Key 首轮受控验证
 
+2026-09-20 本机最小复验：
+
+- 仅调用一次低粉爆款榜首屏，参数固定为 `page=1`、`page_size=5`、`date_window=24`、空 tags。
+- TikHub SDK 2.1.1，`max_retries=0`；返回 `code=200`、request ID 和正确 router，首个列表包含 4 项。
+- Secret 从已登录账号的现有密钥临时注入进程环境，未创建新 key，未显示、未写入 Git 或测试输出。
+- 原始响应只保存在 gitignored 的本机 `tmp/tikhub-v0/`，提交与 CI 不包含该响应。
+
+这次复验只证明当前本机认证和该单个榜单路径可用，不扩大原有 PARTIAL 结论。
+
 2026-09-19 GitHub Actions [paid smoke #2](https://github.com/lig9904/douyin-research-platform/actions/runs/35436170460)：
 
 - TikHub SDK 版本：2.1.1。

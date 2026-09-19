@@ -14,6 +14,7 @@ export type ResearchView =
   | 'compare'
   | 'cost'
   | 'settings'
+  | 'search'
 
 type NavItem = {
   icon: string
@@ -32,7 +33,7 @@ const navItems: NavItem[] = [
   { icon: '▤', label: '历史研究', view: 'history', enabled: false },
   { icon: '★', label: '收藏专题', view: 'collections', enabled: false },
   { icon: '▥', label: '跨平台对比', view: 'compare', enabled: false },
-  { icon: '◔', label: '成本与预算', view: 'cost', enabled: false },
+  { icon: '◔', label: '成本与预算', view: 'cost', enabled: true },
   { icon: '⚙', label: '系统设置', view: 'settings', enabled: false },
 ]
 
@@ -76,25 +77,19 @@ export default function AppShell({
             </div>
           </div>
 
-          <nav className="nav">
-            {navItems.map((item) => (
+          <nav className="nav" aria-label="研究台主导航">
+            {navItems.filter((item) => item.enabled).map((item) => (
               <button
                 key={item.view}
                 className={activeView === item.view ? 'nav-item active' : 'nav-item'}
-                onClick={() => item.enabled && onNavigate(item.view)}
-                disabled={!item.enabled}
-                title={!item.enabled ? '该页面将在后续阶段启用' : undefined}
+                onClick={() => onNavigate(item.view)}
               >
                 <span>{item.icon}</span>{item.label}
               </button>
             ))}
           </nav>
 
-          <div className="sidebar-quote">
-            <div>从内容中</div>
-            <strong>发现下一个可能</strong>
-          </div>
-          <div className="sidebar-foot">v1.0 · 数据事实优先</div>
+          <div className="sidebar-foot">数据事实优先</div>
         </aside>
 
         <main className={`main ${mainClassName}`.trim()}>

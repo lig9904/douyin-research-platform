@@ -26,6 +26,7 @@
 
 候选在 PostgreSQL `REPEATABLE READ READ ONLY` 事务内生成。Windmill Job 输出仅包含：
 
+- 审核对象 UUID（只在 App manifest 区展示，便于启动受控正文页）
 - evidence SHA-256 指纹
 - evidence/review 版本
 - modality 名称
@@ -64,7 +65,7 @@
 - 验证 `WM_END_USER_EMAIL` 缺失和非 allowlist 成员均不能写审批。
 - 验证候选内容变化、跨视频指纹、幂等冲突和重复点击均不会产生错误审批。
 - 验证预算缺失、币种不匹配、NULL、0、超限和配置非法状态。
-- 三个 Python backend runnable 已把私有 `douyin-research-platform` 依赖固定到核心提交 `1558677c40cc22239e660e269738619dfd05388d`。正式 sync 前必须先让该提交在远端可达，并生成/复核 Windmill lockfile；远端不可达时不得部署。
+- 三个 Python backend runnable 已把私有 `douyin-research-platform` 依赖固定到核心提交 `1558677c40cc22239e660e269738619dfd05388d`。requirements 使用 Windmill 可解析的 PEP 508 写法，并已由本机 CE v1.815.0 生成/运行 lock；正式 sync 前仍须复核提交可达和 lock 变更。
 - 继续保持正式付费执行器独立；本工作流不能通过参数升级为执行器。
 
-当前提交只实现代码与隔离验证，不代表已部署到 Windmill，也不代表 ACL、运行时日志保留或生产数据库角色已经完成现场验收。
+当前版本已在本机 Windmill CE v1.815.0 跑通合成候选的 prepare→一次性正文页→approve→budget preview：只写入一条指纹绑定的审核记录，预算返回 `budget_missing`，全链路无 Provider/LLM 外呼。它仍不代表测试服务器多用户 Folder ACL、运行时日志保留或生产数据库角色已经完成现场验收。
