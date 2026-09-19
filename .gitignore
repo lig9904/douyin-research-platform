@@ -2,6 +2,7 @@
 .env.*
 !.env.example
 !.env.l3-local.example
+!.env.local-security.example
 __pycache__/
 *.pyc
 .venv/
