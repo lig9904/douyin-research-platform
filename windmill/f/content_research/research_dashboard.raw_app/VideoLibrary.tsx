@@ -11,7 +11,7 @@ import {
   Tooltip,
 } from 'antd'
 import { backend } from './wmill'
-import AppShell from './AppShell'
+import AppShell, { type ResearchView } from './AppShell'
 import './video-library.css'
 
 type Platform = {
@@ -203,7 +203,7 @@ const initialFilters: Filters = {
 export default function VideoLibrary({
   onNavigate,
 }: {
-  onNavigate: (view: 'home' | 'videos') => void
+  onNavigate: (view: ResearchView) => void
 }) {
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [draft, setDraft] = useState<Filters>(initialFilters)
