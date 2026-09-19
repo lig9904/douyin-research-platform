@@ -11,6 +11,7 @@ import {
   Tooltip,
 } from 'antd'
 import { backend } from './wmill'
+import VideoLibrary from './VideoLibrary'
 
 type Platform = {
   key: string
@@ -175,6 +176,7 @@ function TrendChart({ data }: { data: { day: string; value: number }[] }) {
 }
 
 function App() {
+  const [view, setView] = useState<'home' | 'videos'>('home')
   const [platform, setPlatform] = useState('douyin')
   const [hours, setHours] = useState(24)
   const [query, setQuery] = useState('')
@@ -218,6 +220,10 @@ function App() {
     ...(data?.platforms || []),
   ]
 
+  if (view === 'videos') {
+    return <VideoLibrary onNavigate={setView} />
+  }
+
   return (
     <ConfigProvider
       theme={{
@@ -253,7 +259,12 @@ function App() {
               ['◔', '成本与预算', false],
               ['⚙', '系统设置', false],
             ].map(([icon, label, active]) => (
-              <button key={String(label)} className={active ? 'nav-item active' : 'nav-item'}>
+              <button
+                key={String(label)}
+                className={active ? 'nav-item active' : 'nav-item'}
+                onClick={() => label === '视频库' && setView('videos')}
+                disabled={label !== '首页总览' && label !== '视频库'}
+              >
                 <span>{icon}</span>{label}
               </button>
             ))}
