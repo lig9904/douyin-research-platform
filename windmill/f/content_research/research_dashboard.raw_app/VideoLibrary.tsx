@@ -58,6 +58,35 @@ type VideoItem = {
     like_count?: number | null
     published_at?: string | null
   }[]
+  l3_analysis?: L3Analysis | null
+}
+
+type L3Analysis = {
+  analysis_type: string
+  model?: string | null
+  model_revision?: string | null
+  prompt_version?: string | null
+  schema_version?: string | null
+  created_at?: string | null
+  output: {
+    narrative_structure?: string[]
+    hook_functions?: string[]
+    comment_semantics?: string[]
+    case_comparisons?: string[]
+    mechanism_hypotheses?: string[]
+    ip_fit?: string[]
+    limitations?: string[]
+    mechanism_hypotheses_are_inferences?: boolean
+    privacy_reviewed?: boolean
+  }
+  cost: {
+    api_cost?: number | null
+    asr_cost?: number | null
+    llm_cost?: number | null
+    total_cost?: number | null
+    currency?: string | null
+    basis?: string | null
+  }
 }
 
 type VideoLibraryData = {
@@ -146,6 +175,11 @@ function formatFullDate(v?: string | null) {
     minute: '2-digit',
     hour12: false,
   }).format(d)
+}
+
+function formatCost(value?: number | null, currency?: string | null) {
+  if (value === null || value === undefined) return '未知'
+  return `${Number(value).toLocaleString('zh-CN', { maximumFractionDigits: 6 })} ${currency || ''}`.trim()
 }
 
 function priorityText(v: number) {
@@ -702,6 +736,53 @@ export default function VideoLibrary({
                           </div>
                         ))}
                       </div>
+                    </section>
+
+                    <section className="detail-section l3-analysis-section">
+                      <div className="detail-section-head">
+                        <h4>L3 精研结果</h4>
+                        <span>{detail.l3_analysis ? `完成于 ${formatFullDate(detail.l3_analysis.created_at)}` : '尚无已完成结果'}</span>
+                      </div>
+                      {!detail.l3_analysis ? (
+                        <p className="muted l3-empty-state">尚无已完成的 L3 精研结果；执行中、失败或未完成记录不会在此展示。</p>
+                      ) : (
+                        <div className="l3-analysis-content">
+                          <div className="l3-version-grid">
+                            <span>模型 <b>{detail.l3_analysis.model || '未记录'}</b></span>
+                            <span>修订 <b>{detail.l3_analysis.model_revision || '未记录'}</b></span>
+                            <span>Prompt <b>{detail.l3_analysis.prompt_version || '未记录'}</b></span>
+                            <span>Schema <b>{detail.l3_analysis.schema_version || '未记录'}</b></span>
+                          </div>
+                          {[
+                            ['叙事结构', detail.l3_analysis.output.narrative_structure],
+                            ['Hook 功能', detail.l3_analysis.output.hook_functions],
+                            ['评论语义', detail.l3_analysis.output.comment_semantics],
+                            ['案例比较', detail.l3_analysis.output.case_comparisons],
+                            ['机制假设', detail.l3_analysis.output.mechanism_hypotheses],
+                            ['IP 适配', detail.l3_analysis.output.ip_fit],
+                            ['局限', detail.l3_analysis.output.limitations],
+                          ].map(([label, items]) => (
+                            <div className="l3-result-group" key={label}>
+                              <strong>{label}</strong>
+                              <ul>
+                                {Array.isArray(items) && items.map((item, index) => <li key={index}>{item}</li>)}
+                              </ul>
+                            </div>
+                          ))}
+                          <div className="l3-cost-row">
+                            <span>API {formatCost(detail.l3_analysis.cost.api_cost, detail.l3_analysis.cost.currency)}</span>
+                            <span>ASR {formatCost(detail.l3_analysis.cost.asr_cost, detail.l3_analysis.cost.currency)}</span>
+                            <span>LLM {formatCost(detail.l3_analysis.cost.llm_cost, detail.l3_analysis.cost.currency)}</span>
+                            <strong>合计 {formatCost(detail.l3_analysis.cost.total_cost, detail.l3_analysis.cost.currency)}</strong>
+                          </div>
+                          <p className="l3-disclaimer">
+                            {detail.l3_analysis.output.mechanism_hypotheses_are_inferences
+                              ? '机制假设属于基于有限证据的模型推断。'
+                              : '结果基于有限证据，仅供研究参考。'}
+                            {detail.l3_analysis.cost.basis ? ` 成本口径：${detail.l3_analysis.cost.basis}。` : ''}
+                          </p>
+                        </div>
+                      )}
                     </section>
 
                     <section className="detail-section">
