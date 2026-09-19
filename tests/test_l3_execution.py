@@ -9,22 +9,22 @@ import psycopg
 import pytest
 
 from douyin_research.l0l1 import DailyBudgetGuard
-from douyin_research.providers import (
-    EXECUTION_CONTRACT_VERSION,
-    L3_SYNC_CAPABILITY,
-    VerifiedExecutionContract,
-)
 from douyin_research.l2 import L3PromotionGate, TaskCost
 from douyin_research.l3 import (
     L3_BUDGET_KEY,
     L3_CONFIRMATION,
     L3_SCHEMA_VERSION,
+    L3EvidenceBundle,
     L3ExecutionCoordinator,
     L3ExecutionRequest,
     L3ProviderResponse,
     L3ResearchResult,
 )
-
+from douyin_research.providers import (
+    EXECUTION_CONTRACT_VERSION,
+    L3_SYNC_CAPABILITY,
+    VerifiedExecutionContract,
+)
 
 DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
@@ -162,7 +162,6 @@ def _result(**overrides) -> L3ResearchResult:
     return L3ResearchResult(**values)
 
 
-
 def _provider_contract() -> VerifiedExecutionContract:
     return VerifiedExecutionContract(
         provider=PROVIDER,
@@ -212,6 +211,16 @@ def _response(**result_overrides) -> L3ProviderResponse:
             currency="CNY",
             basis="actual",
         ),
+    )
+
+
+def _evidence(video_id: UUID, payload=None, *, fingerprint=None) -> L3EvidenceBundle:
+    return L3EvidenceBundle(
+        video_id=video_id,
+        evidence_version="synthetic-evidence-v1",
+        input_fingerprint=fingerprint or "synthetic-input-fingerprint",
+        evidence_modalities=("metadata",),
+        evidence_bundle=payload or {"metadata": "synthetic"},
     )
 
 
@@ -302,8 +311,13 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
 
     result = coordinator.run(
         request,
-        evidence_factory=lambda: evidence_calls.append("evidence")
-        or {"transcript": "private synthetic evidence"},
+        evidence_factory=lambda: (
+            evidence_calls.append("evidence")
+            or _evidence(
+                video_id,
+                {"transcript": "private synthetic evidence"},
+            )
+        ),
         provider_factory=lambda: provider,
     )
     replay_calls = []
@@ -364,6 +378,57 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
         )
 
 
+def test_execution_requires_evidence_object_bound_to_video_and_fingerprint() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(selected=True, key="evidence-binding")
+    _budget()
+    request = _request(
+        video_id,
+        execute=True,
+        confirmation=L3_CONFIRMATION,
+        task_key="synthetic-l3-evidence-binding",
+    )
+    coordinator = L3ExecutionCoordinator(DSN)
+    provider_calls = []
+
+    with pytest.raises(TypeError, match="must return L3EvidenceBundle"):
+        coordinator.run(
+            request,
+            evidence_factory=lambda: {"metadata": "unbound"},
+            provider_factory=lambda: provider_calls.append("provider"),
+        )
+    with pytest.raises(ValueError, match="fingerprint does not match"):
+        coordinator.run(
+            request,
+            evidence_factory=lambda: _evidence(
+                video_id,
+                fingerprint="different-fingerprint",
+            ),
+            provider_factory=lambda: provider_calls.append("provider"),
+        )
+    with pytest.raises(ValueError, match="video does not match"):
+        coordinator.run(
+            request,
+            evidence_factory=lambda: _evidence(UUID(int=0)),
+            provider_factory=lambda: provider_calls.append("provider"),
+        )
+
+    assert provider_calls == []
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, spent_cost
+            from daily_budget
+            where budget_date=%s and provider=%s and budget_key=%s
+            """,
+            (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (0, Decimal("0"))
+        cur.execute("select count(*) from l3_execution_job")
+        assert cur.fetchone()[0] == 0
+
+
 def test_generation_failure_is_not_retried_and_unknown_cost_stays_null() -> None:
     assert DSN
     _clear()
@@ -380,7 +445,7 @@ def test_generation_failure_is_not_retried_and_unknown_cost_stays_null() -> None
 
     result = coordinator.run(
         request,
-        evidence_factory=lambda: {"metadata": "synthetic"},
+        evidence_factory=lambda: _evidence(video_id),
         provider_factory=lambda: provider,
     )
     replay_calls = []
@@ -486,7 +551,7 @@ def test_retrying_provider_and_invalid_result_are_rejected_safely() -> None:
     with pytest.raises(ValueError, match="retries must be disabled"):
         L3ExecutionCoordinator(DSN).run(
             request,
-            evidence_factory=lambda: {"metadata": "synthetic"},
+            evidence_factory=lambda: _evidence(video_id),
             provider_factory=lambda: retrying,
         )
     assert retrying.calls == []
@@ -494,7 +559,7 @@ def test_retrying_provider_and_invalid_result_are_rejected_safely() -> None:
     invalid = FakeProvider(_response(model_revision="wrong-revision"))
     result = L3ExecutionCoordinator(DSN).run(
         request,
-        evidence_factory=lambda: {"metadata": "synthetic"},
+        evidence_factory=lambda: _evidence(video_id),
         provider_factory=lambda: invalid,
     )
     assert result["status"] == "failed"

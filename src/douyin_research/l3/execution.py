@@ -2,31 +2,31 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Callable, Iterator, Mapping, Protocol
+from typing import Protocol
 from uuid import UUID, uuid4
 
 import psycopg
 from psycopg.types.json import Jsonb
 
+from douyin_research.l2.transcripts import TaskCost
 from douyin_research.providers.execution_contracts import (
     L3_SYNC_CAPABILITY,
     VerifiedExecutionContract,
     validate_execution_contract,
 )
 
-from douyin_research.l2.transcripts import TaskCost
-
+from .evidence import L3EvidenceBundle
 from .results import (
     L3_ANALYSIS_TYPE,
     L3_SCHEMA_VERSION,
     L3ResearchResult,
     L3ResearchStore,
 )
-
 
 L3_CONFIRMATION = "RUN_L3_MODEL_PAID"
 L3_BUDGET_KEY = "windmill_manual_l3"
@@ -85,7 +85,7 @@ class L3ExecutionCoordinator:
         self,
         request: L3ExecutionRequest,
         *,
-        evidence_factory: Callable[[], Mapping[str, object]],
+        evidence_factory: Callable[[], L3EvidenceBundle],
         provider_factory: Callable[[], L3Provider],
     ) -> dict[str, object]:
         _validate_request(request)
@@ -118,9 +118,18 @@ class L3ExecutionCoordinator:
 
             self._preflight(request)
             try:
-                evidence = evidence_factory()
+                assembled = evidence_factory()
             except Exception:
                 raise RuntimeError("L3 evidence assembly failed") from None
+            if not isinstance(assembled, L3EvidenceBundle):
+                raise TypeError("L3 evidence factory must return L3EvidenceBundle")
+            if assembled.video_id != UUID(str(request.video_id)):
+                raise ValueError("L3 evidence video does not match execution request")
+            if assembled.input_fingerprint != request.input_fingerprint:
+                raise ValueError(
+                    "L3 evidence fingerprint does not match execution request"
+                )
+            evidence = assembled.evidence_bundle
             if not isinstance(evidence, Mapping) or not evidence:
                 raise ValueError("L3 evidence bundle must be a non-empty mapping")
 
