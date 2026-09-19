@@ -35,6 +35,7 @@ def _provider(handler, *, production_ready=True):
     return VolcengineDoubaoASRProvider(
         api_key=SECRET,
         audio_format="mp3",
+        source_fingerprint="source-fingerprint",
         source_provider="synthetic-media",
         production_ready=production_ready,
         client=client,
