@@ -425,7 +425,6 @@ def _candidate_fingerprint(candidates: list[_Candidate]) -> str:
             "video_id": str(item.video_id),
             "research_level": item.research_level,
             "score": str(item.score) if item.score is not None else None,
-            "already_selected_today": item.already_selected_today,
         }
         for item in candidates
     ]
