@@ -11,8 +11,10 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from decimal import Decimal
 
+from douyin_research.l2.asr_execution import ASRProviderRequest
 from douyin_research.l3.execution import L3ProviderRequest
 from douyin_research.providers.volcengine_ark_l3 import (
     RECOMMENDED_ARK_MODEL_FAMILY,
@@ -21,9 +23,17 @@ from douyin_research.providers.volcengine_ark_l3 import (
     ark_request_body,
 )
 from douyin_research.providers.volcengine_asr import (
+    VOLCENGINE_ASR_ENGINE_VERSION,
+    VOLCENGINE_ASR_MODEL_ID,
+    VOLCENGINE_ASR_MODEL_REVISION,
     VolcengineASRReadinessFacts,
+    ReviewedASRMediaDelivery,
+    VerifiedLiveVolcengineDoubaoASRProvider,
     assess_volcengine_asr_readiness,
 )
+
+_MAX_ASR_LIVE_POLLS = 3
+_ASR_LIVE_POLL_SECONDS = 1
 
 
 def _request(
@@ -106,19 +116,88 @@ def ark_live() -> dict[str, object]:
     }
 
 
+def asr_live() -> dict[str, object]:
+    """Run one bounded recording-file ASR task after two local gates.
+
+    This is deliberately a tiny, manually invoked smoke: exactly one submit,
+    at most three status queries, no retries, and aggregate-only output.  It
+    never prints a media URL, task identifier, transcript, provider response,
+    or any secret.
+    """
+    if os.environ.get("ASR_LIVE_SMOKE") != "YES":
+        raise PermissionError("set ASR_LIVE_SMOKE=YES before a paid ASR smoke")
+    required = (
+        "VOLCENGINE_ASR_API_KEY", "VOLCENGINE_ASR_MEDIA_URL",
+        "VOLCENGINE_ASR_MEDIA_REVIEW_VERSION", "VOLCENGINE_ASR_SOURCE_FINGERPRINT",
+    )
+    missing = [name for name in required if not os.environ.get(name)]
+    if missing:
+        raise ValueError("ASR live smoke missing required configuration: " + ", ".join(missing))
+    media_url = os.environ["VOLCENGINE_ASR_MEDIA_URL"]
+    reviewed = ReviewedASRMediaDelivery(
+        url=media_url,
+        review_version=os.environ["VOLCENGINE_ASR_MEDIA_REVIEW_VERSION"],
+        query_sha256=os.environ.get("VOLCENGINE_ASR_MEDIA_QUERY_SHA256"),
+    )
+    provider = VerifiedLiveVolcengineDoubaoASRProvider(
+        api_key=os.environ["VOLCENGINE_ASR_API_KEY"],
+        audio_format=os.environ.get("VOLCENGINE_ASR_AUDIO_FORMAT", "m4a"),
+        source_fingerprint=os.environ["VOLCENGINE_ASR_SOURCE_FINGERPRINT"],
+        reviewed_media_delivery=reviewed,
+        source_provider="volcengine-public-demo",
+    )
+    request = ASRProviderRequest(
+        task_key="local-asr-live-smoke-v1",
+        media_ref=media_url,
+        source_fingerprint=os.environ["VOLCENGINE_ASR_SOURCE_FINGERPRINT"],
+        model_id=VOLCENGINE_ASR_MODEL_ID,
+        model_revision=VOLCENGINE_ASR_MODEL_REVISION,
+        engine_version=VOLCENGINE_ASR_ENGINE_VERSION,
+    )
+    external_calls = 0
+    try:
+        state = provider.submit(request)
+        external_calls += 1
+        for poll_number in range(_MAX_ASR_LIVE_POLLS):
+            if state.status not in {"submitted", "running"}:
+                break
+            if poll_number:
+                time.sleep(_ASR_LIVE_POLL_SECONDS)
+            state = provider.poll(state.provider_task_ref)
+            external_calls += 1
+    finally:
+        provider.close()
+    return {
+        "mode": "asr-live",
+        "external_calls": external_calls,
+        "poll_limit": _MAX_ASR_LIVE_POLLS,
+        "terminal_status": state.status,
+        "transcript_received": bool(state.evidence and state.evidence.text.strip()),
+        "segment_count": len(state.evidence.segments) if state.evidence else 0,
+        "provider_error": state.error_code is not None,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("asr-readiness", "ark-contract", "ark-live"))
-    parser.add_argument("--live", action="store_true", help="permit the separately gated paid Ark smoke")
+    parser.add_argument("mode", choices=("asr-readiness", "asr-live", "ark-contract", "ark-live"))
+    parser.add_argument("--live", action="store_true", help="permit a separately gated paid provider smoke")
     args = parser.parse_args()
-    if args.mode == "ark-live" and not args.live:
-        parser.error("ark-live requires the explicit --live flag")
-    if args.mode == "asr-readiness":
-        result = asr_readiness()
-    elif args.mode == "ark-contract":
-        result = ark_contract()
-    else:
-        result = ark_live()
+    if args.mode in {"ark-live", "asr-live"} and not args.live:
+        parser.error(f"{args.mode} requires the explicit --live flag")
+    try:
+        if args.mode == "asr-readiness":
+            result = asr_readiness()
+        elif args.mode == "ark-contract":
+            result = ark_contract()
+        elif args.mode == "asr-live":
+            result = asr_live()
+        else:
+            result = ark_live()
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        # Provider classes intentionally sanitize upstream details; argparse
+        # avoids a traceback which could otherwise include local context.
+        parser.error(str(exc))
     # Do not add arbitrary environment values to this output.
     print(result)
     return 0

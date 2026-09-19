@@ -20,6 +20,11 @@ The page was last updated on 2026-06-26 and documents:
   and `20000003` no speech;
 - completed response text, utterance start/end milliseconds, and audio duration.
 
+The 2.0 documentation also lists `m4a` as a supported source.  The bounded
+live smoke defaults to the public, query-free official demonstration URL
+`https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a`; it is not
+stored in application data or printed by the smoke command.
+
 The committed source fingerprint is the SHA-256 of the canonical URL plus the
 documented update timestamp. It is audit metadata, not a credential.
 
@@ -32,7 +37,8 @@ The adapter:
 - enables punctuation, ITN, and utterance timestamps;
 - disables semantic smoothing, emotion detection, and gender detection;
 - sends a fixed non-personal UID;
-- accepts only credential-free HTTPS media URLs;
+- accepts only credential-free HTTPS media URLs with no query string by
+  default;
 - requires the execution input fingerprint at construction and verifies it again on submit;
 - never includes the API key in its contract, representation, database record,
   or sanitized error;
@@ -80,3 +86,38 @@ The readiness facts to collect are:
 Until a separately reviewed source-code change exists, both the adapter and the
 execution coordinator fail before any HTTP request or budget reservation. No
 live call is part of the test suite.
+
+## Reviewed live adapter and deliberately bounded smoke
+
+`VerifiedLiveVolcengineDoubaoASRProvider` is the explicit, source-reviewed
+live variant.  It is separate from `VolcengineDoubaoASRProvider`: the latter
+remains permanently fail-closed, and neither constructor accepts a runtime
+`production_ready` switch.  The live variant fixes the official base URL,
+submit/query paths, resource ID and model from this document, uses HTTPX with
+redirect following disabled and zero automatic retries, and removes upstream
+HTTP details before raising an error.
+
+Media URLs containing query parameters are rejected by default.  Such a query
+may be a signed bearer-like URL, so a live caller may use one only via a
+`ReviewedASRMediaDelivery` value containing the exact URL, a non-empty review
+version and the SHA-256 of the query itself.  That value has a redacted
+representation, and an arbitrary `allow_query` flag does not exist.  Prefer a
+short, query-free HTTPS URL for every smoke test.
+
+Run the local ASR smoke only after source review and after setting both gates:
+
+```sh
+ASR_LIVE_SMOKE=YES \
+VOLCENGINE_ASR_API_KEY='...' \
+VOLCENGINE_ASR_MEDIA_URL='https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a' \
+VOLCENGINE_ASR_MEDIA_REVIEW_VERSION='official-demo-url-v1' \
+VOLCENGINE_ASR_SOURCE_FINGERPRINT='public-demo-media-v1' \
+uv run python scripts/volcengine/local_smoke.py asr-live --live
+```
+
+It creates exactly one provider task, makes one submit and at most three poll
+requests, with no retry loop.  Its result contains only aggregate completion
+facts (call count, terminal state, transcript/segment presence); it never
+prints the media URL, task ID, transcript, provider response or credential.
+`VOLCENGINE_ASR_MEDIA_QUERY_SHA256` is required only when an independently
+reviewed signed query URL is intentionally supplied.

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from decimal import Decimal
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -43,7 +43,7 @@ VOLCENGINE_ASR_DOC_FINGERPRINT = (
 _SUCCESS = "20000000"
 _RUNNING = frozenset({"20000001", "20000002"})
 _NO_SPEECH = "20000003"
-_ALLOWED_FORMATS = frozenset({"raw", "wav", "mp3", "ogg"})
+_ALLOWED_FORMATS = frozenset({"raw", "wav", "mp3", "ogg", "m4a"})
 VOLCENGINE_ASR_READINESS_VERSION = "volcengine-doubao-asr-readiness-v1.0.0"
 
 
@@ -107,6 +107,45 @@ class _VolcengineASRWireRequest:
     provider_task_ref: str
     headers: tuple[tuple[str, str], ...]
     payload: Mapping[str, object]
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class ReviewedASRMediaDelivery:
+    """A narrowly reviewed delivery URL for the one live adapter.
+
+    A normal ASR request accepts an HTTPS URL without a query string.  Signed
+    URLs are deliberately different: their query can contain a bearer-like
+    credential.  A caller must therefore construct this review record with an
+    exact URL, an operator review version, and a SHA-256 of the *query only*.
+    It cannot be enabled by passing a boolean or an arbitrary ``allow_query``
+    option.  Its representation deliberately omits the URL and query.
+    """
+
+    url: str
+    review_version: str
+    query_sha256: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.url, str):
+            raise ValueError("reviewed ASR media URL is required")
+        if not isinstance(self.review_version, str) or not self.review_version.strip():
+            raise ValueError("reviewed ASR media review version is required")
+        parsed = _parse_credential_free_https_url(self.url)
+        if parsed.query:
+            if not isinstance(self.query_sha256, str) or not _is_sha256(self.query_sha256):
+                raise ValueError("reviewed ASR media query requires SHA-256")
+            actual = hashlib.sha256(parsed.query.encode("utf-8")).hexdigest()
+            if actual != self.query_sha256:
+                raise ValueError("reviewed ASR media query SHA-256 does not match")
+        elif self.query_sha256 is not None:
+            raise ValueError("reviewed ASR media query SHA-256 requires a query")
+
+    def __repr__(self) -> str:
+        return (
+            "ReviewedASRMediaDelivery("
+            f"review_version={self.review_version!r}, "
+            f"has_query={bool(urlsplit(self.url).query)!r})"
+        )
 
 
 def assess_volcengine_asr_readiness(
@@ -263,11 +302,7 @@ class VolcengineDoubaoASRProvider:
 
     def submit(self, request: ASRProviderRequest) -> ASRProviderState:
         self._assert_ready(request)
-        wire = _submit_wire_request(
-            request,
-            audio_format=self._audio_format,
-            language=self._language,
-        )
+        wire = self._submit_wire(request)
         response = self._post(wire)
         return _map_submit_state(
             _status_code(response),
@@ -313,6 +348,13 @@ class VolcengineDoubaoASRProvider:
             expected_model_id=VOLCENGINE_ASR_MODEL_ID,
             expected_model_revision=VOLCENGINE_ASR_MODEL_REVISION,
             expected_currency=self._cost_currency,
+        )
+
+    def _submit_wire(self, request: ASRProviderRequest) -> _VolcengineASRWireRequest:
+        return _submit_wire_request(
+            request,
+            audio_format=self._audio_format,
+            language=self._language,
         )
 
     def _post(self, wire: _VolcengineASRWireRequest) -> httpx.Response:
@@ -380,6 +422,49 @@ class VolcengineDoubaoASRProvider:
         )
 
 
+class VerifiedLiveVolcengineDoubaoASRProvider(VolcengineDoubaoASRProvider):
+    """Source-reviewed, zero-retry live variant of the fail-closed adapter.
+
+    The parent class can never make a network request because its contract is
+    permanently non-production.  This separate class is the only reviewed
+    live boundary.  It has no runtime ``production_ready`` switch, fixes the
+    official endpoint/resource/model inherited from this module, and permits a
+    signed media URL only through :class:`ReviewedASRMediaDelivery`.
+    """
+
+    def __init__(
+        self,
+        *,
+        reviewed_media_delivery: ReviewedASRMediaDelivery,
+        client: httpx.Client | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if not isinstance(reviewed_media_delivery, ReviewedASRMediaDelivery):
+            raise TypeError("reviewed_media_delivery must be ReviewedASRMediaDelivery")
+        if client is not None and client.follow_redirects:
+            raise ValueError("Volcengine ASR live client must not follow redirects")
+        super().__init__(client=client, **kwargs)
+        # Selecting this distinct class is the reviewed source-level boundary;
+        # no caller can flip the default provider through a constructor option.
+        self.contract = replace(self.contract, production_ready=True)
+        self._reviewed_media_delivery = reviewed_media_delivery
+
+    def __repr__(self) -> str:
+        return (
+            "VerifiedLiveVolcengineDoubaoASRProvider("
+            f"audio_format={self._audio_format!r}, language={self._language!r}, "
+            "production_ready=True)"
+        )
+
+    def _submit_wire(self, request: ASRProviderRequest) -> _VolcengineASRWireRequest:
+        return _submit_wire_request(
+            request,
+            audio_format=self._audio_format,
+            language=self._language,
+            reviewed_media_delivery=self._reviewed_media_delivery,
+        )
+
+
 def _provider_task_ref(task_key: str) -> str:
     if not task_key.strip():
         raise ValueError("ASR task key is required")
@@ -391,10 +476,11 @@ def _submit_wire_request(
     *,
     audio_format: str,
     language: str,
+    reviewed_media_delivery: ReviewedASRMediaDelivery | None = None,
 ) -> _VolcengineASRWireRequest:
     """Build the inspectable non-secret submit shape; never sends it."""
 
-    _validate_media_ref(request.media_ref)
+    _validate_media_ref(request.media_ref, reviewed_media_delivery=reviewed_media_delivery)
     provider_task_ref = _provider_task_ref(request.task_key)
     return _VolcengineASRWireRequest(
         path=VOLCENGINE_ASR_SUBMIT_PATH,
@@ -494,7 +580,9 @@ def _map_poll_state(
     )
 
 
-def _validate_media_ref(media_ref: str) -> None:
+def _parse_credential_free_https_url(media_ref: str):
+    if not isinstance(media_ref, str):
+        raise ValueError("Volcengine ASR media reference must be a credential-free HTTPS URL")
     parsed = urlsplit(media_ref)
     if (
         parsed.scheme != "https"
@@ -504,6 +592,31 @@ def _validate_media_ref(media_ref: str) -> None:
         or parsed.fragment
     ):
         raise ValueError("Volcengine ASR media reference must be a credential-free HTTPS URL")
+    return parsed
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def _validate_media_ref(
+    media_ref: str,
+    *,
+    reviewed_media_delivery: ReviewedASRMediaDelivery | None = None,
+) -> None:
+    parsed = _parse_credential_free_https_url(media_ref)
+    if parsed.query:
+        if reviewed_media_delivery is None:
+            raise ValueError(
+                "Volcengine ASR media query requires ReviewedASRMediaDelivery"
+            )
+        if media_ref != reviewed_media_delivery.url:
+            raise ValueError("Volcengine ASR media URL does not match reviewed delivery")
+    elif (
+        reviewed_media_delivery is not None
+        and media_ref != reviewed_media_delivery.url
+    ):
+        raise ValueError("Volcengine ASR media URL does not match reviewed delivery")
 
 
 def _status_code(response: httpx.Response) -> str:
