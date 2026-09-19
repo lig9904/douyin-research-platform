@@ -11,8 +11,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal
 from typing import Any
+
+import httpx
 
 from douyin_research.l2.transcripts import TaskCost
 from douyin_research.l3.execution import L3ProviderRequest, L3ProviderResponse
@@ -129,6 +132,87 @@ class VolcengineArkL3Provider:
         _request_modalities(request)
 
 
+class VerifiedLiveVolcengineArkL3Provider(VolcengineArkL3Provider):
+    """One-shot Ark transport with a source-reviewed, fixed live boundary.
+
+    This class is deliberately separate from :class:`VolcengineArkL3Provider`.
+    Instantiating the default provider can never turn on network access; this
+    class is the explicit code-reviewed integration point.  It has no
+    ``production_ready`` argument and never retries a request.
+
+    ``expected_response_model`` is deliberately distinct from ``model_revision``:
+    Ark may put either the endpoint id or a provider-side serving revision into
+    its OpenAI-compatible response envelope.  The caller must record the value
+    it expects for the selected endpoint rather than silently accepting either.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        expected_response_model: str,
+        client: httpx.Client | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if not isinstance(api_key, str) or not api_key.strip():
+            raise ValueError("Volcengine Ark L3 API key is required")
+        if not isinstance(expected_response_model, str) or not expected_response_model.strip():
+            raise ValueError("Volcengine Ark L3 expected response model is required")
+        super().__init__(**kwargs)
+        self._expected_response_model = expected_response_model
+        # This is a source-level choice of the reviewed class, not a caller
+        # switch.  The default class above remains permanently fail-closed.
+        self.contract = replace(self.contract, production_ready=True)
+        self._api_key = api_key
+        self._client = client or httpx.Client(
+            base_url=VOLCENGINE_ARK_BASE_URL,
+            timeout=self.contract.timeout_seconds,
+            follow_redirects=False,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            "VerifiedLiveVolcengineArkL3Provider("
+            f"model_id={self._model_id!r}, model_revision={self._model_revision!r}, "
+            f"expected_response_model={self._expected_response_model!r}, "
+            "production_ready=True)"
+        )
+
+    def close(self) -> None:
+        """Close the internally supplied or injected HTTP client."""
+        self._client.close()
+
+    def generate(self, request: L3ProviderRequest) -> L3ProviderResponse:
+        self._assert_ready(request)
+        try:
+            response = self._client.post(
+                VOLCENGINE_ARK_SUBMIT_PATH,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=ark_request_body(self, request),
+            )
+        except httpx.HTTPError:
+            raise RuntimeError("Volcengine Ark L3 request failed") from None
+        if response.status_code < 200 or response.status_code >= 300:
+            # Do not include a provider body: it can contain prompt fragments,
+            # request ids, account information, or echoed credentials.
+            raise RuntimeError(
+                f"Volcengine Ark L3 returned HTTP {response.status_code}"
+            )
+        payload = _json_object(response)
+        return map_ark_completed_response(
+            payload,
+            request,
+            expected_response_model=self._expected_response_model,
+            cost_currency=self._cost_currency,
+            input_rate=self._input_rate,
+            output_rate=self._output_rate,
+        )
+
+
 def ark_request_body(provider: VolcengineArkL3Provider, request: L3ProviderRequest) -> dict[str, object]:
     """Build a credential-free, one-shot Ark request.  Never sends it."""
     provider._assert_request(request)
@@ -151,10 +235,25 @@ def ark_request_body(provider: VolcengineArkL3Provider, request: L3ProviderReque
     }
 
 
-def map_ark_completed_response(payload: Mapping[str, Any], request: L3ProviderRequest, *, model_revision: str, cost_currency: str, input_rate: Decimal, output_rate: Decimal) -> L3ProviderResponse:
+def map_ark_completed_response(
+    payload: Mapping[str, Any],
+    request: L3ProviderRequest,
+    *,
+    expected_response_model: str | None = None,
+    model_revision: str | None = None,
+    cost_currency: str,
+    input_rate: Decimal,
+    output_rate: Decimal,
+) -> L3ProviderResponse:
     """Validate a completed Ark Chat Completions payload, including binding."""
-    if payload.get("model") != model_revision:
-        raise ValueError("Volcengine Ark L3 response model revision does not match request")
+    if expected_response_model is None:
+        # Backward-compatible for offline callers.  All live callers must pass
+        # the explicit endpoint-specific response value.
+        expected_response_model = model_revision
+    if not isinstance(expected_response_model, str) or not expected_response_model.strip():
+        raise ValueError("Volcengine Ark L3 expected response model is required")
+    if payload.get("model") != expected_response_model:
+        raise ValueError("Volcengine Ark L3 response model does not match expected response model")
     choices = payload.get("choices")
     if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], Mapping):
         raise ValueError("Volcengine Ark L3 response must contain exactly one choice")
@@ -237,3 +336,13 @@ def _rate(value: Decimal | str | int, name: str) -> Decimal:
     if not parsed.is_finite() or parsed < 0:
         raise ValueError(f"Volcengine Ark L3 {name} must be finite and non-negative")
     return parsed
+
+
+def _json_object(response: httpx.Response) -> Mapping[str, Any]:
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError):
+        raise ValueError("Volcengine Ark L3 response is not valid JSON") from None
+    if not isinstance(payload, Mapping):
+        raise ValueError("Volcengine Ark L3 response JSON must be an object")
+    return payload

@@ -3,11 +3,15 @@ from __future__ import annotations
 import json
 from decimal import Decimal
 
+import httpx
 import pytest
 
 from douyin_research.l3.execution import L3ProviderRequest
 from douyin_research.providers.volcengine_ark_l3 import (
     RECOMMENDED_ARK_MODEL_FAMILY,
+    VOLCENGINE_ARK_BASE_URL,
+    VOLCENGINE_ARK_SUBMIT_PATH,
+    VerifiedLiveVolcengineArkL3Provider,
     VolcengineArkL3Provider,
     ark_request_body,
     map_ark_completed_response,
@@ -87,3 +91,88 @@ def test_refusal_unknown_modality_and_missing_usage_are_rejected() -> None:
     unknown["choices"][0]["message"]["content"] = json.dumps(content)
     with pytest.raises(ValueError, match="modality"):
         map_ark_completed_response(unknown, request(), model_revision="revision-1", cost_currency="CNY", input_rate=1, output_rate=2)
+
+
+def live_provider(client: httpx.Client, **overrides: object) -> VerifiedLiveVolcengineArkL3Provider:
+    values: dict[str, object] = {
+        "api_key": "ark-secret-must-not-appear", "endpoint_id": "ep-opaque-not-a-secret",
+        "model_revision": "revision-1", "expected_response_model": "ep-opaque-not-a-secret",
+        "cost_currency": "CNY", "pricing_version": "price-v1",
+        "input_cost_per_million_tokens": "1", "output_cost_per_million_tokens": "2",
+        "client": client,
+    }
+    values.update(overrides)
+    return VerifiedLiveVolcengineArkL3Provider(**values)
+
+
+def test_verified_live_provider_posts_exactly_once_with_fixed_wire_contract() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(wire: httpx.Request) -> httpx.Response:
+        calls.append(wire)
+        completed = payload(request())
+        completed["model"] = "ep-opaque-not-a-secret"
+        return httpx.Response(200, json=completed)
+
+    with httpx.Client(base_url=VOLCENGINE_ARK_BASE_URL, transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        response = live_provider(client).generate(request())
+    assert response.cost.llm_cost == Decimal("0.0002")
+    assert len(calls) == 1
+    wire = calls[0]
+    assert str(wire.url) == VOLCENGINE_ARK_BASE_URL + VOLCENGINE_ARK_SUBMIT_PATH
+    assert wire.headers["authorization"] == "Bearer ark-secret-must-not-appear"
+    assert wire.headers["content-type"] == "application/json"
+    sent = json.loads(wire.content)
+    assert sent["model"] == "ep-opaque-not-a-secret"
+    assert sent["stream"] is False and sent["temperature"] == 0
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "message"),
+    [
+        (401, "provider echoed ark-secret-must-not-appear", "HTTP 401"),
+        (200, "not-json", "not valid JSON"),
+    ],
+)
+def test_live_transport_rejects_bad_http_or_non_json_without_secret_leak(
+    status: int, body: str, message: str,
+) -> None:
+    with httpx.Client(base_url=VOLCENGINE_ARK_BASE_URL, transport=httpx.MockTransport(lambda _: httpx.Response(status, text=body))) as client:
+        p = live_provider(client)
+        with pytest.raises((RuntimeError, ValueError), match=message) as captured:
+            p.generate(request())
+    assert "ark-secret-must-not-appear" not in str(captured.value)
+    assert "provider echoed ark-secret-must-not-appear" not in str(captured.value)
+
+
+def test_live_transport_requires_explicit_endpoint_response_model_and_rejects_mismatch() -> None:
+    wrong = payload(request())
+    wrong["model"] = "revision-1"
+    with httpx.Client(base_url=VOLCENGINE_ARK_BASE_URL, transport=httpx.MockTransport(lambda _: httpx.Response(200, json=wrong))) as client:
+        with pytest.raises(ValueError, match="expected response model"):
+            live_provider(client).generate(request())
+
+
+@pytest.mark.parametrize("change", ["task_key", "prompt_version", "schema_version", "input_fingerprint"])
+def test_live_transport_rejects_each_structured_binding_mismatch(change: str) -> None:
+    raw = payload(request())
+    raw["model"] = "ep-opaque-not-a-secret"
+    content = json.loads(raw["choices"][0]["message"]["content"])
+    content[change] = "wrong"
+    raw["choices"][0]["message"]["content"] = json.dumps(content)
+    with httpx.Client(base_url=VOLCENGINE_ARK_BASE_URL, transport=httpx.MockTransport(lambda _: httpx.Response(200, json=raw))) as client:
+        with pytest.raises(ValueError, match="binding"):
+            live_provider(client).generate(request())
+
+
+def test_live_provider_has_no_runtime_production_switch_or_key_in_repr() -> None:
+    with httpx.Client(base_url=VOLCENGINE_ARK_BASE_URL, transport=httpx.MockTransport(lambda _: httpx.Response(200))) as client:
+        p = live_provider(client)
+        assert p.contract.production_ready is True
+        assert "ark-secret-must-not-appear" not in repr(p)
+        with pytest.raises(TypeError, match="production_ready"):
+            VerifiedLiveVolcengineArkL3Provider(
+                api_key="x", endpoint_id="ep", model_revision="r", expected_response_model="ep",
+                cost_currency="CNY", pricing_version="p", input_cost_per_million_tokens=0,
+                output_cost_per_million_tokens=0, production_ready=False,
+            )
