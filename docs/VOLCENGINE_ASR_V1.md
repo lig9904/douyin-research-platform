@@ -33,6 +33,7 @@ The adapter:
 - disables semantic smoothing, emotion detection, and gender detection;
 - sends a fixed non-personal UID;
 - accepts only credential-free HTTPS media URLs;
+- requires the execution input fingerprint at construction and verifies it again on submit;
 - never includes the API key in its contract, representation, database record,
   or sanitized error;
 - records actual API/ASR cost as unknown until provider billing data is
