@@ -60,6 +60,7 @@ class VolcengineDoubaoASRProvider:
         *,
         api_key: str,
         audio_format: str,
+        source_fingerprint: str,
         language: str = "zh-CN",
         cost_currency: str = "CNY",
         source_provider: str | None = None,
@@ -71,12 +72,15 @@ class VolcengineDoubaoASRProvider:
             raise ValueError("Volcengine ASR API key is required")
         if audio_format not in _ALLOWED_FORMATS:
             raise ValueError("unsupported Volcengine ASR audio format")
+        if not source_fingerprint.strip():
+            raise ValueError("Volcengine ASR source fingerprint is required")
         if not language.strip():
             raise ValueError("Volcengine ASR language is required")
         if not cost_currency.strip():
             raise ValueError("Volcengine ASR cost currency is required")
         self._api_key = api_key
         self._audio_format = audio_format
+        self._source_fingerprint = source_fingerprint
         self._language = language
         self._cost_currency = cost_currency
         self._source_provider = source_provider
@@ -209,6 +213,8 @@ class VolcengineDoubaoASRProvider:
         )
         if expected != actual:
             raise ValueError("Volcengine ASR request model does not match adapter")
+        if request.source_fingerprint != self._source_fingerprint:
+            raise ValueError("Volcengine ASR source fingerprint does not match adapter")
         self._assert_contract_ready()
 
     def _assert_contract_ready(self) -> None:
@@ -279,7 +285,7 @@ class VolcengineDoubaoASRProvider:
             model_id=VOLCENGINE_ASR_MODEL_ID,
             model_revision=VOLCENGINE_ASR_MODEL_REVISION,
             engine_version=VOLCENGINE_ASR_ENGINE_VERSION,
-            source_fingerprint="pending-request-source-fingerprint",
+            source_fingerprint=self._source_fingerprint,
             text=text,
             segments=segments,
             language=self._language,
