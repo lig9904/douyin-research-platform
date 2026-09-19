@@ -1,0 +1,51 @@
+name: tikhub-paid-v0-batch3
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type BATCH3_10 to allow at most ten paid requests"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tikhub-paid-v0
+  cancel-in-progress: false
+
+jobs:
+  batch3:
+    if: ${{ inputs.confirmation == 'BATCH3_10' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pinned project dependencies
+        run: python -m pip install -e ".[dev]"
+
+      - name: Verify SDK probe safety
+        run: |
+          python -m compileall -q scripts/tikhub/v0_batch2.py scripts/tikhub/v0_batch3.py
+          python -m pytest tests/test_tikhub_v0_batch2.py tests/test_tikhub_v0_batch3.py tests/test_tikhub_transport.py
+
+      - name: Run capped paid batch three
+        env:
+          TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
+          TIKHUB_ENABLE_PAID_BATCH3: ${{ inputs.confirmation }}
+        run: python scripts/tikhub/v0_batch3.py
+
+      - name: Remove ephemeral raw responses
+        if: always()
+        run: |
+          test ! -e tmp/tikhub-v0-batch3 || find tmp/tikhub-v0-batch3 -maxdepth 1 -type f -name '*.json' -delete
