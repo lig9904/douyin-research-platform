@@ -28,7 +28,7 @@ const navItems: NavItem[] = [
   { icon: '♨', label: '今日发现', view: 'today', enabled: false },
   { icon: '▶', label: '视频库', view: 'videos', enabled: true },
   { icon: '♟', label: '账号库', view: 'accounts', enabled: true },
-  { icon: '◆', label: '热点库', view: 'hotspots', enabled: false },
+  { icon: '◆', label: '热点库', view: 'hotspots', enabled: true },
   { icon: '▤', label: '历史研究', view: 'history', enabled: false },
   { icon: '★', label: '收藏专题', view: 'collections', enabled: false },
   { icon: '▥', label: '跨平台对比', view: 'compare', enabled: false },
