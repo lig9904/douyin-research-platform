@@ -43,8 +43,4 @@ jobs:
           --log-level=warning
 
       - name: Compile Windmill Python backends
-        run: |
-          python -m py_compile backend/get_home_overview.py
-          python -m py_compile backend/get_video_library.py
-          python -m py_compile backend/get_account_library.py
-          python -m py_compile backend/get_hotspot_library.py
+        run: python -m compileall -q backend

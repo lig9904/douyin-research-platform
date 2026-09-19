@@ -13,6 +13,8 @@ V1 使用 Windmill 作为任务编排、脚本执行、内部 App 与 MCP Gatewa
 
 `manual_asr_preview` 与 `manual_l3_preview` 是零调用准备度预览。它们不接收真实视频/媒体/证据标识，也不挂数据库或 Secret；在供应商契约核验前，`execute=true` 始终失败关闭。详见 `docs/WINDMILL_RESEARCH_PREVIEWS_V1.md`。
 
+研究台的 L3 人工审核与预算预览是另一条 reviewer-only 数据库流程：只输出候选 manifest，审批绑定 `WM_END_USER_EMAIL` 与精确证据指纹，预算使用服务端静态配置且不预占。它仍不提供付费执行。详见 `docs/WINDMILL_L3_REVIEW_WORKFLOW_V1.md`。
+
 ## 原则
 
 - Windmill Secrets 保存 Token，不提交 Git。
