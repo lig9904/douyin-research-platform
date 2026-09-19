@@ -140,3 +140,108 @@ Silero VAD 可本地判断语音段，MIT License。
 - 依赖
 
 只有当出现大量长视频/音乐空白导致 ASR 成本明显增加时再加入。
+
+
+## 11. 接口实现优先级（深挖后修正）
+
+### 默认实时研究：极速版
+
+优先接口：
+
+```text
+POST https://openspeech.bytedance.com/api/v3/auc/bigmodel/recognize/flash
+```
+
+特点：
+- 单次请求直接返回结果
+- 不需要 submit/query 轮询
+- 音频时长 ≤ 2h
+- 音频大小 ≤ 100MB
+- 支持 WAV / MP3 / OGG OPUS
+- audio.url 与 audio.data(base64) 二选一
+- 返回 utterances 句级时间戳
+- 返回 words 逐词时间戳
+- 官方示例显示 30 分钟音频通常约 10 秒返回（不含传输）
+
+对我们 30–120 秒短视频最合适。
+
+资源 ID：
+`volc.bigasr.auc_turbo`
+
+新控制台鉴权优先：
+`X-Api-Key`
+
+旧控制台才使用 App-Key + Access-Key。
+
+### 批量历史回填：闲时版
+
+只有大量 backfill 且正式价格确实更低时才考虑：
+
+```text
+POST /api/v3/auc/bigmodel/idle/submit
+POST /api/v3/auc/bigmodel/idle/query
+```
+
+特点：
+- submit/query
+- 24h 内返回
+- 适合可延迟任务
+- 增加轮询状态机复杂度
+
+所以 V1 不默认启用。
+
+## 12. URL 与临时文件策略
+
+极速版支持：
+- `audio.url`
+- `audio.data`
+
+实际流程：
+
+1. 先尝试直接将短时有效媒体 URL 交给 ASR。
+2. 若因防盗链、过期、跨域抓取失败：
+   - worker 临时下载视频/音频
+   - FFmpeg 转为单声道 MP3/WAV
+   - 文件较小时 base64 直接提交
+   - 识别后立即删除临时文件
+
+不为了 ASR 永久保存视频。
+
+## 13. 请求追踪与错误
+
+每次调用必须保存：
+- request_id
+- X-Tt-Logid
+- X-Api-Status-Code
+- resource_id
+- duration_ms
+- retry_count
+
+常见状态按官方接口：
+- 20000000 success
+- 20000003 silent audio
+- 45000001 invalid request
+- 45000002 empty audio
+- 45000151 invalid format
+- 550xxxx internal error
+- 55000031 server busy
+
+重试只针对明确的临时服务错误；参数/格式错误不重试。
+
+## 14. 热词实现
+
+热词通过火山引擎自学习平台维护，识别请求传入热词表 ID/名称。
+
+当前官方限制：
+- 每应用最多 500 个词表
+- 每词表最多 5000 个热词
+- 单个热词少于 10 个字
+- 权重 1–10，默认 4
+- 一个识别请求只启用一张词表
+
+V1 只维护一张“九九项目词表”，版本化记录：
+- hotword_table_id
+- hotword_version
+- updated_at
+
+不要频繁按视频创建新词表。
