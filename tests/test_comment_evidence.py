@@ -140,7 +140,7 @@ def test_comment_ingest_is_replay_safe_and_preserves_null_vs_zero() -> None:
         assert cur.fetchone()[0] == 2
 
 
-def test_new_fingerprint_adds_observation_and_updates_available_metrics() -> None:
+def test_new_raw_response_adds_observation_with_same_request_params() -> None:
     assert DSN
     _clear()
     _insert_video()
@@ -155,7 +155,7 @@ def test_new_fingerprint_adds_observation_and_updates_available_metrics() -> Non
         platform="douyin",
         video_platform_id="video-private",
         provider="tikhub",
-        request_fingerprint="request-fingerprint-2",
+        request_fingerprint="request-fingerprint-1",
     )
 
     store.ingest([_sample("comment-private", like_count=0, reply_count=None)], base)
