@@ -230,6 +230,7 @@ def test_cached_comment_page_does_not_consume_external_call_guard() -> None:
 
     assert first.cached is False
     assert second.cached is True
+    assert first.raw_ref == second.raw_ref
     assert len(transport.calls) == 1
     assert guarded == ["douyin.app.comments"]
 
