@@ -559,7 +559,7 @@ create table if not exists research_promotion_batch (
   id uuid primary key,
   pipeline_run_id uuid not null unique
     references pipeline_run(id) on delete cascade,
-  source_run_id uuid not null references pipeline_run(id),
+  source_run_id uuid not null references pipeline_run(id) on delete cascade,
   quota_date date not null,
   platform text not null references platform_registry(platform_key),
   quota_key text not null,
