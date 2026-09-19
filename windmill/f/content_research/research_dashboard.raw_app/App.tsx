@@ -14,6 +14,9 @@ import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
 import HotspotLibrary from './HotspotLibrary'
 import AppShell, { type ResearchView } from './AppShell'
+import GlobalSearch from './src/components/GlobalSearch'
+import OperationsOverview from './src/components/OperationsOverview'
+import PlatformIcon from './src/components/PlatformIcon'
 
 type Platform = {
   key: string
@@ -87,16 +90,6 @@ type Overview = {
     status: string
     message: string
   }
-}
-
-const platformGlyph: Record<string, string> = {
-  all: '▦',
-  douyin: '♪',
-  kuaishou: '∞',
-  wechat_channels: '◉',
-  xiaohongshu: '小',
-  bilibili: 'B',
-  weibo: '◎',
 }
 
 const sourceLabels: Record<string, string> = {
@@ -182,6 +175,8 @@ function App() {
   const [platform, setPlatform] = useState('douyin')
   const [hours, setHours] = useState(24)
   const [query, setQuery] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [selectedVideoId, setSelectedVideoId] = useState('')
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -223,7 +218,7 @@ function App() {
   ]
 
   if (view === 'videos') {
-    return <VideoLibrary onNavigate={setView} />
+    return <VideoLibrary onNavigate={setView} initialSelectedVideoId={selectedVideoId} />
   }
   if (view === 'accounts') {
     return <AccountLibrary onNavigate={setView} />
@@ -231,22 +226,58 @@ function App() {
   if (view === 'hotspots') {
     return <HotspotLibrary onNavigate={setView} />
   }
+  if (view === 'search') {
+    return (
+      <AppShell
+        activeView="search"
+        onNavigate={setView}
+        title="全局搜索"
+        subtitle="历史研究资产 / 公开元数据"
+      >
+        <GlobalSearch
+          initialQuery={searchQuery}
+          platforms={data?.platforms || []}
+          onNavigate={(next) => setView(next)}
+          onOpenVideo={(videoId) => {
+            setSelectedVideoId(videoId)
+            setView('videos')
+          }}
+        />
+      </AppShell>
+    )
+  }
+  if (view === 'cost') {
+    return (
+      <AppShell
+        activeView="cost"
+        onNavigate={(next) => setView(next)}
+        title="运行与成本"
+        subtitle="Admin / Developer · 只读业务运行账本"
+      >
+        <OperationsOverview platforms={data?.platforms || []} />
+      </AppShell>
+    )
+  }
 
   return (
     <AppShell
       activeView="home"
-      onNavigate={(next) => {
-        if (next === 'videos' || next === 'accounts' || next === 'hotspots' || next === 'home') setView(next)
-      }}
+      onNavigate={setView}
       title="内容研究台"
       subtitle="多平台内容研究平台 · 热点采集 / 对标拆解 / 趋势洞察 / IP追踪"
       actions={
         <>
           <Input.Search
             className="global-search"
-            placeholder="搜索当前首页的视频、账号、来源..."
+            placeholder="搜索研究资产…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onSearch={(value) => {
+              const normalized = value.trim()
+              if (!normalized) return
+              setSearchQuery(normalized)
+              setView('search')
+            }}
             allowClear
           />
           <Select
@@ -275,9 +306,7 @@ function App() {
                     className={platform === p.key ? 'platform-tab selected' : 'platform-tab'}
                     onClick={() => setPlatform(p.key)}
                   >
-                    <span className={`platform-logo ${p.key}`}>
-                      {platformGlyph[p.key] || '•'}
-                    </span>
+                    <PlatformIcon platform={p.key} className="platform-logo" />
                     {p.name}
                     {!p.enabled && <i className="planned-dot" />}
                   </button>
@@ -357,7 +386,7 @@ function App() {
                           <td><span className={`rank rank-${idx + 1}`}>{idx + 1}</span></td>
                           <td>
                             <div className="title-cell">
-                              <div className="video-thumb">{platformGlyph[item.platform] || '▶'}</div>
+                              <div className="video-thumb"><PlatformIcon platform={item.platform} className="platform-icon-bare" /></div>
                               <div>
                                 <strong>{item.title}</strong>
                                 <small>{item.account_name || '未知账号'}</small>
@@ -420,7 +449,7 @@ function App() {
                   {(data?.cases || []).map((item, idx) => (
                     <div className="case-card" key={item.id}>
                       <div className={`case-image case-image-${idx + 1}`}>
-                        <span>{platformGlyph[item.platform] || '▶'}</span>
+                        <PlatformIcon platform={item.platform} className="platform-icon-bare" />
                       </div>
                       <div className="case-body">
                         <strong>{item.title}</strong>

@@ -6,7 +6,8 @@
 
 Windmill 官方自托管示例 .env 默认使用 ghcr.io/windmill-labs/windmill:main，这适合快速体验，不适合我们的长期生产部署。
 
-当前正式 Release 已到 v1.814.0（2026-09-17）。
+当前仓库验证基线为 Windmill v1.815.0；compose 默认镜像已固定到本机全链路验证过的
+OCI digest，不依赖 `main`、`latest` 或可变版本 tag。
 
 V1 原则：
 - 开发验证阶段可跟随官方推荐方式快速起环境
@@ -22,6 +23,7 @@ PostgreSQL 18 与 16 的官方镜像数据目录布局不同。
 
 因此：
 - 新环境直接选定 PostgreSQL major
+- compose 默认固定到 PostgreSQL 18 的已验证 OCI digest
 - compose、volume mount、备份恢复文档作为同一个版本单元管理
 - 不单独修改 postgres image tag
 - major upgrade 前先整集群备份

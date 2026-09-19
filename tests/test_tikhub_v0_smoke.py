@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
+import types
 from pathlib import Path
 
 
@@ -107,3 +109,59 @@ def test_paid_summary_redacts_request_id_and_payload(tmp_path, monkeypatch) -> N
     assert "request_id" not in summary
     assert "private-sample-id" not in str(summary)
     assert summary["first_list_count"] == 1
+
+
+def test_paid_sdk_is_constructed_with_zero_retries(monkeypatch) -> None:
+    smoke = _load_smoke()
+    constructed: list[dict[str, object]] = []
+
+    class FakeTikHub:
+        def __init__(self, **kwargs: object) -> None:
+            constructed.append(kwargs)
+
+    fake_tikhub = types.ModuleType("tikhub")
+    fake_tikhub.TikHub = FakeTikHub
+    fake_tikhub.__version__ = "2.1.1"
+    monkeypatch.setitem(sys.modules, "tikhub", fake_tikhub)
+
+    client, version = smoke.get_sdk("synthetic-key")
+
+    assert isinstance(client, FakeTikHub)
+    assert version == "2.1.1"
+    assert constructed == [{"api_key": "synthetic-key", "max_retries": 0}]
+
+
+def test_paid_billboard_performs_one_sdk_method_call(tmp_path, monkeypatch) -> None:
+    smoke = _load_smoke()
+    monkeypatch.setattr(smoke, "OUT_DIR", tmp_path)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    class FakeBillboard:
+        def fetch_hot_total_low_fan_list(self, *args: object, **kwargs: object):
+            calls.append((args, kwargs))
+            return {
+                "code": 200,
+                "request_id": "not-logged",
+                "router": "/api/v1/douyin/billboard",
+                "data": [],
+            }
+
+    class FakeClient:
+        douyin_billboard = FakeBillboard()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+    monkeypatch.setattr(smoke, "require_paid", lambda: "synthetic-key")
+    monkeypatch.setattr(smoke, "get_sdk", lambda _: (FakeClient(), "2.1.1"))
+
+    assert smoke.paid_billboard() == 0
+    assert calls == [
+        (
+            (),
+            {"page": 1, "page_size": 5, "date_window": 24, "tags": []},
+        )
+    ]

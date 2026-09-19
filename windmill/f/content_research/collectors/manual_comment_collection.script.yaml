@@ -2,41 +2,46 @@ summary: Manual bounded comment collection
 description: |
   Preview by default. A paid TikHub request is possible only after an exact
   confirmation, a same-day configured budget, and a source-video preflight.
+lock: '!inline f/content_research/collectors/manual_comment_collection.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 1
 schema:
   type: object
   properties:
+    confirmation:
+      type: string
+      description: Exact paid-operation confirmation; required only when execute=true.
+      default: ''
+      originalType: string
+    count:
+      type: integer
+      default: 20
+      maximum: 20
+      minimum: 1
     db:
       type: object
+      default: null
       format: resource-postgresql
+    execute:
+      type: boolean
+      description: Leave false for a zero-call preview.
+      default: false
+    max_items:
+      type: integer
+      default: 20
+      maximum: 40
+      minimum: 1
+    max_pages:
+      type: integer
+      default: 1
+      maximum: 2
+      minimum: 1
     video_platform_id:
       type: string
       description: Existing Douyin platform video ID. The value is never returned.
-    execute:
-      type: boolean
-      default: false
-      description: Leave false for a zero-call preview.
-    confirmation:
-      type: string
-      default: ""
-      description: Exact paid-operation confirmation; required only when execute=true.
-    count:
-      type: integer
-      minimum: 1
-      maximum: 20
-      default: 20
-    max_pages:
-      type: integer
-      minimum: 1
-      maximum: 2
-      default: 1
-    max_items:
-      type: integer
-      minimum: 1
-      maximum: 40
-      default: 20
+      default: null
+      originalType: string
   required:
     - db
     - video_platform_id
-concurrent_limit: 1
-concurrency_time_window_s: 0
 timeout: 120

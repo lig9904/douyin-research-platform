@@ -1,0 +1,6 @@
+value: >-
+  {"provider":"unconfigured","model_id":"unconfigured","model_revision":"unconfigured","prompt_version":"l3-prompt-v1","pricing_version":"local-no-call","estimated_llm_cost":null,"cost_currency":"CNY"}
+is_secret: false
+description: >-
+  Local no-call L3 budget-preview placeholder. It has no provider credential,
+  creates no budget row, and must be replaced only after a reviewed plan exists.

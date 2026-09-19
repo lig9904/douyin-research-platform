@@ -13,6 +13,8 @@ import {
 import { backend } from './wmill'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
+import MetricTimeline from './src/components/MetricTimeline'
+import PlatformIcon from './src/components/PlatformIcon'
 import './video-library.css'
 
 type Platform = {
@@ -116,16 +118,6 @@ type Filters = {
   sort: string
   page: number
   page_size: number
-}
-
-const platformGlyph: Record<string, string> = {
-  all: '▦',
-  douyin: '♪',
-  kuaishou: '∞',
-  wechat_channels: '◉',
-  xiaohongshu: '小',
-  bilibili: 'B',
-  weibo: '◎',
 }
 
 const sourceLabels: Record<string, string> = {
@@ -237,13 +229,15 @@ const initialFilters: Filters = {
 
 export default function VideoLibrary({
   onNavigate,
+  initialSelectedVideoId = '',
 }: {
   onNavigate: (view: ResearchView) => void
+  initialSelectedVideoId?: string
 }) {
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [draft, setDraft] = useState<Filters>(initialFilters)
   const [data, setData] = useState<VideoLibraryData | null>(null)
-  const [selectedVideoId, setSelectedVideoId] = useState('')
+  const [selectedVideoId, setSelectedVideoId] = useState(initialSelectedVideoId)
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -323,9 +317,7 @@ export default function VideoLibrary({
   return (
     <AppShell
       activeView="videos"
-      onNavigate={(next) => {
-        if (next === 'home' || next === 'videos') onNavigate(next)
-      }}
+      onNavigate={onNavigate}
       title="视频库"
       subtitle="多平台视频资产 / 黑马候选 / 研究流转"
       mainClassName="video-library-main"
@@ -366,9 +358,7 @@ export default function VideoLibrary({
                     className={filters.platform === p.key ? 'platform-tab selected' : 'platform-tab'}
                     onClick={() => selectPlatform(p.key)}
                   >
-                    <span className={`platform-logo ${p.key}`}>
-                      {platformGlyph[p.key] || '•'}
-                    </span>
+                    <PlatformIcon platform={p.key} className="platform-logo" />
                     {p.name}
                     {!p.enabled && <i className="planned-dot" />}
                   </button>
@@ -580,7 +570,7 @@ export default function VideoLibrary({
                           <td>
                             <div className="video-list-title">
                               <div className="video-list-thumb">
-                                <span>{platformGlyph[item.platform] || '▶'}</span>
+                                <PlatformIcon platform={item.platform} className="platform-icon-bare" />
                                 <i>
                                   {item.duration_ms
                                     ? `${Math.floor(item.duration_ms / 60000)}:${String(
@@ -601,7 +591,7 @@ export default function VideoLibrary({
                               </div>
                             </div>
                           </td>
-                          <td><span className="platform-mini">{platformGlyph[item.platform] || '•'}</span></td>
+                          <td><PlatformIcon platform={item.platform} className="platform-mini" /></td>
                           <td>
                             <div className="source-tags">
                               {(item.sources || []).slice(0, 2).map((s) => (
@@ -697,7 +687,7 @@ export default function VideoLibrary({
                     </div>
 
                     <div className="detail-meta">
-                      <span className="platform-mini">{platformGlyph[detail.platform] || '•'}</span>
+                      <PlatformIcon platform={detail.platform} className="platform-mini" />
                       <strong>{platforms.find((p) => p.key === detail.platform)?.name || detail.platform}</strong>
                       <i />
                       <span>发布时间 {formatFullDate(detail.published_at)}</span>
@@ -738,6 +728,8 @@ export default function VideoLibrary({
                         ))}
                       </div>
                     </section>
+
+                    <MetricTimeline videoId={detail.id} />
 
                     <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">

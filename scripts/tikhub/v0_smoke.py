@@ -37,6 +37,7 @@ DEMO_URLS = {
 OUT_DIR = Path("tmp/tikhub-v0")
 PAID_GATE = "TIKHUB_ENABLE_PAID_SMOKE"
 API_KEY_ENV = "TIKHUB_API_KEY"
+SDK_MAX_RETRIES = 0
 
 
 class SmokeFailure(RuntimeError):
@@ -224,7 +225,8 @@ def get_sdk(api_key: str):
         raise SmokeFailure(
             'TikHub SDK missing. Install pinned dependency first: pip install "tikhub==2.1.1"'
         ) from exc
-    return TikHub(api_key=api_key), __version__
+    # A logical smoke call must not fan out into provider-billed retry attempts.
+    return TikHub(api_key=api_key, max_retries=SDK_MAX_RETRIES), __version__
 
 
 def save_and_summarize(label: str, payload: Any, sdk_version: str) -> dict[str, Any]:

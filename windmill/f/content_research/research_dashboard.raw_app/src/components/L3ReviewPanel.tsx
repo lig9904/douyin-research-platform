@@ -182,6 +182,7 @@ export default function L3ReviewPanel({
 
       {manifest && (
         <div className="l3-manifest">
+          <div className="l3-manifest-fingerprint"><span>审核对象 ID</span><code>{videoId}</code></div>
           <div className="l3-manifest-row"><span>证据版本</span><b>{valueText(manifest.evidence_version)}</b></div>
           <div className="l3-manifest-row"><span>审核版本</span><b>{valueText(manifest.privacy_review_version)}</b></div>
           <div className="l3-manifest-row"><span>证据摘要</span><b>{(manifest.evidence_modalities || []).join(' / ') || '—'}</b></div>

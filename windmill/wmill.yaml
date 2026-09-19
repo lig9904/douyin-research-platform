@@ -1,0 +1,33 @@
+# Local-only Windmill source manifest. Run the CLI from this directory through
+# scripts/local-windmill-sync.sh; it pins the target to content-research-local.
+#
+# Secrets deliberately remain outside this repository. The sync wrapper always
+# adds --keep-deleted so Secret variables that are absent here remain intact.
+# Resource templates and non-sensitive budget defaults are source-managed.
+# Reviewer identity allowlists and Secrets remain local runtime configuration.
+defaultTs: bun
+nonDottedPaths: false
+includes:
+  - f/content_research/**
+excludes:
+  - "**/__pycache__/**"
+skipVariables: false
+skipResources: false
+skipResourceTypes: false
+skipSecrets: true
+skipScripts: false
+skipFlows: false
+skipApps: false
+skipFolders: true
+includeSchedules: false
+includeTriggers: false
+includeUsers: false
+includeGroups: false
+includeSettings: false
+includeKey: false
+
+workspaces:
+  content-research-local:
+    baseUrl: http://127.0.0.1:18000
+    workspaceId: content-research-local
+    gitBranch: feat/l3-local-review-env
