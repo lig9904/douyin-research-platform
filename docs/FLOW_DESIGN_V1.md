@@ -84,7 +84,10 @@ select due accounts
 
 规则：
 - 默认只第一页
-- 没有新视频就停止
+- 首选 App V3 normal channel
+- 对重点账号，如果 normal 返回“无新作品”但其他信号显示账号可能更新，允许一次 lite channel fallback
+- normal 与 lite 都无新增后才判定本轮无更新
+- 不因 fallback 自动继续翻页
 - 发现新视频后才补详情
 - A/B/C 账号不同频率
 
