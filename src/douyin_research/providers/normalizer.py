@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any, Iterable
 
 from .errors import ProviderSchemaError
-from .types import AccountRef, MetricSnapshotInput, VideoObservation, VideoRef
+from .types import AccountRef, CommentSample, MetricSnapshotInput, VideoObservation, VideoRef
 
 
 def validate_tikhub_envelope(payload: Any) -> dict[str, Any]:
@@ -163,11 +164,61 @@ def _fill_metric_status(metrics: MetricSnapshotInput) -> None:
         metrics.metric_status[name] = "available" if getattr(metrics, name) is not None else "unavailable"
 
 
+
+def normalize_comment_samples(
+    payload: dict[str, Any],
+    *,
+    video_platform_id: str,
+    endpoint_key: str,
+    observed_at: datetime,
+    sample_reason: str = "top",
+) -> list[CommentSample]:
+    """Extract and deduplicate comments without leaking provider nesting upward."""
+    validated = validate_tikhub_envelope(payload)
+    seen: set[str] = set()
+    comments: list[CommentSample] = []
+    for obj in _walk_dicts(validated.get("data")):
+        comment_id = _first_str(obj, "cid", "comment_id")
+        text = _first_str(obj, "text", "content", "comment_text")
+        if not comment_id or text is None or comment_id in seen:
+            continue
+        seen.add(comment_id)
+        create_time = _first_int(obj, "create_time")
+        published_at = (
+            datetime.fromtimestamp(create_time, tz=timezone.utc)
+            if create_time is not None
+            else None
+        )
+        comments.append(
+            CommentSample(
+                provider="tikhub",
+                platform="douyin",
+                source_endpoint=endpoint_key,
+                video_platform_id=video_platform_id,
+                platform_comment_id=comment_id,
+                text=text,
+                like_count=_first_int(obj, "digg_count", "like_count"),
+                published_at=published_at,
+                reply_count=_first_int(
+                    obj,
+                    "reply_comment_total",
+                    "reply_count",
+                    "reply_comment_count",
+                    "reply_total",
+                ),
+                sample_reason=sample_reason,
+                observed_at=observed_at,
+            )
+        )
+    return comments
+
+
 def extract_pagination(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data") if isinstance(payload, dict) else None
-    candidates = [payload, data] if isinstance(data, dict) else [payload]
+    direct = [payload, data] if isinstance(data, dict) else [payload]
+    nested = list(_walk_dicts(data))
     out: dict[str, Any] = {}
-    for obj in candidates:
+    for obj in [*direct, *nested]:
         if not isinstance(obj, dict):
             continue
         for key in ("cursor", "max_cursor", "has_more", "search_id", "page", "page_size", "total"):
@@ -184,6 +235,15 @@ def _walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
     elif isinstance(value, list):
         for child in value:
             yield from _walk_dicts(child)
+    elif isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                return
+            if parsed != value:
+                yield from _walk_dicts(parsed)
 
 
 def _first_str(obj: dict[str, Any], *keys: str) -> str | None:
