@@ -228,3 +228,66 @@ def test_top_n_ties_are_deterministic_and_do_not_mark_l3_complete() -> None:
             (list(video_ids.values()),),
         )
         assert cur.fetchone()[0] == 0
+
+
+def test_changed_evidence_uses_remaining_quota_without_reselecting_video() -> None:
+    assert DSN
+    _clear()
+    run_id, video_ids = _source_run(
+        [("first", 2, 90), ("second", 2, 80)]
+    )
+    gate = L3PromotionGate(DSN)
+    gate.configure_daily_quota(
+        platform="douyin",
+        max_items=2,
+        quota_date=QUOTA_DATE,
+    )
+
+    first = gate.promote(run_id, top_n=1, quota_date=QUOTA_DATE)
+    assert first.selected_count == 1
+    assert next(
+        item.video_id for item in first.decisions if item.outcome == "selected"
+    ) == video_ids["first"]
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into video_score(video_id, score_type, score, rule_version)
+            values (%s, 'priority', 95, 'synthetic-v2')
+            """,
+            (video_ids["second"],),
+        )
+        conn.commit()
+
+    second = gate.promote(run_id, top_n=1, quota_date=QUOTA_DATE)
+    assert second.created is True
+    assert second.batch_id != first.batch_id
+    assert second.selected_count == 1
+    decisions = {item.video_id: item for item in second.decisions}
+    assert decisions[video_ids["first"]].reason_code == "already_selected_today"
+    assert decisions[video_ids["second"]].outcome == "selected"
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_items
+            from daily_research_quota
+            where quota_date=%s and platform='douyin' and quota_key='l3'
+            """,
+            (QUOTA_DATE,),
+        )
+        assert cur.fetchone()[0] == 2
+        cur.execute(
+            """
+            select video_id, count(*)
+            from research_promotion_decision
+            where quota_date=%s and outcome='selected'
+            group by video_id
+            order by video_id
+            """,
+            (QUOTA_DATE,),
+        )
+        assert cur.fetchall() == sorted(
+            [(video_ids["first"], 1), (video_ids["second"], 1)],
+            key=lambda row: row[0],
+        )
