@@ -1,9 +1,6 @@
 name: tikhub-paid-v0-batch3
 
 on:
-  push:
-    branches:
-      - run/tikhub-batch3-once-20260919
   workflow_dispatch:
     inputs:
       confirmation:
@@ -20,7 +17,7 @@ concurrency:
 
 jobs:
   batch3:
-    if: ${{ github.event_name == 'push' || inputs.confirmation == 'BATCH3_10' }}
+    if: ${{ inputs.confirmation == 'BATCH3_10' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -45,7 +42,7 @@ jobs:
       - name: Run capped paid batch three
         env:
           TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
-          TIKHUB_ENABLE_PAID_BATCH3: ${{ github.event_name == 'push' && 'BATCH3_10' || inputs.confirmation }}
+          TIKHUB_ENABLE_PAID_BATCH3: ${{ inputs.confirmation }}
         run: python scripts/tikhub/v0_batch3.py
 
       - name: Remove ephemeral raw responses
