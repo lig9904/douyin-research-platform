@@ -3,6 +3,8 @@ description: |
   Manual-only L2 evidence flow. It defaults to preview and has no schedule.
   Paid execution requires execute=true and the exact confirmation string.
 value:
+  concurrent_limit: 1
+  concurrency_time_window_s: 0
   modules:
     - id: collect_comments
       summary: Guard, fetch, and persist bounded comment evidence
@@ -62,5 +64,3 @@ schema:
       default: 20
   required:
     - video_platform_id
-concurrent_limit: 1
-concurrency_time_window_s: 0
