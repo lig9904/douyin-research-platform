@@ -29,12 +29,28 @@
 - cache status 返回 `total_cached_items` 与逐项 `expires_in_seconds` / `is_expired`。
 - 上述只证明免费固定样本与响应结构可用；普通账号覆盖率、字段稳定性、准确性和计费仍保持 PENDING，必须用正式 Key 实测。
 
+## A2. 正式 Key 首轮受控验证
+
+2026-09-19 GitHub Actions [paid smoke #2](https://github.com/lig9904/douyin-research-platform/actions/runs/35436170460)：
+
+- TikHub SDK 版本：2.1.1。
+- 安全测试：10 项通过后才注入正式 Key。
+- 最多四次平台调用，无分页；四项均返回 TikHub `code=200` 和 request ID。
+- 低粉爆款榜首屏返回 4 项。
+- 创作者中心旅行素材榜（24h）返回 20 项。
+- “神话”视频搜索 V2 首屏返回 5 项。
+- App V3 批量视频详情用 1 个公开作品 ID 返回 1 项。
+- 日志仅保留响应形状；未输出 API Key、完整 request ID、账号 ID 或作品 ID。
+- Runner 中的原始响应已清理且未上传。
+
+结论边界：本轮证明认证、SDK 调用路径和四个端点当前可用，因此对应矩阵标记为 PARTIAL；尚未证明字段完整性、普通小号/中腰部/星图覆盖率、分页稳定性、删除/私密映射、准确性、计费和长期稳定性，不能标记 PASS，也不满足冻结条件。
+
 ## B. Billboard / 发现层
 
 | 能力 | 预期用途 | L层 | 实测重点 | 生产频率候选 | 状态 |
 |---|---|---:|---|---|---|
 | 视频总榜 | 广泛发现 | L0 | ID、指标、分页/数量、刷新 | 30–60m | PENDING |
-| 低粉爆款 | 黑马主信号 | L0 | 粉丝/播放/互动字段、tag/date_window | 15–30m | PENDING |
+| 低粉爆款 | 黑马主信号 | L0 | 粉丝/播放/互动字段、tag/date_window | 15–30m | PARTIAL |
 | 高完播 | 结构候选 | L0 | 完播指标定义、覆盖率 | 30–60m | PENDING |
 | 高涨粉 | 账号/内容起量 | L0 | 涨粉指标定义 | 30–60m | PENDING |
 | 高点赞 | 强互动候选 | L0 | 点赞指标/排序 | 30–60m | PENDING |
@@ -54,7 +70,7 @@
 
 | 能力 | 用途 | L层 | 实测重点 | 状态 |
 |---|---|---:|---|---|
-| 普通视频搜索 | 关键词研究 | L0/L1 | search_id/cursor、分页、排序 | PENDING |
+| 普通视频搜索 | 关键词研究 | L0/L1 | search_id/cursor、分页、排序 | PARTIAL |
 | 普通账号搜索 | 低粉账号/对标 | L0/L1 | 粉丝档筛选、分页、ID | PENDING |
 | Index 视频查询 | 结构化样本池 | L0/L1 | low-fan/high-completion等筛选 | PENDING |
 | Index filter options | 动态枚举 | L0 | tags/categories是否稳定 | PENDING |
@@ -79,7 +95,7 @@
 
 | 能力 | 用途 | L层 | 实测重点 | 状态 |
 |---|---|---:|---|---|
-| 批量视频详情 V2 | metric snapshot主链 | L1/L2 | 50条上限、字段完整性、删除/私密状态 | PENDING |
+| 批量视频详情 V2 | metric snapshot主链 | L1/L2 | 50条上限、字段完整性、删除/私密状态 | PARTIAL |
 | 单视频详情 | fallback | L2 | 与batch字段差异 | PENDING |
 | 用户详情 | 重点账号补充 | L2 | follower等指标 | PENDING |
 | 用户作品 normal | 账号监控 | L1 | 最新作品、cursor | PENDING |
@@ -92,7 +108,7 @@
 
 | 能力 | 用途 | L层 | 实测重点 | 状态 |
 |---|---|---:|---|---|
-| 热门视频榜 | 旅行/剧情/二次元等 | L0 | category、24h/7d/30d、ID衔接 | PENDING |
+| 热门视频榜 | 旅行/剧情/二次元等 | L0 | category、24h/7d/30d、ID衔接 | PARTIAL |
 | 热门话题榜 | 话题发现 | L0 | query/topic ID | PENDING |
 | 创作热点榜 | 热点发现 | L0 | 热度/分类 | PENDING |
 | 同城/热点相关视频 | 本地信号 | L0 | city/地域 | PENDING |
