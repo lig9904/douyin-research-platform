@@ -3,6 +3,7 @@
 from .evidence import (
     ELIGIBLE_TRANSCRIPT_QUALITY,
     L3_EVIDENCE_VERSION,
+    L3_REVIEW_IDENTITY_SOURCE,
     L3EvidenceAssembler,
     L3EvidenceBundle,
 )
@@ -23,6 +24,17 @@ from .results import (
     L3ResearchResult,
     L3ResearchStore,
 )
+from .review import (
+    L3ApprovalReceipt,
+    L3ApprovalRequest,
+    L3BudgetPreview,
+    L3BudgetPreviewRequest,
+    L3CandidateStaleError,
+    L3EvidenceManifest,
+    L3IdempotencyConflictError,
+    L3ReviewService,
+    authorize_reviewer,
+)
 
 __all__ = [
     "EVIDENCE_MODALITIES",
@@ -31,9 +43,19 @@ __all__ = [
     "L3_BUDGET_KEY",
     "L3_CONFIRMATION",
     "L3_EVIDENCE_VERSION",
+    "L3_REVIEW_IDENTITY_SOURCE",
     "L3_SCHEMA_VERSION",
     "L3EvidenceAssembler",
     "L3EvidenceBundle",
+    "L3EvidenceManifest",
+    "L3ApprovalRequest",
+    "L3ApprovalReceipt",
+    "L3BudgetPreviewRequest",
+    "L3BudgetPreview",
+    "L3CandidateStaleError",
+    "L3IdempotencyConflictError",
+    "L3ReviewService",
+    "authorize_reviewer",
     "L3ExecutionCoordinator",
     "L3ExecutionRequest",
     "L3Provider",

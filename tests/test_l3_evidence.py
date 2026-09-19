@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
 import psycopg
@@ -9,7 +11,16 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from douyin_research.l2 import L3PromotionGate
-from douyin_research.l3 import L3_EVIDENCE_VERSION, L3EvidenceAssembler
+from douyin_research.l3 import (
+    L3_BUDGET_KEY,
+    L3_EVIDENCE_VERSION,
+    L3ApprovalRequest,
+    L3BudgetPreviewRequest,
+    L3CandidateStaleError,
+    L3EvidenceAssembler,
+    L3IdempotencyConflictError,
+    L3ReviewService,
+)
 
 DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
@@ -209,12 +220,25 @@ def _approve(video_id: UUID, *, version: str = "privacy-v1"):
                         "evidence_fingerprint": candidate.input_fingerprint,
                         "evidence_version": candidate.evidence_version,
                         "evidence_modalities": list(candidate.evidence_modalities),
+                        "reviewer_identity_source": "windmill_end_user_email_allowlist_v1",
                     }
                 ),
             ),
         )
         conn.commit()
     return candidate
+
+
+def _review_request(video_id: UUID, manifest, *, key: str, actor: str = "reviewer@example.com"):
+    return L3ApprovalRequest(
+        video_id=video_id,
+        actor=actor,
+        idempotency_key=key,
+        evidence_fingerprint=manifest.evidence_fingerprint,
+        evidence_version=manifest.evidence_version,
+        evidence_modalities=manifest.evidence_modalities,
+        privacy_review_version=manifest.privacy_review_version,
+    )
 
 
 def test_bundle_is_stable_minimized_and_preserves_null_vs_zero() -> None:
@@ -361,6 +385,208 @@ def test_gate_level_and_required_evidence_fail_closed() -> None:
     _transcript(missing_review)
     with pytest.raises(ValueError, match="persisted L3 privacy review"):
         _assemble(missing_review)
+
+
+def test_review_service_rebuilds_candidate_and_is_candidate_idempotent() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="review-service")
+    _feature(video_id)
+    _transcript(video_id, text="SENSITIVE_REVIEW_SERVICE_SENTINEL")
+    service = L3ReviewService(DSN)
+    manifest = service.prepare(video_id, privacy_review_version="privacy-v1")
+
+    first = service.approve(
+        _review_request(video_id, manifest, key="review-service-key-1")
+    )
+    replay = service.approve(
+        _review_request(video_id, manifest, key="review-service-key-1")
+    )
+    second_key = service.approve(
+        _review_request(
+            video_id,
+            manifest,
+            key="review-service-key-2",
+            actor="second-reviewer@example.com",
+        )
+    )
+
+    assert first.idempotent_replay is False
+    assert replay.idempotent_replay is True
+    assert second_key.idempotent_replay is True
+    assert first.annotation_id == replay.annotation_id == second_key.annotation_id
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(*), min(value->>'reviewer_identity_source')
+            from human_annotation
+            where video_id=%s and annotation_type='l3_privacy_review'
+            """,
+            (video_id,),
+        )
+        assert cur.fetchone() == (1, "windmill_end_user_email_allowlist_v1")
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "update source_video set title='候选已变化' where id=%s",
+            (video_id,),
+        )
+        conn.commit()
+    with pytest.raises(L3CandidateStaleError):
+        service.approve(
+            _review_request(video_id, manifest, key="review-service-stale-key")
+        )
+    current = service.prepare(video_id, privacy_review_version="privacy-v1")
+    with pytest.raises(L3IdempotencyConflictError):
+        service.approve(
+            _review_request(video_id, current, key="review-service-key-1")
+        )
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from human_annotation where video_id=%s",
+            (video_id,),
+        )
+        assert cur.fetchone()[0] == 1
+
+
+def test_review_service_serializes_different_keys_for_same_candidate() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="review-concurrent")
+    _feature(video_id)
+    _transcript(video_id)
+    service = L3ReviewService(DSN)
+    manifest = service.prepare(video_id, privacy_review_version="privacy-v1")
+
+    def approve(key: str):
+        return service.approve(_review_request(video_id, manifest, key=key))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        receipts = list(pool.map(approve, ("concurrent-key-1", "concurrent-key-2")))
+
+    assert {receipt.annotation_id for receipt in receipts} == {receipts[0].annotation_id}
+    assert sorted(receipt.idempotent_replay for receipt in receipts) == [False, True]
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select count(*) from human_annotation
+            where video_id=%s and annotation_type='l3_privacy_review'
+            """,
+            (video_id,),
+        )
+        assert cur.fetchone()[0] == 1
+
+
+def test_budget_preview_uses_database_date_and_never_reserves() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="budget-preview")
+    _feature(video_id)
+    _transcript(video_id)
+    service = L3ReviewService(DSN)
+    manifest = service.prepare(video_id, privacy_review_version="privacy-v1")
+    missing = service.preview_budget(
+        L3BudgetPreviewRequest(
+            video_id=video_id,
+            privacy_review_version=manifest.privacy_review_version,
+            evidence_fingerprint=manifest.evidence_fingerprint,
+            provider="synthetic-l3-review",
+            cost_currency="CNY",
+            estimated_llm_cost=0,
+        )
+    )
+    assert missing.status == "approval_missing"
+
+    service.approve(_review_request(video_id, manifest, key="budget-preview-key"))
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select current_date")
+        database_date = cur.fetchone()[0]
+        cur.execute("delete from daily_budget")
+        cur.execute(
+            """
+            insert into daily_budget(
+              budget_date, provider, budget_key, max_cost, max_requests,
+              spent_cost, used_requests, cost_currency
+            ) values (%s, 'synthetic-l3-review', %s, 0, 1, 0, 0, 'CNY')
+            """,
+            (database_date, L3_BUDGET_KEY),
+        )
+        conn.commit()
+
+    request = L3BudgetPreviewRequest(
+        video_id=video_id,
+        privacy_review_version=manifest.privacy_review_version,
+        evidence_fingerprint=manifest.evidence_fingerprint,
+        provider="synthetic-l3-review",
+        cost_currency="CNY",
+        estimated_llm_cost=Decimal("0"),
+    )
+    preview = service.preview_budget(request)
+    assert preview.status == "budget_capacity_preview_only"
+    assert preview.budget_date == database_date
+    assert preview.max_cost == Decimal("0")
+    assert preview.spent_cost == Decimal("0")
+    assert preview.estimated_llm_cost == Decimal("0")
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, spent_cost from daily_budget
+            where budget_date=%s and provider='synthetic-l3-review' and budget_key=%s
+            """,
+            (database_date, L3_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (0, Decimal("0"))
+        cur.execute("select count(*) from l3_execution_job")
+        assert cur.fetchone()[0] == 0
+        cur.execute("select count(*) from research_task_cost")
+        assert cur.fetchone()[0] == 0
+        cur.execute(
+            """
+            update daily_budget set max_cost=null, max_requests=null
+            where budget_date=%s and provider='synthetic-l3-review' and budget_key=%s
+            """,
+            (database_date, L3_BUDGET_KEY),
+        )
+        conn.commit()
+    unlimited = service.preview_budget(request)
+    assert unlimited.max_cost is None
+    assert unlimited.max_requests is None
+
+
+def test_untrusted_legacy_review_cannot_authorize_l3_assembly() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="legacy-review")
+    _feature(video_id)
+    _transcript(video_id)
+    candidate = L3EvidenceAssembler(DSN).prepare_for_privacy_review(
+        video_id,
+        privacy_review_version="privacy-v1",
+    )
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into human_annotation(video_id, actor, annotation_type, value)
+            values (%s, 'untrusted-legacy-actor', 'l3_privacy_review', %s)
+            """,
+            (
+                video_id,
+                Jsonb(
+                    {
+                        "reviewed": True,
+                        "version": "privacy-v1",
+                        "evidence_fingerprint": candidate.input_fingerprint,
+                        "evidence_version": candidate.evidence_version,
+                        "evidence_modalities": list(candidate.evidence_modalities),
+                    }
+                ),
+            ),
+        )
+        conn.commit()
+
+    with pytest.raises(ValueError, match="does not match evidence"):
+        _assemble(video_id)
 
 
 def test_privacy_review_fails_before_database_access() -> None:

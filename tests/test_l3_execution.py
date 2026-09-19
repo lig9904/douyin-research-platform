@@ -104,6 +104,7 @@ def _video(*, selected: bool, key: str = "main") -> UUID:
                         "evidence_fingerprint": SYNTHETIC_INPUT_FINGERPRINT,
                         "evidence_version": L3_EVIDENCE_VERSION,
                         "evidence_modalities": list(SYNTHETIC_MODALITIES),
+                        "reviewer_identity_source": "windmill_end_user_email_allowlist_v1",
                     }
                 ),
             ),
@@ -292,6 +293,7 @@ def _persist_review(video_id: UUID, evidence: L3EvidenceBundle) -> None:
                         "evidence_fingerprint": evidence.input_fingerprint,
                         "evidence_version": evidence.evidence_version,
                         "evidence_modalities": list(evidence.evidence_modalities),
+                        "reviewer_identity_source": "windmill_end_user_email_allowlist_v1",
                     }
                 ),
             ),

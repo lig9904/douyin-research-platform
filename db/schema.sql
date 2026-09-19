@@ -448,6 +448,20 @@ create table if not exists human_annotation (
   check ((video_id is not null)::int + (signal_id is not null)::int <= 1)
 );
 
+create unique index if not exists uq_l3_privacy_review_idempotency
+  on human_annotation ((value->>'idempotency_key'))
+  where annotation_type='l3_privacy_review'
+    and value->>'reviewer_identity_source'='windmill_end_user_email_allowlist_v1';
+
+create unique index if not exists uq_l3_privacy_review_candidate
+  on human_annotation (
+    video_id,
+    (value->>'version'),
+    (value->>'evidence_fingerprint')
+  )
+  where annotation_type='l3_privacy_review'
+    and value->>'reviewer_identity_source'='windmill_end_user_email_allowlist_v1';
+
 create table if not exists collection (
   id uuid primary key default gen_random_uuid(),
   name text not null,
