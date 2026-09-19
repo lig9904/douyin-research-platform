@@ -63,6 +63,19 @@ create table if not exists provider_video_snapshot (
   raw_payload jsonb not null
 );
 
+-- Provider lineage for canonical entities. Supports source replacement and provider-exit dry-runs.
+create table if not exists provider_entity_lineage (
+  provider text not null,
+  entity_type text not null check (entity_type in ('account', 'video')),
+  entity_id uuid not null,
+  source_mode text not null default 'api',
+  first_observed_at timestamptz not null default now(),
+  last_observed_at timestamptz not null default now(),
+  observation_count bigint not null default 1,
+  metadata jsonb not null default '{}'::jsonb,
+  primary key (provider, entity_type, entity_id)
+);
+
 -- Non-video signals: rising hot topics, search terms, topic lists, city hot topics,
 -- creative topics/keywords, etc.
 create table if not exists external_signal (
