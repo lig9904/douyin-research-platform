@@ -7,6 +7,7 @@ on:
       - "src/**"
       - "tests/**"
       - "db/schema.sql"
+      - "db/migrations/**"
       - ".github/workflows/provider-tests.yml"
   pull_request:
     paths:
@@ -14,6 +15,7 @@ on:
       - "src/**"
       - "tests/**"
       - "db/schema.sql"
+      - "db/migrations/**"
       - ".github/workflows/provider-tests.yml"
 
 permissions:
