@@ -216,6 +216,30 @@ create unique index if not exists uq_collection_video
 create unique index if not exists uq_collection_signal
   on collection_item(collection_id, signal_id) where signal_id is not null;
 
+-- Runtime registry for provider capabilities, prices and V0 verification state.
+-- Business code reads this instead of hard-coding endpoint prices/batch sizes.
+create table if not exists api_endpoint_registry (
+  provider text not null,
+  endpoint_key text not null,
+  sdk_method text,
+  http_method text,
+  endpoint_path text,
+  access_mode text not null default 'sdk',
+  lifecycle_status text not null default 'candidate',
+  analysis_level text,
+  production_ready boolean not null default false,
+  max_batch_size integer,
+  max_pages integer,
+  cache_ttl_seconds integer,
+  unit_cost numeric(14,6),
+  cost_currency text default 'USD',
+  price_source text,
+  sdk_version_verified text,
+  last_verified_at timestamptz,
+  metadata jsonb not null default '{}'::jsonb,
+  primary key (provider, endpoint_key)
+);
+
 -- Raw API responses make normalization replayable without repurchasing source data.
 create table if not exists external_api_response (
   id bigserial primary key,
