@@ -69,8 +69,11 @@ jobs:
 
           dsn = os.environ["TEST_DATABASE_URL"]
           schema = Path("db/schema.sql").read_text(encoding="utf-8")
+          migration = Path("db/migrations/001_multiplatform_foundation.sql").read_text(encoding="utf-8")
           with psycopg.connect(dsn, autocommit=True) as conn:
               conn.execute(schema, prepare=False)
+              # Must be safe to execute on a database already at the new schema.
+              conn.execute(migration, prepare=False)
           PY
 
       - name: Compile
