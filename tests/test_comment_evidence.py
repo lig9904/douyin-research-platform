@@ -8,6 +8,7 @@ import psycopg
 import pytest
 
 from douyin_research.l0l1 import (
+    CommentCollector,
     CommentEvidenceStore,
     CommentIngestContext,
     DailyBudgetGuard,
@@ -289,3 +290,78 @@ def test_budget_hook_counts_only_uncached_external_comment_pages() -> None:
     with pytest.raises(ProviderBudgetError):
         provider.fetch_comments_page("video-private", force_refresh=True)
     assert len(transport.calls) == 2
+
+
+def test_comment_collector_closes_provider_to_postgres_loop_without_replaying_cache() -> None:
+    assert DSN
+    _clear()
+    _insert_video()
+    guard = DailyBudgetGuard(DSN)
+    guard.configure(
+        provider="tikhub",
+        budget_key="collector",
+        max_requests=2,
+        max_cost=0.002,
+    )
+    provider = TikHubProvider(
+        transport=BudgetedCommentTransport(),
+        store=MemoryProviderStore(),
+        before_external_call=guard.make_before_external_call(
+            provider="tikhub",
+            budget_key="collector",
+        ),
+    )
+    collector = CommentCollector(
+        provider=provider,
+        evidence_store=CommentEvidenceStore(DSN),
+        run_store=L0L1Store(DSN),
+    )
+
+    first = collector.collect(
+        "video-private",
+        max_pages=2,
+        max_items=40,
+        triggered_by="test",
+    )
+    replay = collector.collect(
+        "video-private",
+        max_pages=2,
+        max_items=40,
+        triggered_by="test",
+    )
+
+    assert first.comments_returned == 29
+    assert first.new_comments == 29
+    assert first.observations_inserted == 29
+    assert first.pages_fetched == 2
+    assert first.cross_page_duplicates_removed == 10
+    assert first.cached is False
+    assert replay.new_comments == 0
+    assert replay.observations_inserted == 0
+    assert replay.duplicate_observations == 29
+    assert replay.cached is True
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select count(*) from video_comment")
+        assert cur.fetchone()[0] == 29
+        cur.execute("select count(*) from video_comment_observation")
+        assert cur.fetchone()[0] == 29
+        cur.execute(
+            """
+            select used_requests, spent_cost
+            from daily_budget
+            where provider='tikhub' and budget_key='collector'
+            """
+        )
+        used_requests, spent_cost = cur.fetchone()
+        assert used_requests == 2
+        assert float(spent_cost) == pytest.approx(0.002)
+        cur.execute(
+            """
+            select summary->>'llm_calls', summary->>'pages_fetched'
+            from pipeline_run
+            where id=%s
+            """,
+            (replay.run_id,),
+        )
+        assert cur.fetchone() == ("0", "2")
