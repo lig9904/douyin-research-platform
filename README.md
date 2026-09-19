@@ -86,11 +86,17 @@ Canonical ID 始终使用：
 
 ## 状态
 
-当前阶段：
+截至 2026-09-19，`main` 基线为 `76006cb4`（PR #31）：
 
 - Windmill + PostgreSQL 基础环境：完成
-- TikHub Provider + 缓存层：完成
-- L0/L1 纯代码粗筛：完成
-- 多平台基础抽象：完成
-- TikHub 真实付费接口 V0：待 API Key 实测
-- Web 研究台：下一阶段
+- TikHub Provider、缓存层、L0/L1 粗筛和多平台基础抽象：完成
+- TikHub 正式 Key 受控 V0 验证：已完成三批小规模验证，能力仍按 `PARTIAL` 管理，Issue #1 保持开放
+- Web 研究台：工程原型及热点快照边界修复已合并，Issue #4 保持开放，待部署与业务验收
+- L2：评论证据、确定性特征、隐私安全文本规则、ASR 证据与成本账本已实现
+- L3：Top-N 晋级、版本化结果、一次性付费执行控制、Windmill 零调用预览已实现
+- 火山豆包 ASR：官方契约适配器已合并，但 `production_ready=false`，尚未进行真实调用
+- L3 模型 Provider：由 Codex Cloud 继续实现；在分支/PR 出现并通过 CI 前不视为完成
+- Windmill MCP：Issue #5 尚未完成
+- V2 自有账号反馈闭环：Issue #7，尚未启动
+
+完整、可审计的当前状态与 Cloud 交接边界见 [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md)。
