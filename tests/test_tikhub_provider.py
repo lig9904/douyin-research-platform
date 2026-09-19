@@ -181,6 +181,24 @@ def test_comments_are_bounded_and_deduplicated_across_pages() -> None:
     assert guarded == ["douyin.app.comments", "douyin.app.comments"]
 
 
+
+def test_duplicate_count_excludes_unprocessed_items_after_max_items() -> None:
+    provider = TikHubProvider(
+        transport=FakeCommentTransport(),
+        store=MemoryProviderStore(),
+    )
+
+    page = provider.fetch_comments(
+        "video-private",
+        max_pages=2,
+        max_items=25,
+    )
+
+    assert len(page.items) == 25
+    assert page.pagination["duplicates_removed"] == 10
+
+
+
 def test_comment_pagination_stops_on_unchanged_cursor() -> None:
     transport = FakeCommentTransport(stalled_cursor=True)
     provider = TikHubProvider(
