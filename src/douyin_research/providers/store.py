@@ -27,13 +27,14 @@ class CachedPayload:
 
 class ProviderStore(Protocol):
     def get_cached(
-        self, provider: str, endpoint_key: str, fingerprint: str, now: datetime
+        self, provider: str, platform: str, endpoint_key: str, fingerprint: str, now: datetime
     ) -> CachedPayload | None: ...
 
     def save_response(
         self,
         *,
         provider: str,
+        platform: str,
         endpoint_key: str,
         fingerprint: str,
         payload: dict[str, Any],
@@ -51,14 +52,14 @@ class MemoryProviderStore:
     """Deterministic store for unit tests and local pure-code checks."""
 
     def __init__(self) -> None:
-        self.cache: dict[tuple[str, str, str], CachedPayload] = {}
+        self.cache: dict[tuple[str, str, str, str], CachedPayload] = {}
         self.calls: list[ProviderCallMeta] = []
         self.responses: list[dict[str, Any]] = []
 
     def get_cached(
-        self, provider: str, endpoint_key: str, fingerprint: str, now: datetime
+        self, provider: str, platform: str, endpoint_key: str, fingerprint: str, now: datetime
     ) -> CachedPayload | None:
-        item = self.cache.get((provider, endpoint_key, fingerprint))
+        item = self.cache.get((provider, platform, endpoint_key, fingerprint))
         if item is None:
             return None
         if item.expires_at is not None and item.expires_at <= now:
@@ -85,10 +86,11 @@ class MemoryProviderStore:
             provider_request_id=provider_request_id,
             response_code=response_code,
         )
-        self.cache[(provider, endpoint_key, fingerprint)] = cached
+        self.cache[(provider, platform, endpoint_key, fingerprint)] = cached
         self.responses.append(
             {
                 "provider": provider,
+                "platform": platform,
                 "endpoint_key": endpoint_key,
                 "fingerprint": fingerprint,
                 "payload": payload,
@@ -107,12 +109,13 @@ class PostgresProviderStore:
         self.dsn = dsn
 
     def get_cached(
-        self, provider: str, endpoint_key: str, fingerprint: str, now: datetime
+        self, provider: str, platform: str, endpoint_key: str, fingerprint: str, now: datetime
     ) -> CachedPayload | None:
         sql = """
             select response_body, requested_at, expires_at, provider_request_id, response_code
             from external_api_response
             where provider = %s
+              and platform = %s
               and endpoint_key = %s
               and request_fingerprint = %s
               and (expires_at is null or expires_at > %s)
@@ -121,7 +124,7 @@ class PostgresProviderStore:
             limit 1
         """
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (provider, endpoint_key, fingerprint, now))
+            cur.execute(sql, (provider, platform, endpoint_key, fingerprint, now))
             row = cur.fetchone()
         if row is None:
             return None
@@ -148,10 +151,10 @@ class PostgresProviderStore:
     ) -> str:
         sql = """
             insert into external_api_response(
-                provider, endpoint_key, request_fingerprint, requested_at,
+                provider, platform, endpoint_key, request_fingerprint, requested_at,
                 http_status, response_code, response_body, provider_request_id, expires_at
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             returning id
         """
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
@@ -159,6 +162,7 @@ class PostgresProviderStore:
                 sql,
                 (
                     provider,
+                    platform,
                     endpoint_key,
                     fingerprint,
                     requested_at,
@@ -176,11 +180,11 @@ class PostgresProviderStore:
     def record_call(self, call: ProviderCallMeta) -> None:
         sql = """
             insert into external_api_call(
-                provider, endpoint_key, request_fingerprint, status, http_status,
+                provider, platform, endpoint_key, request_fingerprint, status, http_status,
                 cached, estimated_cost, actual_cost, cost_currency,
                 started_at, finished_at, metadata
             )
-            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """
         metadata = dict(call.metadata)
         if call.provider_request_id:
@@ -192,6 +196,7 @@ class PostgresProviderStore:
                 sql,
                 (
                     call.provider,
+                    call.platform,
                     call.endpoint_key,
                     call.request_fingerprint,
                     call.status,
