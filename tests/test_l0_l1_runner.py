@@ -33,6 +33,7 @@ def observation(vid: str, likes: int, followers: int) -> VideoObservation:
             follower_count=followers, observed_at=now
         ),
         metrics=MetricSnapshotInput(
+            platform="douyin",
             video_platform_id=vid, captured_at=now, provider="fake",
             source_endpoint="fake.discovery", like_count=likes,
             comment_count=likes // 10, share_count=likes // 20,
@@ -43,9 +44,22 @@ def observation(vid: str, likes: int, followers: int) -> VideoObservation:
 
 class FakeProvider:
     provider_name = "fake"
+    platform_name = "douyin"
+    capabilities = frozenset({
+        "discover.low_fan",
+        "search.videos",
+        "video.batch_detail",
+    })
 
     def __init__(self) -> None:
         self.detail_batches: list[list[str]] = []
+
+    def discover(self, kind: str, **kwargs: Any):
+        if kind == "low_fan":
+            return self.fetch_low_fan_billboard(**kwargs)
+        if kind in {"creator", "creator_material"}:
+            return self.fetch_creator_material(**kwargs)
+        raise ValueError(kind)
 
     def fetch_low_fan_billboard(self, **kwargs: Any):
         return ProviderPage(
