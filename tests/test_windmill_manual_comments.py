@@ -92,7 +92,7 @@ def test_preflight_failure_stops_before_secret() -> None:
         ({"count": 21}, "count"),
         ({"max_pages": 3}, "max_pages"),
         ({"max_items": 41}, "max_items"),
-        ({"count": 5, "max_pages": 1, "max_items": 6}, "count \* max_pages"),
+        ({"count": 5, "max_pages": 1, "max_items": 6}, r"count \* max_pages"),
     ],
 )
 def test_hard_bounds(overrides, message) -> None:
