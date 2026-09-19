@@ -81,3 +81,16 @@ App runnable 默认以 publisher 权限执行。
 列表、详情、搜索、统计等确定性数据库访问优先使用 .pg.sql 参数化查询。
 
 只有需要复杂业务逻辑时才使用 Python/TypeScript，避免增加 ORM、独立 API 层和 SQL 注入风险。
+
+
+## ADR-016：结构化平台数据优先于 LLM 趋势总结
+
+Douyin Index / Billboard / Creator Center 已提供关键词趋势、关联词、垂类消费趋势、时长分布、画像、热门话题等结构化 Intelligence 数据。
+
+趋势报告必须先使用这些结构化数据、SQL 和代码生成事实层；只有复杂解释和跨案例语义归纳才允许调用 LLM。
+
+## ADR-017：Creator V2 仅用于未来自有账号回流
+
+需要 Douyin Creator Platform Cookie 的 Creator V2 不进入 V1 外部对标采集。
+
+未来只连接我们自己的创作者账号，用于留存、跳出、流量来源、搜索关键词、观众画像等真实效果反馈。不得使用第三方账号 Cookie 或尝试绕过登录。
