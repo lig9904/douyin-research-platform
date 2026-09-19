@@ -12,6 +12,7 @@ import {
 import { backend } from './wmill'
 import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
+import HotspotLibrary from './HotspotLibrary'
 import AppShell, { type ResearchView } from './AppShell'
 
 type Platform = {
@@ -227,12 +228,15 @@ function App() {
   if (view === 'accounts') {
     return <AccountLibrary onNavigate={setView} />
   }
+  if (view === 'hotspots') {
+    return <HotspotLibrary onNavigate={setView} />
+  }
 
   return (
     <AppShell
       activeView="home"
       onNavigate={(next) => {
-        if (next === 'videos' || next === 'accounts' || next === 'home') setView(next)
+        if (next === 'videos' || next === 'accounts' || next === 'hotspots' || next === 'home') setView(next)
       }}
       title="内容研究台"
       subtitle="多平台内容研究平台 · 热点采集 / 对标拆解 / 趋势洞察 / IP追踪"
