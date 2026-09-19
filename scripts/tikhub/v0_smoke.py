@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """TikHub V0 smoke test.
 
-Default behavior is FREE and does not require TIKHUB_API_KEY:
+Default behavior runs all four FREE demo endpoints and does not require TIKHUB_API_KEY:
     python scripts/tikhub/v0_smoke.py demo
 
 Paid smoke calls are opt-in and hard-gated:
@@ -28,7 +28,12 @@ from typing import Any
 
 import httpx
 
-DEMO_URL = "https://api.tikhub.io/api/v1/demo/douyin/web/fetch_one_video"
+DEMO_URLS = {
+    "demo_douyin_app_video": "https://api.tikhub.io/api/v1/demo/douyin/app/fetch_one_video",
+    "demo_douyin_web_video": "https://api.tikhub.io/api/v1/demo/douyin/web/fetch_one_video",
+    "demo_douyin_search": "https://api.tikhub.io/api/v1/demo/douyin_search/app/general_search",
+    "demo_cache_status": "https://api.tikhub.io/api/v1/demo/demo/cache_status",
+}
 OUT_DIR = Path("tmp/tikhub-v0")
 PAID_GATE = "TIKHUB_ENABLE_PAID_SMOKE"
 API_KEY_ENV = "TIKHUB_API_KEY"
@@ -81,40 +86,123 @@ def first_list(obj: Any) -> list[Any] | None:
     return None
 
 
-def demo() -> int:
-    """Free, unauthenticated fixed Douyin item demo."""
-    with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-        r = client.get(DEMO_URL)
-        r.raise_for_status()
-        payload = validate_envelope(r.json(), "demo")
-
-    raw_path = save_raw("demo_douyin_web_video", payload)
-    aweme = dig(payload, "data", "aweme_detail") or {}
-    author = aweme.get("author") if isinstance(aweme, dict) else {}
-    video = aweme.get("video") if isinstance(aweme, dict) else {}
-
-    summary = {
-        "http_status": r.status_code,
+def summarize_demo(
+    label: str,
+    payload: dict[str, Any],
+    *,
+    http_status: int,
+    raw_path: Path,
+) -> dict[str, Any]:
+    """Return a small, non-sensitive shape summary for one free demo response."""
+    summary: dict[str, Any] = {
+        "label": label,
+        "http_status": http_status,
         "tikhub_code": payload.get("code"),
-        "request_id": payload.get("request_id"),
+        "request_id_present": bool(payload.get("request_id")),
         "router": payload.get("router"),
-        "aweme_id": aweme.get("aweme_id"),
-        "author_sec_uid": author.get("sec_uid") if isinstance(author, dict) else None,
-        "author_uid": author.get("uid") if isinstance(author, dict) else None,
-        "nickname": author.get("nickname") if isinstance(author, dict) else None,
-        "follower_count": author.get("follower_count") if isinstance(author, dict) else None,
-        "duration_ms": aweme.get("duration"),
-        "desc_present": bool(aweme.get("desc")),
-        "caption_present": bool(aweme.get("caption")),
-        "video_field_present": isinstance(video, dict),
         "raw_path": str(raw_path),
     }
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
 
-    required = ["aweme_id", "author_sec_uid", "duration_ms"]
-    missing = [x for x in required if not summary.get(x)]
+    if label in {"demo_douyin_app_video", "demo_douyin_web_video"}:
+        aweme = dig(payload, "data", "aweme_detail") or {}
+        author = aweme.get("author") if isinstance(aweme, dict) else {}
+        video = aweme.get("video") if isinstance(aweme, dict) else {}
+        statistics = aweme.get("statistics") if isinstance(aweme, dict) else {}
+        summary.update(
+            {
+                "aweme_id": aweme.get("aweme_id"),
+                "author_sec_uid_present": bool(author.get("sec_uid"))
+                if isinstance(author, dict)
+                else False,
+                "duration_present": aweme.get("duration") is not None,
+                "play_count_present": statistics.get("play_count") is not None
+                if isinstance(statistics, dict)
+                else False,
+                "video_field_present": isinstance(video, dict),
+            }
+        )
+        required = ["aweme_id", "author_sec_uid_present", "duration_present"]
+    elif label == "demo_douyin_search":
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        cards = data.get("data") if isinstance(data.get("data"), list) else []
+        aweme_ids = {
+            str(obj["aweme_id"])
+            for card in cards
+            for obj in _walk_dicts(card)
+            if obj.get("aweme_id")
+        }
+        summary.update(
+            {
+                "card_count": len(cards),
+                "unique_aweme_id_count": len(aweme_ids),
+                "has_more": data.get("has_more"),
+                "cursor": data.get("cursor"),
+                "backtrace_present": bool(data.get("backtrace")),
+            }
+        )
+        required = ["card_count", "unique_aweme_id_count", "cursor"]
+    else:
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        cache_items = data.get("cache_items") if isinstance(data.get("cache_items"), list) else []
+        summary.update(
+            {
+                "total_cached_items": data.get("total_cached_items"),
+                "cache_item_count": len(cache_items),
+            }
+        )
+        required = ["total_cached_items"]
+
+    missing = [
+        field
+        for field in required
+        if summary.get(field) is None
+        or summary.get(field) is False
+        or summary.get(field) == ""
+    ]
+    if label == "demo_douyin_search":
+        missing.extend(
+            field
+            for field in ("card_count", "unique_aweme_id_count")
+            if summary.get(field) == 0 and field not in missing
+        )
     if missing:
-        raise SmokeFailure(f"demo missing required canonical fields: {missing}")
+        raise SmokeFailure(f"{label} missing required demo fields: {missing}")
+    return summary
+
+
+def _walk_dicts(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_dicts(child)
+
+
+def demo() -> int:
+    """Run all free, unauthenticated TikHub demo endpoints once."""
+    summaries = []
+    with httpx.Client(
+        timeout=30.0,
+        follow_redirects=True,
+        headers={"User-Agent": "douyin-research-platform-v0-smoke/1.0"},
+    ) as client:
+        for label, url in DEMO_URLS.items():
+            response = client.get(url)
+            response.raise_for_status()
+            payload = validate_envelope(response.json(), label)
+            raw_path = save_raw(label, payload)
+            summaries.append(
+                summarize_demo(
+                    label,
+                    payload,
+                    http_status=response.status_code,
+                    raw_path=raw_path,
+                )
+            )
+
+    print(json.dumps(summaries, ensure_ascii=False, indent=2))
     return 0
 
 

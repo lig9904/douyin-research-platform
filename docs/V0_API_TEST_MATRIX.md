@@ -14,12 +14,20 @@
 
 | 能力 | Endpoint / SDK | 认证 | 重点验证 | 状态 |
 |---|---|---|---|---|
-| 固定 Douyin APP 视频 | Demo APP fixed video | 无 | 网络、response envelope、raw保存、normalizer | PENDING |
-| 固定 Douyin Web 视频 | Demo Web fixed video | 无 | Web/App结构差异 | PENDING |
-| 固定综合搜索 | Demo general search | 无 | search envelope | PENDING |
-| Demo cache status | Demo cache status | 无 | cache字段含义 | PENDING |
+| 固定 Douyin APP 视频 | Demo APP fixed video | 无 | 网络、response envelope、raw保存、normalizer | PASS |
+| 固定 Douyin Web 视频 | Demo Web fixed video | 无 | Web/App结构差异 | PASS |
+| 固定综合搜索 | Demo general search | 无 | search envelope、cursor/has_more、稳定 aweme_id | PASS |
+| Demo cache status | Demo cache status | 无 | cache字段含义 | PASS |
 
 注意：SDK 构造器强制 API Key，因此无 Key Demo 用 httpx/curl。
+
+2026-09-19 免费实测摘要：
+
+- 四个 Demo 均返回 HTTP 200、TikHub `code=200`、`request_id` 与对应 `router`。
+- App/Web 固定视频均有 `aweme_id`、`author.sec_uid`、`duration`，且都存在 `statistics.play_count`。
+- 综合搜索返回 19 个顶层卡片，带 `cursor=20`、`has_more=1`、`backtrace`，卡片内可提取稳定 `aweme_id`。
+- cache status 返回 `total_cached_items` 与逐项 `expires_in_seconds` / `is_expired`。
+- 上述只证明免费固定样本与响应结构可用；普通账号覆盖率、字段稳定性、准确性和计费仍保持 PENDING，必须用正式 Key 实测。
 
 ## B. Billboard / 发现层
 
