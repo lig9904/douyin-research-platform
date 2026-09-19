@@ -92,17 +92,17 @@ cmd_backup() {
   (cd "$dst" && shasum -a 256 globals.sql windmill.dump research.dump) > "$dst/SHA256SUMS"; printf 'created_at_utc=%s\ncompose_project=%s\nwindmill_db=%s\nresearch_db=%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" "$PROJECT" "$wd" "$rd" > "$dst/manifest.txt"
   echo "[local-security] backup complete: $dst"
 }
-cmd_restore_drill() {
+cmd_restore_drill() (
   require_env; ensure_runtime; local src user wd rd rw=local_security_windmill_restore rr=local_security_research_restore sw sr aw ar
   src="${1:-}"; if [[ -z "$src" ]]; then src="$(backup_dir)"; cmd_backup "$src"; fi; case "$src" in "$RUNTIME_DIR"/backups/*) ;; *) echo 'ERROR: restore must use local-security backup.' >&2; exit 2;; esac
   [[ -f "$src/SHA256SUMS" && -f "$src/windmill.dump" && -f "$src/research.dump" ]] || { echo 'ERROR: incomplete backup.' >&2; exit 1; }; (cd "$src" && shasum -a 256 -c SHA256SUMS >/dev/null)
   compose up -d postgres; wait_for pg; user="$(env_value POSTGRES_USER)"; wd="$(env_value POSTGRES_DB)"; rd="$(env_value RESEARCH_DB_NAME)"
-  cleanup_restore(){ compose exec -T postgres psql -U "$user" -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $rw WITH (FORCE)" -c "DROP DATABASE IF EXISTS $rr WITH (FORCE)" >/dev/null || true; }; trap cleanup_restore RETURN; cleanup_restore
+  cleanup_restore(){ compose exec -T postgres psql -U "$user" -d postgres -v ON_ERROR_STOP=1 -c "DROP DATABASE IF EXISTS $rw WITH (FORCE)" -c "DROP DATABASE IF EXISTS $rr WITH (FORCE)" >/dev/null || true; }; trap cleanup_restore EXIT; cleanup_restore
   compose exec -T postgres psql -U "$user" -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE $rw" -c "CREATE DATABASE $rr" >/dev/null
   compose exec -T postgres pg_restore -U "$user" --no-owner --no-privileges -d "$rw" < "$src/windmill.dump"; compose exec -T postgres pg_restore -U "$user" --no-owner --no-privileges -d "$rr" < "$src/research.dump"
   sw="$(compose exec -T postgres psql -U "$user" -d "$wd" -At -c 'select count(*) from workspace')"; sr="$(compose exec -T postgres psql -U "$user" -d "$rd" -At -c 'select count(*) from source_video')"; aw="$(compose exec -T postgres psql -U "$user" -d "$rw" -At -c 'select count(*) from workspace')"; ar="$(compose exec -T postgres psql -U "$user" -d "$rr" -At -c 'select count(*) from source_video')"
   [[ "$sw" == "$aw" && "$sr" == "$ar" ]] || { echo 'ERROR: restored row-count sentinel mismatch.' >&2; exit 1; }; echo '[local-security] restore drill passed; temporary restore databases will be removed.'
-}
+)
 cmd_start(){ require_env; ensure_runtime; certificate; compose pull; compose up -d; wait_for pg; wait_for proxy; cmd_verify_acl; cmd_verify_proxy; }
 cmd_status(){ require_env; ensure_runtime; compose ps; }
 cmd_verify(){ cmd_verify_acl; cmd_verify_proxy; cmd_restore_drill; }

@@ -9,6 +9,7 @@ from douyin_research.l0l1.real_data import (
     make_plan,
     plan_dict,
 )
+from douyin_research.providers.endpoints import get_endpoint
 from douyin_research.providers.types import ProviderPage
 
 
@@ -21,6 +22,7 @@ def test_default_golden_plan_is_dry_run_and_hard_bounded() -> None:
     assert plan.page == 1
     assert plan.retry_count == 0
     assert plan_dict(plan)["source"] == "douyin.billboard.low_fan"
+    assert get_endpoint(plan.source).unit_cost_usd == 0.001
 
 
 @pytest.mark.parametrize(

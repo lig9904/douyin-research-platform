@@ -53,18 +53,89 @@ def normalize_video_observations(
     observations: list[VideoObservation] = []
     for obj in _walk_dicts(data):
         aweme_id = _as_str(obj.get("aweme_id"))
-        if not aweme_id or aweme_id in seen:
+        low_fan_id = (
+            _as_str(obj.get("item_id"))
+            if endpoint_key == "douyin.billboard.low_fan"
+            else None
+        )
+        platform_video_id = aweme_id or low_fan_id
+        if not platform_video_id or platform_video_id in seen:
             continue
-        seen.add(aweme_id)
+        seen.add(platform_video_id)
         observations.append(
-            _normalize_aweme(
-                obj,
-                endpoint_key=endpoint_key,
-                raw_ref=raw_ref,
-                observed_at=observed_at,
+            (
+                _normalize_low_fan_item(
+                    obj,
+                    endpoint_key=endpoint_key,
+                    raw_ref=raw_ref,
+                    observed_at=observed_at,
+                )
+                if low_fan_id and not aweme_id
+                else _normalize_aweme(
+                    obj,
+                    endpoint_key=endpoint_key,
+                    raw_ref=raw_ref,
+                    observed_at=observed_at,
+                )
             )
         )
     return observations
+
+
+def _normalize_low_fan_item(
+    obj: dict[str, Any],
+    *,
+    endpoint_key: str,
+    raw_ref: str | None,
+    observed_at: datetime,
+) -> VideoObservation:
+    """Map the billboard service's compact item schema.
+
+    The response has no stable account id.  Nicknames and the numeric
+    ``favorite_id`` are not identity keys, so account linkage stays empty.
+    """
+    item_id = _as_str(obj.get("item_id"))
+    if not item_id:
+        raise ProviderSchemaError("low-fan item missing item_id")
+
+    create_time = _first_int(obj, "publish_time")
+    published_at = (
+        datetime.fromtimestamp(create_time, tz=timezone.utc)
+        if create_time is not None
+        else None
+    )
+    title = _first_str(obj, "item_title")
+    video = VideoRef(
+        provider="tikhub",
+        platform="douyin",
+        platform_video_id=item_id,
+        account_platform_id=None,
+        title=title,
+        description=title,
+        source_url=_first_str(obj, "item_url"),
+        published_at=published_at,
+        duration_ms=_first_int(obj, "item_duration"),
+        availability_status="available",
+        observed_at=observed_at,
+        raw_ref=raw_ref,
+    )
+    metrics = MetricSnapshotInput(
+        platform="douyin",
+        video_platform_id=item_id,
+        captured_at=observed_at,
+        provider="tikhub",
+        source_endpoint=endpoint_key,
+        play_count=_first_int(obj, "play_cnt"),
+        like_count=_first_int(obj, "like_cnt"),
+        comment_count=None,
+        share_count=None,
+        collect_count=None,
+        author_follower_count=_first_int(obj, "fans_cnt"),
+        metric_status={},
+        raw_ref=raw_ref,
+    )
+    _fill_metric_status(metrics)
+    return VideoObservation(video=video, account=None, metrics=metrics)
 
 
 def _normalize_aweme(

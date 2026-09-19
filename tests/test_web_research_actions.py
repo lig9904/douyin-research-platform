@@ -190,6 +190,12 @@ def test_collections_monitoring_filters_and_idempotency(monkeypatch) -> None:
     assert state["saved_filters"][0]["filters"]["priority_min"] == 60
     assert "researcher@example.com" not in serialized
 
+    monkeypatch.setenv("WM_END_USER_EMAIL", "second-researcher@example.com")
+    isolated_state = read_state.main(db, "videos")
+    assert isolated_state["collections"] == []
+    assert isolated_state["saved_filters"] == []
+    monkeypatch.setenv("WM_END_USER_EMAIL", "Researcher@Example.com")
+
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "select monitoring_status, monitoring_priority from source_video where id=%s",
@@ -228,3 +234,28 @@ def test_filter_payload_is_strictly_bounded(monkeypatch) -> None:
         mutate._filters("videos", json.dumps({"provider_secret": "never-store"}))
     with pytest.raises(mutate.ResearchActionError, match="filters_json is invalid"):
         mutate._filters("videos", json.dumps({"query": {"nested": "not allowed"}}))
+    with pytest.raises(mutate.ResearchActionError, match="filters_json is invalid"):
+        mutate._filters("videos", json.dumps({"query": "x" * 201}))
+    with pytest.raises(mutate.ResearchActionError, match="filters_json is invalid"):
+        mutate._filters("videos", json.dumps({"query": "line one\nline two"}))
+
+
+def test_remove_from_missing_collection_does_not_create_it(monkeypatch) -> None:
+    assert DSN
+    ids = _seed()
+    db = _resource(DSN)
+    monkeypatch.setenv("WM_END_USER_EMAIL", "researcher@example.com")
+
+    result = _call(
+        db,
+        action="remove_from_collection",
+        idempotency_key=str(uuid4()),
+        asset_type="video",
+        asset_ids=[ids["video"]],
+        collection_name="不存在的专题",
+    )
+
+    assert result["changed_count"] == 0
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select count(*) from collection where name='不存在的专题'")
+        assert cur.fetchone()[0] == 0

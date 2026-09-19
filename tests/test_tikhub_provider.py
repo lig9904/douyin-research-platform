@@ -73,6 +73,54 @@ def test_persistent_cache_avoids_second_external_call() -> None:
     assert store.calls[1].actual_cost == 0.0
 
 
+def test_low_fan_compact_billboard_schema_is_normalized() -> None:
+    class CompactLowFanTransport:
+        def call(self, spec, kwargs):
+            return TransportResult(
+                payload={
+                    "code": 200,
+                    "data": {
+                        "data": {
+                            "objs": [
+                                {
+                                    "item_id": "7420000000000000001",
+                                    "item_title": "公开标题",
+                                    "item_url": "https://www.douyin.com/video/7420000000000000001",
+                                    "item_duration": 12345,
+                                    "publish_time": 1_700_000_000,
+                                    "play_cnt": 321,
+                                    "like_cnt": 45,
+                                    "fans_cnt": 67,
+                                    "nick_name": "不作为稳定账号标识",
+                                    "favorite_id": 999,
+                                }
+                            ]
+                        }
+                    },
+                },
+                http_status=200,
+                provider_request_id="compact-low-fan",
+                mode="fake",
+            )
+
+    provider = TikHubProvider(
+        transport=CompactLowFanTransport(),
+        store=MemoryProviderStore(),
+    )
+
+    page = provider.fetch_low_fan_billboard(page_size=1)
+
+    assert len(page.items) == 1
+    item = page.items[0]
+    assert item.video.platform_video_id == "7420000000000000001"
+    assert item.video.source_url == "https://www.douyin.com/video/7420000000000000001"
+    assert item.video.account_platform_id is None
+    assert item.account is None
+    assert item.metrics.play_count == 321
+    assert item.metrics.like_count == 45
+    assert item.metrics.author_follower_count == 67
+
+
 def test_fetch_videos_chunks_at_50_and_deduplicates_ids() -> None:
     transport = FakeTransport()
     store = MemoryProviderStore()

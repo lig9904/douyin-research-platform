@@ -30,6 +30,9 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         sdk_method="fetch_hot_total_low_fan_list",
         request_style="json",
         cache_ttl_seconds=15 * 60,
+        # Verified with TikHub calculate_price on 2026-09-20; public docs
+        # identify USD 0.001 as the base price for most successful requests.
+        unit_cost_usd=0.001,
     ),
     "douyin.creator.material": EndpointSpec(
         key="douyin.creator.material",

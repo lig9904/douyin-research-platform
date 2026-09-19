@@ -126,6 +126,11 @@ def _filters(view_key: object, filters_json: object) -> tuple[str, dict[str, obj
         raise ResearchActionError("filters_json is invalid")
     if any(isinstance(value, (dict, list)) for value in parsed.values()):
         raise ResearchActionError("filters_json is invalid")
+    for key, value in parsed.items():
+        if isinstance(value, str):
+            maximum = 200 if key == "query" else 256
+            if len(value) > maximum or any(ord(char) < 32 for char in value):
+                raise ResearchActionError("filters_json is invalid")
     return str(view_key), parsed
 
 
@@ -265,14 +270,15 @@ def _mutate(
             changed = len(cur.fetchall())
         elif action in {"add_to_collection", "remove_from_collection"}:
             _, target_column = _assert_assets(cur, asset_type, normalized_ids)
-            cur.execute(
-                """
-                insert into collection(name, description, created_by)
-                values (%s, '研究台用户专题', %s)
-                on conflict do nothing
-                """,
-                (collection_name, actor),
-            )
+            if action == "add_to_collection":
+                cur.execute(
+                    """
+                    insert into collection(name, description, created_by)
+                    values (%s, '研究台用户专题', %s)
+                    on conflict do nothing
+                    """,
+                    (collection_name, actor),
+                )
             cur.execute(
                 """
                 select id from collection
@@ -282,8 +288,9 @@ def _mutate(
                 """,
                 (actor, collection_name),
             )
-            collection_id = cur.fetchone()["id"]
+            collection_row = cur.fetchone()
             if action == "add_to_collection":
+                collection_id = collection_row["id"]
                 table = _ASSETS[asset_type][0]
                 cur.execute(
                     f"""
@@ -294,7 +301,11 @@ def _mutate(
                     """,
                     (collection_id, note or None, normalized_ids),
                 )
+                changed = len(cur.fetchall())
+            elif collection_row is None:
+                changed = 0
             else:
+                collection_id = collection_row["id"]
                 cur.execute(
                     f"""
                     delete from collection_item
@@ -303,7 +314,7 @@ def _mutate(
                     """,
                     (collection_id, normalized_ids),
                 )
-            changed = len(cur.fetchall())
+                changed = len(cur.fetchall())
         else:
             parsed_filters = payload["filters"]
             cur.execute(
