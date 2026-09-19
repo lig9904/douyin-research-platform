@@ -139,8 +139,13 @@ create table if not exists external_signal (
   provider_signal_id text,
   signal_key text not null,
   title text,
+  description text,
   category_key text,
   city_code text,
+  research_level smallint not null default 0,
+  monitoring_status text not null default 'untracked',
+  monitoring_priority numeric,
+  next_due_at timestamptz,
   raw_payload jsonb,
   first_seen_at timestamptz not null default now(),
   last_seen_at timestamptz not null default now(),
@@ -521,6 +526,8 @@ create index if not exists idx_account_monitoring
 create index if not exists idx_video_account on source_video(account_id);
 create index if not exists idx_provider_video_time on provider_video_snapshot(video_id, provider, captured_at desc);
 create index if not exists idx_signal_type_seen on external_signal(signal_type, last_seen_at desc);
+create index if not exists idx_signal_monitoring
+  on external_signal(platform, monitoring_status, research_level, last_seen_at desc);
 create index if not exists idx_signal_snapshot_time on signal_snapshot(signal_id, captured_at desc);
 create index if not exists idx_discovery_video_time on discovery_event(video_id, discovered_at desc);
 create index if not exists idx_metric_video_time on metric_snapshot(video_id, captured_at desc);
