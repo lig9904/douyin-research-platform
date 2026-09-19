@@ -8,6 +8,7 @@ on:
       - "tests/**"
       - "db/schema.sql"
       - "db/migrations/**"
+      - "windmill/f/content_research/research_dashboard.raw_app/backend/**"
       - ".github/workflows/provider-tests.yml"
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - "tests/**"
       - "db/schema.sql"
       - "db/migrations/**"
+      - "windmill/f/content_research/research_dashboard.raw_app/backend/**"
       - ".github/workflows/provider-tests.yml"
 
 permissions:
