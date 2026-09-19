@@ -45,6 +45,7 @@ def observation(vid: str, likes: int, followers: int) -> VideoObservation:
 class FakeProvider:
     provider_name = "fake"
     platform_name = "douyin"
+    video_batch_size = 50
     capabilities = frozenset({
         "discover.low_fan",
         "search.videos",
@@ -134,6 +135,8 @@ def test_two_sources_overlap_to_one_entity_and_zero_llm_calls() -> None:
         assert cur.fetchone()[0] == "0"
         cur.execute("select count(*) from analysis_run")
         assert cur.fetchone()[0] == 0
+        cur.execute("select platform from pipeline_run where id=%s", (summary.run_id,))
+        assert cur.fetchone()[0] == "douyin"
 
 
 def test_budget_stops_before_second_external_call() -> None:
