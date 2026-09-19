@@ -89,3 +89,21 @@ def test_cache_demo_allows_empty_cache(tmp_path) -> None:
 
     assert summary["total_cached_items"] == 0
     assert summary["cache_item_count"] == 0
+
+
+def test_paid_summary_redacts_request_id_and_payload(tmp_path, monkeypatch) -> None:
+    smoke = _load_smoke()
+    monkeypatch.setattr(smoke, "OUT_DIR", tmp_path)
+    payload = {
+        "code": 200,
+        "request_id": "paid-request-id-must-not-be-logged",
+        "router": "/api/v1/paid",
+        "data": [{"aweme_id": "private-sample-id"}],
+    }
+
+    summary = smoke.save_and_summarize("paid_probe", payload, "2.1.1")
+
+    assert summary["request_id_present"] is True
+    assert "request_id" not in summary
+    assert "private-sample-id" not in str(summary)
+    assert summary["first_list_count"] == 1
