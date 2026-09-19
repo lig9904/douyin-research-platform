@@ -217,8 +217,7 @@ class L3ResearchStore:
             cur.execute(
                 """
                 update source_video
-                set research_level=greatest(research_level, 3),
-                    updated_at=now()
+                set research_level=greatest(research_level, 3)
                 where id=%s
                 """,
                 (video_id,),
