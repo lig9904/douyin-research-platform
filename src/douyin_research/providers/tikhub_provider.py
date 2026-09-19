@@ -203,12 +203,13 @@ class TikHubDouyinProvider:
         )
 
         if not force_refresh:
-            cached = self.store.get_cached(self.provider_name, spec.key, fp, started)
+            cached = self.store.get_cached(self.provider_name, self.platform_name, spec.key, fp, started)
             if cached is not None:
                 finished = utcnow()
                 self.store.record_call(
                     ProviderCallMeta(
                         provider=self.provider_name,
+                        platform=self.platform_name,
                         endpoint_key=spec.key,
                         request_fingerprint=fp,
                         status="success",
@@ -230,6 +231,7 @@ class TikHubDouyinProvider:
             expires_at = requested_at + timedelta(seconds=spec.cache_ttl_seconds)
             raw_ref = self.store.save_response(
                 provider=self.provider_name,
+                platform=self.platform_name,
                 endpoint_key=spec.key,
                 fingerprint=fp,
                 payload=payload,
@@ -243,6 +245,7 @@ class TikHubDouyinProvider:
             self.store.record_call(
                 ProviderCallMeta(
                     provider=self.provider_name,
+                    platform=self.platform_name,
                     endpoint_key=spec.key,
                     request_fingerprint=fp,
                     status="success",
@@ -263,6 +266,7 @@ class TikHubDouyinProvider:
             self.store.record_call(
                 ProviderCallMeta(
                     provider=self.provider_name,
+                    platform=self.platform_name,
                     endpoint_key=spec.key,
                     request_fingerprint=fp,
                     status="error",
