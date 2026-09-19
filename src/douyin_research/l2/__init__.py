@@ -11,3 +11,21 @@ __all__ = [
     "CommentFeatureExtractor",
     "CommentFeatureSnapshot",
 ]
+
+from .promotion import (
+    DEFAULT_QUOTA_KEY,
+    MAX_TOP_N,
+    PROMOTION_RULE_VERSION,
+    L3PromotionGate,
+    PromotionDecision,
+    PromotionResult,
+)
+
+__all__ += [
+    "DEFAULT_QUOTA_KEY",
+    "MAX_TOP_N",
+    "PROMOTION_RULE_VERSION",
+    "L3PromotionGate",
+    "PromotionDecision",
+    "PromotionResult",
+]
