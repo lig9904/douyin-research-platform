@@ -11,7 +11,8 @@ import {
 } from 'antd'
 import { backend } from './wmill'
 import VideoLibrary from './VideoLibrary'
-import AppShell from './AppShell'
+import AccountLibrary from './AccountLibrary'
+import AppShell, { type ResearchView } from './AppShell'
 
 type Platform = {
   key: string
@@ -176,7 +177,7 @@ function TrendChart({ data }: { data: { day: string; value: number }[] }) {
 }
 
 function App() {
-  const [view, setView] = useState<'home' | 'videos'>('home')
+  const [view, setView] = useState<ResearchView>('home')
   const [platform, setPlatform] = useState('douyin')
   const [hours, setHours] = useState(24)
   const [query, setQuery] = useState('')
@@ -223,11 +224,16 @@ function App() {
   if (view === 'videos') {
     return <VideoLibrary onNavigate={setView} />
   }
+  if (view === 'accounts') {
+    return <AccountLibrary onNavigate={setView} />
+  }
 
   return (
     <AppShell
       activeView="home"
-      onNavigate={(next) => next === 'videos' && setView('videos')}
+      onNavigate={(next) => {
+        if (next === 'videos' || next === 'accounts' || next === 'home') setView(next)
+      }}
       title="内容研究台"
       subtitle="多平台内容研究平台 · 热点采集 / 对标拆解 / 趋势洞察 / IP追踪"
       actions={
