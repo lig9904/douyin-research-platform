@@ -135,6 +135,7 @@ class L0L1Store:
                         "discovery-v1.0.0",
                         Jsonb(
                             {
+                                "run_id": str(context.run_id),
                                 "request_fingerprint": context.request_fingerprint,
                                 "source_count": context.source_count,
                             }
