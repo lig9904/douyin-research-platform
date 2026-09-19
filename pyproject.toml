@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "douyin-research-platform"
+version = "0.1.0"
+description = "Provider and research pipeline core for Douyin Research Platform"
+requires-python = ">=3.11"
+dependencies = [
+  "httpx>=0.27,<1",
+  "psycopg[binary]>=3.2,<4",
+  "tikhub==2.1.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
