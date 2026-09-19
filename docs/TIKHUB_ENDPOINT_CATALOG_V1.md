@@ -6,12 +6,13 @@
 
 ## Billboard
 
+### 主链
+
 | 目的 | SDK Method |
 |---|---|
 | 城市列表 | fetch_city_list |
 | 垂类标签 | fetch_content_tag |
 | 热门账号 | fetch_hot_account_list |
-| 账号趋势 | fetch_hot_account_trends_list |
 | 同城热点 | fetch_hot_city_list |
 | 评论词云 | fetch_hot_comment_word_list |
 | 作品趋势 | fetch_hot_item_trends_list |
@@ -28,6 +29,19 @@
 | 话题热榜 | fetch_hot_total_topic_list |
 | 视频热榜 | fetch_hot_total_video_list |
 
+### L3 重点账号增强
+
+| 目的 | SDK Method |
+|---|---|
+| 账号粉丝趋势 | fetch_hot_account_trends_list |
+| 账号近7天作品分析 | fetch_hot_account_item_analysis_list |
+| 粉丝兴趣作者 | fetch_hot_account_fans_interest_account_list |
+| 粉丝近3天搜索词 | fetch_hot_account_fans_interest_search_list |
+| 粉丝近3天兴趣话题 | fetch_hot_account_fans_interest_topic_list |
+| 粉丝画像 | fetch_hot_account_fans_portrait_list |
+
+这些接口不进入日常全量流程。只有重点对标账号进入 L3 后按需调用，并在 V0 确认适用账号范围与真实数据覆盖。
+
 ## Creator
 
 | 目的 | SDK Method / REST |
@@ -39,7 +53,11 @@
 | 创作者配置 | fetch_creator_material_center_config |
 | 热点/话题相关视频 | REST: /api/v1/douyin/creator/fetch_creator_material_center_related |
 
-注意：截至当前核验，最后一个接口在线 API 文档存在，但官方 Python SDK 2.1.1 仓库中未找到对应生成方法。
+Creator 热门话题和热门视频素材已确认有旅行、剧情、二次元、创意、文化教育等垂类，并支持 24小时 / 7天 / 30天维度。
+
+`fetch_creator_material_center_related` 可根据榜单返回的 `query_id` 直接取热点/话题/音乐对应的视频列表，应优先于“热点关键词再搜索视频”的自研关联方式。
+
+注意：截至当前核验，该 related endpoint 在线 API 文档存在，但官方 Python SDK 2.1.1 仓库中未找到对应生成方法。
 
 ## App V3
 
@@ -79,6 +97,8 @@
 - calculate_price
 - get_tiered_discount_info
 - get_endpoint_info
+
+多数基础服务当前基础价约 0.001 USD/request，但正式成本由 endpoint info / calculate_price 动态读取，不硬编码。
 
 ## REST Fallback
 
