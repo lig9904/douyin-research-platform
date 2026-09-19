@@ -1,6 +1,9 @@
 name: tikhub-paid-v0-smoke
 
 on:
+  push:
+    branches:
+      - "run/tikhub-paid-v0-20260919"
   workflow_dispatch:
     inputs:
       confirmation:
@@ -22,7 +25,7 @@ concurrency:
 
 jobs:
   paid-smoke:
-    if: ${{ inputs.confirmation == 'RUN_PAID_V0' }}
+    if: ${{ github.event_name == 'push' || inputs.confirmation == 'RUN_PAID_V0' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -46,7 +49,7 @@ jobs:
         env:
           TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
           TIKHUB_ENABLE_PAID_SMOKE: "YES"
-          AWEME_ID: ${{ inputs.aweme_id }}
+          AWEME_ID: ${{ inputs.aweme_id || '7534641277405531446' }}
         run: |
           python - <<'PY'
           import os
