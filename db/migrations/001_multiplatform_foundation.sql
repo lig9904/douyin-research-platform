@@ -36,27 +36,51 @@ alter table api_endpoint_registry
 
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname='fk_source_account_platform') then
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='source_account'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
     alter table source_account
       add constraint fk_source_account_platform
       foreign key(platform) references platform_registry(platform_key);
   end if;
-  if not exists (select 1 from pg_constraint where conname='fk_source_video_platform') then
+
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='source_video'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
     alter table source_video
       add constraint fk_source_video_platform
       foreign key(platform) references platform_registry(platform_key);
   end if;
-  if not exists (select 1 from pg_constraint where conname='fk_external_signal_platform') then
+
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='external_signal'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
     alter table external_signal
       add constraint fk_external_signal_platform
       foreign key(platform) references platform_registry(platform_key);
   end if;
-  if not exists (select 1 from pg_constraint where conname='fk_pipeline_run_platform') then
+
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='pipeline_run'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
     alter table pipeline_run
       add constraint fk_pipeline_run_platform
       foreign key(platform) references platform_registry(platform_key);
   end if;
-  if not exists (select 1 from pg_constraint where conname='fk_api_endpoint_registry_platform') then
+
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='api_endpoint_registry'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
     alter table api_endpoint_registry
       add constraint fk_api_endpoint_registry_platform
       foreign key(platform) references platform_registry(platform_key);
