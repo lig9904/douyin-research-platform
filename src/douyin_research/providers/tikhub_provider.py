@@ -249,6 +249,8 @@ class TikHubDouyinProvider:
             pagination={
                 **last.pagination,
                 "pages_fetched": len(pages),
+                "cached_pages": sum(1 for page in pages if page.cached),
+                "external_pages": sum(1 for page in pages if not page.cached),
                 "unique_items": len(items),
                 "duplicates_removed": duplicates_removed,
             },
