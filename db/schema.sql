@@ -236,6 +236,13 @@ create unique index if not exists uq_video_comment_provider_video_id
   on video_comment(provider, video_id, platform_comment_id)
   where platform_comment_id is not null;
 
+create index if not exists idx_comment_video_seen
+  on video_comment(video_id, last_seen_at desc);
+
+create index if not exists idx_comment_parent
+  on video_comment(provider, video_id, parent_platform_comment_id)
+  where parent_platform_comment_id is not null;
+
 create table if not exists video_comment_observation (
   id bigserial primary key,
   comment_id uuid not null references video_comment(id) on delete cascade,
