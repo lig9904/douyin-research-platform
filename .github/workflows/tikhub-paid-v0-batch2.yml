@@ -1,9 +1,6 @@
 name: tikhub-paid-v0-batch2
 
 on:
-  push:
-    branches:
-      - "run/tikhub-paid-v0-batch2-20260919"
   workflow_dispatch:
     inputs:
       confirmation:
@@ -20,7 +17,7 @@ concurrency:
 
 jobs:
   batch2:
-    if: ${{ github.event_name == 'push' || inputs.confirmation == 'BATCH2_10' }}
+    if: ${{ inputs.confirmation == 'BATCH2_10' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
