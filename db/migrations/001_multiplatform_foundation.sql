@@ -34,6 +34,18 @@ alter table pipeline_run
 alter table api_endpoint_registry
   add column if not exists platform text;
 
+alter table external_api_response
+  add column if not exists platform text;
+
+alter table external_api_call
+  add column if not exists platform text;
+
+update external_api_response set platform='douyin' where platform is null;
+update external_api_call set platform='douyin' where platform is null;
+
+alter table external_api_response alter column platform set not null;
+alter table external_api_call alter column platform set not null;
+
 do $$
 begin
   if not exists (
@@ -85,6 +97,26 @@ begin
       add constraint fk_api_endpoint_registry_platform
       foreign key(platform) references platform_registry(platform_key);
   end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='external_api_response'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
+    alter table external_api_response
+      add constraint fk_external_api_response_platform
+      foreign key(platform) references platform_registry(platform_key);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where contype='f' and conrelid='external_api_call'::regclass
+      and pg_get_constraintdef(oid) like 'FOREIGN KEY (platform)%REFERENCES platform_registry%'
+  ) then
+    alter table external_api_call
+      add constraint fk_external_api_call_platform
+      foreign key(platform) references platform_registry(platform_key);
+  end if;
 end $$;
 
 create index if not exists idx_video_platform_published
@@ -92,3 +124,9 @@ create index if not exists idx_video_platform_published
 
 create index if not exists idx_account_platform_seen
   on source_account(platform, last_seen_at desc);
+
+create index if not exists idx_api_call_platform_time
+  on external_api_call(platform, started_at desc);
+
+create index if not exists idx_api_response_platform_time
+  on external_api_response(platform, requested_at desc);
