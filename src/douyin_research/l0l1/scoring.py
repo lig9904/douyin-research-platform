@@ -44,6 +44,7 @@ class L1Scorer:
 
     def score_run(self, run_id: UUID, *, now: datetime | None = None) -> dict[UUID, float]:
         now = now or datetime.now(timezone.utc)
+        platform = self._assert_single_platform(run_id)
         candidates = self._load_candidates(run_id)
         if not candidates:
             return {}
@@ -66,7 +67,11 @@ class L1Scorer:
         scores: dict[UUID, float] = {}
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             for c in candidates:
-                components: dict[str, Any] = {"raw": raw[c.video_id], "percentiles": {}}
+                components: dict[str, Any] = {
+                    "platform": platform,
+                    "raw": raw[c.video_id],
+                    "percentiles": {},
+                }
                 ps: list[float] = []
                 for name in percentiles:
                     if c.video_id in percentiles[name]:
@@ -120,6 +125,33 @@ class L1Scorer:
 
             conn.commit()
         return scores
+
+    def _assert_single_platform(self, run_id: UUID) -> str | None:
+        sql = """
+        select pr.platform, array_agg(distinct sv.platform order by sv.platform)
+        from pipeline_run pr
+        left join pipeline_run_item pri
+          on pri.run_id=pr.id and pri.entity_type='video'
+        left join source_video sv on sv.id=pri.entity_id
+        where pr.id=%s
+        group by pr.platform
+        """
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(sql, (run_id,))
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"pipeline_run not found: {run_id}")
+        declared, observed = row
+        observed = [x for x in (observed or []) if x is not None]
+        if len(observed) > 1:
+            raise ValueError(
+                f"cross-platform L1 scoring is not allowed: platforms={observed}"
+            )
+        if declared is not None and observed and declared != observed[0]:
+            raise ValueError(
+                f"run platform={declared} does not match observed platform={observed[0]}"
+            )
+        return declared or (observed[0] if observed else None)
 
     def _load_candidates(self, run_id: UUID) -> list[Candidate]:
         sql = """
