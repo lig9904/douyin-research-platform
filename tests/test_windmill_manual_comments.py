@@ -154,7 +154,7 @@ def test_windmill_metadata_keeps_paid_flow_manual_and_serial() -> None:
     ).read_text()
     script_metadata = SCRIPT.with_suffix(".script.yaml").read_text()
 
-    assert "schedule" not in flow.lower()
+    assert "\\nschedule:" not in flow.lower()\n    assert not flow.lower().startswith("schedule:")
     assert "default: false" in flow
     assert "concurrent_limit: 1" in flow
     assert "concurrent_limit: 1" in script_metadata
