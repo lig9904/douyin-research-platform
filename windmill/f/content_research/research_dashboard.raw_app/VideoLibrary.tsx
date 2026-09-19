@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   Input,
+  Modal,
   Pagination,
   Select,
   Spin,
@@ -15,6 +16,11 @@ import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
 import MetricTimeline from './src/components/MetricTimeline'
 import PlatformIcon from './src/components/PlatformIcon'
+import {
+  getResearchUserState,
+  mutateResearchState,
+  type ResearchUserState,
+} from './src/components/ResearchActions'
 import './video-library.css'
 
 type Platform = {
@@ -241,6 +247,15 @@ export default function VideoLibrary({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [writeBusy, setWriteBusy] = useState(false)
+  const [writeNotice, setWriteNotice] = useState('')
+  const [writeError, setWriteError] = useState('')
+  const [userState, setUserState] = useState<ResearchUserState | null>(null)
+  const [collectionModalOpen, setCollectionModalOpen] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [collectionTargetIds, setCollectionTargetIds] = useState<string[]>([])
+  const [filterModalOpen, setFilterModalOpen] = useState(false)
+  const [filterName, setFilterName] = useState('')
 
   const load = async (next: Filters, selected = selectedVideoId) => {
     setLoading(true)
@@ -267,6 +282,18 @@ export default function VideoLibrary({
   useEffect(() => {
     load(filters, selectedVideoId)
   }, [filters])
+
+  const loadUserState = async () => {
+    try {
+      setUserState(await getResearchUserState('videos'))
+    } catch (e) {
+      setWriteError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  useEffect(() => {
+    loadUserState()
+  }, [])
 
   const platforms = [
     { key: 'all', name: '全部平台', enabled: true, provider_status: 'aggregate' },
@@ -314,6 +341,72 @@ export default function VideoLibrary({
     setSelectedRows(next)
   }
 
+  const runWrite = async (
+    input: Parameters<typeof mutateResearchState>[0],
+    success: string,
+  ) => {
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      await mutateResearchState(input)
+      setWriteNotice(success)
+      await Promise.all([load(filters, selectedVideoId), loadUserState()])
+    } catch (e) {
+      setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWriteBusy(false)
+    }
+  }
+
+  const openCollection = (ids: string[]) => {
+    setCollectionTargetIds(ids)
+    setCollectionName(userState?.collections[0]?.name || '')
+    setCollectionModalOpen(true)
+  }
+
+  const saveCollection = async () => {
+    const name = collectionName.trim()
+    if (!name || !collectionTargetIds.length) return
+    await runWrite(
+      {
+        action: 'add_to_collection',
+        asset_type: 'video',
+        asset_ids: collectionTargetIds,
+        collection_name: name,
+      },
+      `已加入专题「${name}」。`,
+    )
+    setCollectionModalOpen(false)
+  }
+
+  const saveCurrentFilter = async () => {
+    const name = filterName.trim()
+    if (!name) return
+    const { page: _page, ...persisted } = filters
+    await runWrite(
+      {
+        action: 'save_filter',
+        view_key: 'videos',
+        filter_name: name,
+        filters_json: JSON.stringify(persisted),
+      },
+      `筛选「${name}」已保存。`,
+    )
+    setFilterModalOpen(false)
+  }
+
+  const applySavedFilter = (name: string) => {
+    const saved = userState?.saved_filters.find((item) => item.name === name)
+    if (!saved) return
+    const next = { ...initialFilters, ...saved.filters, page: 1 } as Filters
+    setDraft(next)
+    setFilters(next)
+    setSelectedRows(new Set())
+    setSelectedVideoId('')
+    setWriteNotice(`已应用筛选「${name}」。`)
+  }
+
   return (
     <AppShell
       activeView="videos"
@@ -341,11 +434,29 @@ export default function VideoLibrary({
               { value: 90, label: '近90天' },
             ]}
           />
-          <Button type="primary" ghost disabled>保存筛选</Button>
+          {!!userState?.saved_filters.length && (
+            <Select
+              placeholder="已保存筛选"
+              onChange={applySavedFilter}
+              options={userState.saved_filters.map((item) => ({
+                value: item.name,
+                label: item.name,
+              }))}
+            />
+          )}
+          <Button type="primary" ghost onClick={() => setFilterModalOpen(true)}>
+            保存筛选
+          </Button>
           <Button type="primary" disabled>导出结果</Button>
         </>
       }
     >
+          {writeNotice && (
+            <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
+          )}
+          {writeError && (
+            <Alert type="error" showIcon message="写操作失败" description={writeError} closable onClose={() => setWriteError('')} />
+          )}
           <section className="platform-strip card">
             <div className="platform-title">平台筛选</div>
             <div className="platform-tabs">
@@ -629,7 +740,14 @@ export default function VideoLibrary({
                 <div className="video-list-footer">
                   <div className="bulk-actions">
                     <span>已选择 {selectedRows.size} 项</span>
-                    <Button type="primary" disabled>加入专题</Button>
+                    <Button
+                      type="primary"
+                      disabled={!selectedRows.size}
+                      loading={writeBusy}
+                      onClick={() => openCollection([...selectedRows])}
+                    >
+                      加入专题
+                    </Button>
                     <Button disabled>升入L2</Button>
                     <Button disabled>标记重点</Button>
                     <Button onClick={() => setSelectedRows(new Set())} disabled={!selectedRows.size}>
@@ -681,7 +799,20 @@ export default function VideoLibrary({
                           <small>{formatCount(detail.author_follower_count)} 粉丝</small>
                         </div>
                       </div>
-                      <Button type="primary" disabled title="内部监测写操作将在后续阶段启用">
+                      <Button
+                        type="primary"
+                        loading={writeBusy}
+                        onClick={() => runWrite(
+                          {
+                            action: 'set_monitoring',
+                            asset_type: 'video',
+                            asset_ids: [detail.id],
+                            monitoring_status: 'follow_up',
+                            monitoring_priority: Math.max(60, Number(detail.priority || 0)),
+                          },
+                          '该视频已加入监测。',
+                        )}
+                      >
                         加入监测
                       </Button>
                     </div>
@@ -830,10 +961,25 @@ export default function VideoLibrary({
                     )}
 
                     <div className="detail-actions">
-                      <Button type="primary" disabled>加入专题</Button>
+                      <Button type="primary" loading={writeBusy} onClick={() => openCollection([detail.id])}>
+                        加入专题
+                      </Button>
                       <Button disabled>升入L2</Button>
                       <Button disabled>标记重点</Button>
-                      <Button disabled>收藏</Button>
+                      <Button
+                        loading={writeBusy}
+                        onClick={() => runWrite(
+                          {
+                            action: 'add_to_collection',
+                            asset_type: 'video',
+                            asset_ids: [detail.id],
+                            collection_name: '我的收藏',
+                          },
+                          '已收藏。',
+                        )}
+                      >
+                        收藏
+                      </Button>
                     </div>
                   </>
                 )}
@@ -842,8 +988,53 @@ export default function VideoLibrary({
           </Spin>
 
           <div className="video-library-page-note">
-            第 {filters.page} / {totalPages} 页 · 写操作将在对应业务流程完成后启用
+            第 {filters.page} / {totalPages} 页 · 收藏、专题、监测与筛选均记录实际登录用户
           </div>
+          <Modal
+            title="加入专题"
+            open={collectionModalOpen}
+            confirmLoading={writeBusy}
+            okButtonProps={{ disabled: !collectionName.trim() }}
+            onOk={saveCollection}
+            onCancel={() => setCollectionModalOpen(false)}
+            okText="保存"
+            cancelText="取消"
+          >
+            <Input
+              aria-label="专题名称"
+              value={collectionName}
+              maxLength={80}
+              placeholder="输入已有或新专题名称"
+              onChange={(event) => setCollectionName(event.target.value)}
+            />
+            {!!userState?.collections.length && (
+              <Select
+                aria-label="选择已有专题"
+                value={undefined}
+                placeholder="也可以选择已有专题"
+                options={userState.collections.map((item) => ({ value: item.name, label: item.name }))}
+                onChange={setCollectionName}
+              />
+            )}
+          </Modal>
+          <Modal
+            title="保存当前筛选"
+            open={filterModalOpen}
+            confirmLoading={writeBusy}
+            okButtonProps={{ disabled: !filterName.trim() }}
+            onOk={saveCurrentFilter}
+            onCancel={() => setFilterModalOpen(false)}
+            okText="保存"
+            cancelText="取消"
+          >
+            <Input
+              aria-label="筛选名称"
+              value={filterName}
+              maxLength={80}
+              placeholder="例如：近30天高优先级视频"
+              onChange={(event) => setFilterName(event.target.value)}
+            />
+          </Modal>
     </AppShell>
   )
 }

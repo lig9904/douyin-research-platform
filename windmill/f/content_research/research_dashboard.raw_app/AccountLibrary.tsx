@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   Input,
+  Modal,
   Pagination,
   Select,
   Spin,
@@ -13,6 +14,7 @@ import {
 import { backend } from './wmill'
 import AppShell, { type ResearchView } from './AppShell'
 import PlatformIcon from './src/components/PlatformIcon'
+import { mutateResearchState } from './src/components/ResearchActions'
 import './account-library.css'
 
 type Platform = {
@@ -243,6 +245,12 @@ export default function AccountLibrary({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [writeBusy, setWriteBusy] = useState(false)
+  const [writeNotice, setWriteNotice] = useState('')
+  const [writeError, setWriteError] = useState('')
+  const [collectionModalOpen, setCollectionModalOpen] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [collectionTargetIds, setCollectionTargetIds] = useState<string[]>([])
   const [detailTab, setDetailTab] = useState<'core' | 'content'>('core')
 
   const load = async (next: Filters, selected = selectedAccountId) => {
@@ -319,6 +327,55 @@ export default function AccountLibrary({
     setSelectedRows(next)
   }
 
+  const runWrite = async (
+    input: Parameters<typeof mutateResearchState>[0],
+    success: string,
+  ) => {
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      await mutateResearchState(input)
+      setWriteNotice(success)
+      await load(filters, selectedAccountId)
+    } catch (e) {
+      setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWriteBusy(false)
+    }
+  }
+
+  const monitorAccounts = (ids: string[]) => runWrite(
+    {
+      action: 'set_monitoring',
+      asset_type: 'account',
+      asset_ids: ids,
+      monitoring_status: 'monitoring',
+    },
+    `已将 ${ids.length} 个账号加入监测。`,
+  )
+
+  const openCollection = (ids: string[]) => {
+    setCollectionTargetIds(ids)
+    setCollectionName('')
+    setCollectionModalOpen(true)
+  }
+
+  const saveCollection = async () => {
+    const name = collectionName.trim()
+    if (!name || !collectionTargetIds.length) return
+    await runWrite(
+      {
+        action: 'add_to_collection',
+        asset_type: 'account',
+        asset_ids: collectionTargetIds,
+        collection_name: name,
+      },
+      `账号已加入专题「${name}」。`,
+    )
+    setCollectionModalOpen(false)
+  }
+
   return (
     <AppShell
       activeView="accounts"
@@ -350,6 +407,12 @@ export default function AccountLibrary({
         </>
       }
     >
+      {writeNotice && (
+        <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
+      )}
+      {writeError && (
+        <Alert type="error" showIcon message="写操作失败" description={writeError} closable onClose={() => setWriteError('')} />
+      )}
       <section className="platform-strip card">
         <div className="platform-title">平台筛选</div>
         <div className="platform-tabs">
@@ -648,7 +711,14 @@ export default function AccountLibrary({
             <div className="account-list-footer">
               <div className="bulk-actions">
                 <span>已选择 {selectedRows.size} 项</span>
-                <Button type="primary" disabled>加入监测</Button>
+                <Button
+                  type="primary"
+                  loading={writeBusy}
+                  disabled={!selectedRows.size}
+                  onClick={() => monitorAccounts([...selectedRows])}
+                >
+                  加入监测
+                </Button>
                 <Button disabled>标记重点</Button>
                 <Button
                   onClick={() => setSelectedRows(new Set())}
@@ -695,7 +765,9 @@ export default function AccountLibrary({
                       {detail.certification_type ? ` · ${detail.certification_type}` : ''}
                     </span>
                   </div>
-                  <Button type="primary" disabled>加入监测</Button>
+                  <Button type="primary" loading={writeBusy} onClick={() => monitorAccounts([detail.id])}>
+                    加入监测
+                  </Button>
                 </div>
 
                 <div className="account-summary-grid">
@@ -843,9 +915,13 @@ export default function AccountLibrary({
                 )}
 
                 <div className="account-detail-actions">
-                  <Button type="primary" disabled>加入监测</Button>
+                  <Button type="primary" loading={writeBusy} onClick={() => monitorAccounts([detail.id])}>
+                    加入监测
+                  </Button>
                   <Button disabled>标记重点</Button>
-                  <Button disabled>加入专题</Button>
+                  <Button loading={writeBusy} onClick={() => openCollection([detail.id])}>
+                    加入专题
+                  </Button>
                 </div>
               </>
             )}
@@ -854,8 +930,26 @@ export default function AccountLibrary({
       </Spin>
 
       <div className="account-library-page-note">
-        第 {filters.page} / {totalPages} 页 · 粉丝增长只有在存在至少2个历史快照时才显示
+        第 {filters.page} / {totalPages} 页 · 监测与专题写入绑定实际登录用户
       </div>
+      <Modal
+        title="账号加入专题"
+        open={collectionModalOpen}
+        confirmLoading={writeBusy}
+        okButtonProps={{ disabled: !collectionName.trim() }}
+        onOk={saveCollection}
+        onCancel={() => setCollectionModalOpen(false)}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Input
+          aria-label="账号专题名称"
+          value={collectionName}
+          maxLength={80}
+          placeholder="输入专题名称"
+          onChange={(event) => setCollectionName(event.target.value)}
+        />
+      </Modal>
     </AppShell>
   )
 }
