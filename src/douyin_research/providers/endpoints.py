@@ -76,6 +76,16 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         sdk_method="fetch_video_comments",
         request_style="query",
         cache_ttl_seconds=30 * 60,
+        unit_cost_usd=0.001,
+    ),
+    "douyin.app.comment_replies": EndpointSpec(
+        key="douyin.app.comment_replies",
+        http_method="GET",
+        path="/api/v1/douyin/app/v3/fetch_video_comment_replies",
+        sdk_resource="douyin_app_v3",
+        sdk_method="fetch_video_comment_replies",
+        request_style="query",
+        cache_ttl_seconds=30 * 60,
     ),
     "tikhub.user.daily_usage": EndpointSpec(
         key="tikhub.user.daily_usage",
