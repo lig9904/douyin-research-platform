@@ -12,6 +12,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from douyin_research.providers.contracts import PlatformResearchProvider
+from douyin_research.providers.endpoints import get_endpoint
 from douyin_research.providers.types import CommentSample
 
 from .ingest import L0L1Store
@@ -44,7 +45,10 @@ class CommentCollectionSummary:
     observations_inserted: int
     duplicate_observations: int
     pages_fetched: int
+    cached_pages: int
+    external_pages: int
     cross_page_duplicates_removed: int
+    estimated_api_cost_usd: float
     cached: bool
 
 
@@ -97,16 +101,29 @@ class CommentCollector:
                 ),
             )
             pages_fetched = int(page.pagination.get("pages_fetched") or 1)
+            cached_pages = int(page.pagination.get("cached_pages") or int(page.cached))
+            external_pages = int(
+                page.pagination.get("external_pages")
+                or (0 if page.cached else pages_fetched)
+            )
             duplicates_removed = int(page.pagination.get("duplicates_removed") or 0)
+            unit_cost = float(
+                get_endpoint("douyin.app.comments").unit_cost_usd or 0.0
+            )
+            estimated_api_cost = external_pages * unit_cost
             self.run_store.finish_run(
                 run_id,
                 input_count=len(page.items),
                 output_count=ingested.observations_inserted,
+                api_cost=estimated_api_cost,
                 summary={
                     "llm_calls": 0,
                     "cached": page.cached,
                     "pages_fetched": pages_fetched,
+                    "cached_pages": cached_pages,
+                    "external_pages": external_pages,
                     "cross_page_duplicates_removed": duplicates_removed,
+                    "estimated_api_cost_usd": estimated_api_cost,
                     "new_comments": ingested.new_comments,
                     "duplicate_observations": ingested.duplicate_observations,
                 },
@@ -119,7 +136,10 @@ class CommentCollector:
                 observations_inserted=ingested.observations_inserted,
                 duplicate_observations=ingested.duplicate_observations,
                 pages_fetched=pages_fetched,
+                cached_pages=cached_pages,
+                external_pages=external_pages,
                 cross_page_duplicates_removed=duplicates_removed,
+                estimated_api_cost_usd=estimated_api_cost,
                 cached=page.cached,
             )
         except Exception as exc:
