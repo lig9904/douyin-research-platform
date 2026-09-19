@@ -4,10 +4,35 @@
 
 create extension if not exists pgcrypto;
 
+-- Platform registry is the product-level source of truth for platform dimensions.
+-- A platform can exist in the UI before a production provider is connected.
+create table if not exists platform_registry (
+  platform_key text primary key,
+  display_name text not null,
+  enabled boolean not null default false,
+  provider_status text not null default 'planned',
+  sort_order integer not null default 100,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+insert into platform_registry(platform_key, display_name, enabled, provider_status, sort_order)
+values
+  ('douyin', '抖音', true, 'active', 10),
+  ('kuaishou', '快手', false, 'planned', 20),
+  ('wechat_channels', '视频号', false, 'planned', 30),
+  ('xiaohongshu', '小红书', false, 'planned', 40),
+  ('bilibili', 'B站', false, 'planned', 50),
+  ('weibo', '微博', false, 'planned', 60)
+on conflict(platform_key) do update set
+  display_name=excluded.display_name,
+  sort_order=excluded.sort_order;
+
 -- Canonical account identity: provider-independent.
 create table if not exists source_account (
   id uuid primary key default gen_random_uuid(),
-  platform text not null default 'douyin',
+  platform text not null references platform_registry(platform_key),
   platform_account_id text not null,
   nickname text,
   profile_url text,
@@ -344,6 +369,7 @@ create unique index if not exists uq_collection_signal
 -- Business code reads this instead of hard-coding endpoint prices/batch sizes.
 create table if not exists api_endpoint_registry (
   provider text not null,
+  platform text references platform_registry(platform_key),
   endpoint_key text not null,
   sdk_method text,
   http_method text,
@@ -383,6 +409,7 @@ create table if not exists pipeline_run (
   id uuid primary key default gen_random_uuid(),
   run_type text not null,
   run_version text,
+  platform text references platform_registry(platform_key),
   status text not null default 'running',
   triggered_by text,
   started_at timestamptz not null default now(),
@@ -461,6 +488,10 @@ create unique index if not exists uq_account_metric_observation
   where observation_key is not null;
 create index if not exists idx_provider_account_time on provider_account_snapshot(account_id, provider, captured_at desc);
 create index if not exists idx_video_published_at on source_video(published_at desc);
+create index if not exists idx_video_platform_published
+  on source_video(platform, published_at desc);
+create index if not exists idx_account_platform_seen
+  on source_account(platform, last_seen_at desc);
 create index if not exists idx_video_account on source_video(account_id);
 create index if not exists idx_provider_video_time on provider_video_snapshot(video_id, provider, captured_at desc);
 create index if not exists idx_signal_type_seen on external_signal(signal_type, last_seen_at desc);
