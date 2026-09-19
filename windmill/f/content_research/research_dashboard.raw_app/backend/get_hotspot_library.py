@@ -1,0 +1,382 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from typing import Any, TypedDict
+
+import psycopg
+from psycopg.rows import dict_row
+
+
+class postgresql(TypedDict):
+    host: str
+    port: int
+    user: str
+    password: str
+    dbname: str
+    sslmode: str
+
+
+def _json(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json(v) for v in value]
+    return value
+
+
+def _fetch_all(conn, sql: str, args=()) -> list[dict[str, Any]]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(sql, args)
+        return [_json(dict(row)) for row in cur.fetchall()]
+
+
+def _fetch_one(conn, sql: str, args=()) -> dict[str, Any]:
+    rows = _fetch_all(conn, sql, args)
+    return rows[0] if rows else {}
+
+
+def _connect(db: postgresql):
+    return psycopg.connect(
+        host=db["host"],
+        port=int(db.get("port", 5432)),
+        user=db["user"],
+        password=db["password"],
+        dbname=db["dbname"],
+        sslmode=db.get("sslmode", "prefer"),
+    )
+
+
+def main(
+    db: postgresql,
+    platform: str = "douyin",
+    days: int = 7,
+    signal_type: str = "all",
+    category: str = "all",
+    research_level: int = -1,
+    monitoring_status: str = "all",
+    heat_min: float = -1,
+    query: str = "",
+    page: int = 1,
+    page_size: int = 10,
+    sort: str = "heat_desc",
+    selected_signal_id: str = "",
+):
+    platform = (platform or "all").strip()
+    days = max(1, min(int(days or 7), 365))
+    research_level = int(research_level)
+    heat_min = float(heat_min)
+    page = max(1, int(page or 1))
+    page_size = min(50, max(10, int(page_size or 10)))
+    query = (query or "").strip()
+
+    sort_map = {
+        "heat_desc": "heat_value desc nulls last, s.last_seen_at desc",
+        "growth_desc": "heat_growth_pct desc nulls last, heat_value desc nulls last",
+        "discussion_desc": "discussion_count desc nulls last, heat_value desc nulls last",
+        "related_desc": "related_video_count desc, heat_value desc nulls last",
+        "recent_desc": "s.last_seen_at desc",
+        "rank_asc": "rank_value asc nulls last, heat_value desc nulls last",
+    }
+    order_by = sort_map.get(sort, sort_map["heat_desc"])
+
+    base_cte = """
+    with latest_snapshot as (
+      select distinct on (signal_id)
+        id, signal_id, captured_at, rank_value, rank_change,
+        heat_value, value_json
+      from signal_snapshot
+      order by signal_id, captured_at desc, id desc
+    ),
+    previous_snapshot as (
+      select distinct on (ss.signal_id)
+        ss.signal_id, ss.captured_at, ss.rank_value, ss.heat_value
+      from signal_snapshot ss
+      join latest_snapshot ls on ls.signal_id=ss.signal_id
+      where ss.id <> ls.id
+        and ss.captured_at <= ls.captured_at
+      order by ss.signal_id, ss.captured_at desc, ss.id desc
+    ),
+    related_counts as (
+      select signal_id, count(distinct video_id)::int as related_video_count
+      from signal_video_link
+      group by signal_id
+    ),
+    collections as (
+      select signal_id, count(distinct collection_id)::int as collection_count
+      from collection_item
+      where signal_id is not null
+      group by signal_id
+    ),
+    signal_rows as (
+      select
+        s.id,
+        s.provider,
+        s.platform,
+        s.signal_type,
+        s.provider_signal_id,
+        s.signal_key,
+        s.title,
+        s.description,
+        s.category_key,
+        s.city_code,
+        s.research_level,
+        s.monitoring_status,
+        s.monitoring_priority,
+        s.first_seen_at,
+        s.last_seen_at,
+        ls.captured_at as snapshot_captured_at,
+        ls.rank_value,
+        ls.rank_change,
+        ls.heat_value,
+        case
+          when coalesce(ls.value_json->>'discussion_count','') ~ '^[0-9]+(\\.[0-9]+)?$'
+          then (ls.value_json->>'discussion_count')::numeric
+          else null
+        end as discussion_count,
+        coalesce(rc.related_video_count,0) as related_video_count,
+        coalesce(c.collection_count,0) as collection_count,
+        case
+          when ps.heat_value is not null
+           and ps.heat_value > 0
+           and ls.heat_value is not null
+          then round(100.0 * (ls.heat_value - ps.heat_value) / ps.heat_value, 2)
+          else null
+        end as heat_growth_pct
+      from external_signal s
+      left join latest_snapshot ls on ls.signal_id=s.id
+      left join previous_snapshot ps on ps.signal_id=s.id
+      left join related_counts rc on rc.signal_id=s.id
+      left join collections c on c.signal_id=s.id
+    )
+    """
+
+    where_sql = """
+      (%s='all' or s.platform=%s)
+      and s.last_seen_at >= now() - (%s || ' days')::interval
+      and (%s='all' or s.signal_type=%s)
+      and (%s='all' or coalesce(s.category_key,'')=%s)
+      and (%s < 0 or s.research_level=%s)
+      and (%s='all' or s.monitoring_status=%s)
+      and (%s < 0 or coalesce(s.heat_value,0) >= %s)
+      and (
+        %s=''
+        or coalesce(s.title,'') ilike '%%' || %s || '%%'
+        or coalesce(s.signal_key,'') ilike '%%' || %s || '%%'
+        or coalesce(s.description,'') ilike '%%' || %s || '%%'
+      )
+    """
+
+    args = (
+        platform, platform,
+        days,
+        signal_type, signal_type,
+        category, category,
+        research_level, research_level,
+        monitoring_status, monitoring_status,
+        heat_min, heat_min,
+        query, query, query, query,
+    )
+
+    with _connect(db) as conn:
+        platforms = _fetch_all(
+            conn,
+            """
+            select platform_key as key, display_name as name, enabled, provider_status, sort_order
+            from platform_registry
+            order by sort_order, platform_key
+            """,
+        )
+
+        signal_type_options = _fetch_all(
+            conn,
+            """
+            select distinct signal_type as value
+            from external_signal
+            where (%s='all' or platform=%s)
+            order by signal_type
+            """,
+            (platform, platform),
+        )
+
+        category_options = _fetch_all(
+            conn,
+            """
+            select distinct category_key as value
+            from external_signal
+            where category_key is not null and btrim(category_key)<>''
+              and (%s='all' or platform=%s)
+            order by category_key
+            """,
+            (platform, platform),
+        )
+
+        total_row = _fetch_one(
+            conn,
+            base_cte
+            + f"""
+            select count(*)::int as total
+            from signal_rows s
+            where {where_sql}
+            """,
+            args,
+        )
+        total = int(total_row.get("total") or 0)
+        offset = (page - 1) * page_size
+
+        items = _fetch_all(
+            conn,
+            base_cte
+            + f"""
+            select
+              s.id::text,
+              s.provider,
+              s.platform,
+              s.signal_type,
+              s.provider_signal_id,
+              s.signal_key,
+              s.title,
+              s.description,
+              s.category_key,
+              s.city_code,
+              s.research_level,
+              s.monitoring_status,
+              s.monitoring_priority,
+              s.first_seen_at,
+              s.last_seen_at,
+              s.snapshot_captured_at,
+              s.rank_value,
+              s.rank_change,
+              s.heat_value,
+              s.discussion_count,
+              s.related_video_count,
+              s.collection_count,
+              s.heat_growth_pct
+            from signal_rows s
+            where {where_sql}
+            order by {order_by}
+            limit %s offset %s
+            """,
+            args + (page_size, offset),
+        )
+
+        selected_id = selected_signal_id or (items[0]["id"] if items else "")
+        detail: dict[str, Any] = {}
+
+        if selected_id:
+            detail = _fetch_one(
+                conn,
+                base_cte
+                + """
+                select
+                  s.id::text,
+                  s.provider,
+                  s.platform,
+                  s.signal_type,
+                  s.provider_signal_id,
+                  s.signal_key,
+                  s.title,
+                  s.description,
+                  s.category_key,
+                  s.city_code,
+                  s.research_level,
+                  s.monitoring_status,
+                  s.monitoring_priority,
+                  s.first_seen_at,
+                  s.last_seen_at,
+                  s.snapshot_captured_at,
+                  s.rank_value,
+                  s.rank_change,
+                  s.heat_value,
+                  s.discussion_count,
+                  s.related_video_count,
+                  s.collection_count,
+                  s.heat_growth_pct
+                from signal_rows s
+                where s.id=%s::uuid
+                """,
+                (selected_id,),
+            )
+
+            trend = _fetch_all(
+                conn,
+                """
+                select
+                  captured_at,
+                  rank_value,
+                  rank_change,
+                  heat_value,
+                  value_json
+                from signal_snapshot
+                where signal_id=%s::uuid
+                  and captured_at >= now() - (%s || ' days')::interval
+                order by captured_at asc, id asc
+                limit 240
+                """,
+                (selected_id, days),
+            )
+
+            related_videos = _fetch_all(
+                conn,
+                """
+                with latest_metric as (
+                  select distinct on (video_id)
+                    video_id, play_count, like_count, comment_count, share_count, captured_at
+                  from metric_snapshot
+                  order by video_id, captured_at desc, id desc
+                ),
+                latest_score as (
+                  select distinct on (video_id)
+                    video_id, score, calculated_at
+                  from video_score
+                  where score_type='priority'
+                  order by video_id, calculated_at desc, id desc
+                )
+                select
+                  v.id::text,
+                  v.platform,
+                  v.platform_video_id,
+                  coalesce(v.title,v.description,'(无标题)') as title,
+                  v.source_url,
+                  v.published_at,
+                  v.duration_ms,
+                  v.research_level,
+                  a.nickname as account_name,
+                  m.play_count,
+                  m.like_count,
+                  m.comment_count,
+                  m.share_count,
+                  coalesce(sc.score,v.monitoring_priority,0)::numeric as priority,
+                  l.relation_type,
+                  l.observed_at
+                from signal_video_link l
+                join source_video v on v.id=l.video_id
+                left join source_account a on a.id=v.account_id
+                left join latest_metric m on m.video_id=v.id
+                left join latest_score sc on sc.video_id=v.id
+                where l.signal_id=%s::uuid
+                order by coalesce(sc.score,v.monitoring_priority,0) desc,
+                         m.like_count desc nulls last,
+                         l.observed_at desc
+                limit 8
+                """,
+                (selected_id,),
+            )
+
+            detail["trend"] = trend
+            detail["related_videos"] = related_videos
+
+    return {
+        "platforms": platforms,
+        "signal_type_options": signal_type_options,
+        "category_options": category_options,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": items,
+        "detail": detail,
+    }
