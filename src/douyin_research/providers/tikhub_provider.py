@@ -13,8 +13,16 @@ from .transport import ProviderTransport
 from .types import ProviderCallMeta, ProviderPage, VideoObservation
 
 
-class TikHubProvider:
+class TikHubDouyinProvider:
     provider_name = "tikhub"
+    platform_name = "douyin"
+    capabilities = frozenset({
+        "discover.low_fan",
+        "discover.creator_material",
+        "search.videos",
+        "video.batch_detail",
+        "account.posts",
+    })
 
     def __init__(
         self,
@@ -26,6 +34,17 @@ class TikHubProvider:
         self.transport = transport
         self.store = store
         self.auth_scope = auth_scope
+
+    def discover(
+        self,
+        kind: str,
+        **kwargs: Any,
+    ) -> ProviderPage[VideoObservation]:
+        if kind == "low_fan":
+            return self.fetch_low_fan_billboard(**kwargs)
+        if kind in {"creator", "creator_material"}:
+            return self.fetch_creator_material(**kwargs)
+        raise ValueError(f"unsupported Douyin discovery kind: {kind}")
 
     def fetch_low_fan_billboard(
         self,
@@ -254,3 +273,7 @@ class TikHubProvider:
                 )
             )
             raise
+
+
+# Backward-compatible technical alias. New code should use TikHubDouyinProvider.
+TikHubProvider = TikHubDouyinProvider
