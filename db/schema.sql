@@ -170,13 +170,36 @@ create unique index if not exists uq_video_comment_provider_id
 create table if not exists transcript (
   id uuid primary key default gen_random_uuid(),
   video_id uuid not null references source_video(id) on delete cascade,
-  provider text not null,
+  asr_provider text not null,
+  model_id text,
+  model_revision text,
+  engine_version text,
   language text,
   text_content text not null,
   segments jsonb,
-  created_at timestamptz not null default now(),
-  unique(video_id, provider)
+  hotword_version text,
+  source_provider text,
+  source_fingerprint text,
+  audio_duration_ms bigint,
+  quality_status text not null default 'unreviewed',
+  cost_amount numeric(14,6),
+  cost_currency text default 'CNY',
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
 );
+
+create index if not exists idx_transcript_video_time
+  on transcript(video_id, created_at desc);
+
+create unique index if not exists uq_transcript_version
+  on transcript(
+    video_id,
+    asr_provider,
+    coalesce(model_id, ''),
+    coalesce(model_revision, ''),
+    coalesce(hotword_version, ''),
+    coalesce(source_fingerprint, '')
+  );
 
 create table if not exists analysis_run (
   id uuid primary key default gen_random_uuid(),
@@ -266,6 +289,42 @@ create table if not exists external_api_response (
   provider_request_id text,
   expires_at timestamptz
 );
+
+-- Business-level pipeline history. Windmill job history is operational, not the long-term research audit trail.
+create table if not exists pipeline_run (
+  id uuid primary key default gen_random_uuid(),
+  run_type text not null,
+  run_version text,
+  status text not null default 'running',
+  triggered_by text,
+  started_at timestamptz not null default now(),
+  finished_at timestamptz,
+  input_count bigint,
+  output_count bigint,
+  promoted_l1_count bigint,
+  promoted_l2_count bigint,
+  promoted_l3_count bigint,
+  api_cost numeric(14,6) not null default 0,
+  asr_cost numeric(14,6) not null default 0,
+  llm_cost numeric(14,6) not null default 0,
+  cost_currency text default 'CNY',
+  summary jsonb not null default '{}'::jsonb,
+  error_summary jsonb
+);
+
+create table if not exists pipeline_run_item (
+  run_id uuid not null references pipeline_run(id) on delete cascade,
+  entity_type text not null,
+  entity_id uuid not null,
+  stage text,
+  outcome text,
+  reason_code text,
+  metadata jsonb not null default '{}'::jsonb,
+  primary key (run_id, entity_type, entity_id)
+);
+
+create index if not exists idx_pipeline_run_time
+  on pipeline_run(started_at desc);
 
 create table if not exists external_api_call (
   id bigserial primary key,
