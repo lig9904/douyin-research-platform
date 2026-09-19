@@ -230,3 +230,80 @@ def test_all_unknown_metrics_remain_null_and_missing_evidence_stops() -> None:
     assert result.reply_median is None
     assert result.text_present_count == 0
     assert result.mean_text_length is None
+
+
+def test_text_distribution_is_aggregate_only_and_rule_based() -> None:
+    assert DSN
+    _clear()
+    video_id = _insert_video()
+    texts = [
+        " 好 看 ",
+        "好　看",
+        "https://example.invalid 优惠",
+        "@synthetic-user 真的好看",
+        "😀！！！",
+        "哈哈哈哈哈",
+        "好",
+        "真的好看",
+    ]
+    _ingest(
+        [
+            _sample(
+                f"synthetic-rule-{index}",
+                text=text,
+                like_count=None,
+                reply_count=None,
+                raw_ref="external_api_response:synthetic-rules",
+            )
+            for index, text in enumerate(texts)
+        ],
+        "synthetic-fingerprint-rules",
+    )
+
+    result = CommentFeatureExtractor(DSN).extract(video_id)
+
+    assert result.feature_version == "comment-features-v1.1.0"
+    assert result.eligible_text_count == 4
+    assert result.normalized_unique_text_count == 7
+    assert result.duplicate_text_count == 1
+    assert result.duplicate_group_count == 1
+    assert result.max_duplicate_group_size == 2
+    assert result.url_text_count == 1
+    assert result.mention_text_count == 1
+    assert result.emoji_only_text_count == 1
+    assert result.repeated_char_text_count == 1
+    assert result.short_text_count == 1
+    assert result.template_like_text_count == 5
+    assert result.char_bigram_count == 8
+    assert result.unique_char_bigram_count == 3
+    assert result.top_char_bigram_count == 4
+    assert result.top_char_bigram_share == pytest.approx(0.5)
+    assert result.metadata["stored_terms"] is False
+    assert result.metadata["semantic_inference"] is False
+
+    serialized_metadata = repr(result.metadata)
+    for raw_text in texts:
+        assert raw_text not in serialized_metadata
+
+
+def test_historical_snapshot_text_fields_remain_null() -> None:
+    assert DSN
+    _clear()
+    video_id = _insert_video()
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into video_comment_feature_snapshot(
+              video_id, feature_version, evidence_fingerprint,
+              sampled_comment_count, root_comment_count, sampled_reply_count,
+              source_observation_count, text_present_count,
+              question_text_count, like_known_count,
+              reply_known_count, metadata
+            ) values (%s, 'comment-features-v1.0.0', %s, 0, 0, 0, 0, 0, 0, 0, 0, '{}')
+            returning eligible_text_count, top_char_bigram_share
+            """,
+            (video_id, "0" * 64),
+        )
+        assert cur.fetchone() == (None, None)
+        conn.commit()
