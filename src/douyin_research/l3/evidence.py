@@ -15,6 +15,7 @@ from uuid import UUID
 import psycopg
 
 L3_EVIDENCE_VERSION = "l3-evidence-v1.0.0"
+L3_REVIEW_IDENTITY_SOURCE = "windmill_end_user_email_allowlist_v1"
 ELIGIBLE_TRANSCRIPT_QUALITY = frozenset({"usable", "low_confidence", "no_speech"})
 MAX_TITLE_CHARS = 500
 MAX_DESCRIPTION_CHARS = 5_000
@@ -108,8 +109,28 @@ class L3EvidenceAssembler:
             version=privacy_review_version,
         )
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute("set transaction read only")
-            return self._build_snapshot(cur, video_id, review_version)
+            cur.execute("begin isolation level repeatable read read only")
+            return self.build_candidate(cur, video_id, review_version)
+
+    def build_candidate(
+        self,
+        cur,
+        video_id: UUID | str,
+        privacy_review_version: str,
+    ) -> L3EvidenceBundle:
+        """Build one candidate using the caller's already-open transaction.
+
+        This is intentionally public for the approval boundary: it lets that
+        boundary rebuild the candidate and insert its approval in one stable
+        database transaction.  It never persists a bundle or contacts an
+        external service.
+        """
+
+        review_version = _validate_privacy_review(
+            reviewed=True,
+            version=privacy_review_version,
+        )
+        return self._build_snapshot(cur, video_id, review_version)
 
     def _build_snapshot(
         self,
@@ -368,6 +389,7 @@ def assert_persisted_l3_privacy_review(
     if (
         not isinstance(value, Mapping)
         or value.get("reviewed") is not True
+        or value.get("reviewer_identity_source") != L3_REVIEW_IDENTITY_SOURCE
         or value.get("version") != expected_version
         or value.get("evidence_fingerprint") != evidence_fingerprint
         or value.get("evidence_version") != evidence_version

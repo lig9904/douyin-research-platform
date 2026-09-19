@@ -12,6 +12,7 @@ import {
 } from 'antd'
 import { backend } from './wmill'
 import AppShell, { type ResearchView } from './AppShell'
+import L3ReviewPanel from './src/components/L3ReviewPanel'
 import './video-library.css'
 
 type Platform = {
@@ -784,6 +785,12 @@ export default function VideoLibrary({
                         </div>
                       )}
                     </section>
+
+                    <L3ReviewPanel
+                      key={detail.id}
+                      videoId={detail.id}
+                      researchLevel={detail.research_level}
+                    />
 
                     <section className="detail-section">
                       <div className="detail-section-head">

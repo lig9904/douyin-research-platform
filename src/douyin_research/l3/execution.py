@@ -831,4 +831,9 @@ def _reserve_budget(
 
 
 def _decimal(value: Decimal | float | int | None) -> Decimal | None:
-    return None if value is None else Decimal(str(value))
+    if value is None:
+        return None
+    parsed = Decimal(str(value))
+    if not parsed.is_finite():
+        raise ValueError("cost must be finite")
+    return parsed
