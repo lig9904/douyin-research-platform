@@ -34,17 +34,29 @@ class DailyBudgetGuard:
         return reserve
 
     def configure(self, *, provider: str, budget_key: str, max_requests: int | None,
-                  max_cost: float | None, budget_date: date | None = None) -> None:
+                  max_cost: float | None, budget_date: date | None = None,
+                  cost_currency: str = "USD") -> None:
         budget_date = budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                insert into daily_budget(budget_date, provider, budget_key, max_cost, max_requests)
-                values (%s,%s,%s,%s,%s)
+                insert into daily_budget(
+                  budget_date, provider, budget_key, max_cost, max_requests, cost_currency
+                ) values (%s,%s,%s,%s,%s,%s)
                 on conflict(budget_date, provider, budget_key)
-                do update set max_cost=excluded.max_cost, max_requests=excluded.max_requests
+                do update set
+                  max_cost=excluded.max_cost,
+                  max_requests=excluded.max_requests,
+                  cost_currency=excluded.cost_currency
                 """,
-                (budget_date, provider, budget_key, max_cost, max_requests),
+                (
+                    budget_date,
+                    provider,
+                    budget_key,
+                    max_cost,
+                    max_requests,
+                    cost_currency,
+                ),
             )
             conn.commit()
 
