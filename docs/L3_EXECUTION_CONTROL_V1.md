@@ -40,8 +40,10 @@
 6. LLM 估算成本已知且非负
 7. 当天已配置 `provider / windmill_manual_l3` 预算
 8. 请求币种与预算币种一致
-9. Provider 名称匹配且 `max_retries=0`
-10. 单并发锁获取成功
+9. Provider 名称匹配、定价版本非空且 `max_retries=0`
+10. Provider 执行契约经过核验且标记为 production ready
+11. 证据规范 JSON 的指纹重算一致，最新持久化人工隐私复核与证据 SHA-256、证据版本及 modalities 完全一致
+12. 单并发锁获取成功
 
 数据库前置检查通过后才组装证据；证据成功后才构造 Provider。任何外部调用前，系统会原子预占一次请求额度和 LLM 估算成本。
 
@@ -52,6 +54,8 @@ Flow 或执行代码不得自动创建、扩大或切换预算币种。
 预算预占和 `l3_execution_job(status=running, attempt_count=1)` 在调用前持久化。
 
 - 调用成功并通过版本、成本及隐私结果校验：写入 L3 结果与逐任务成本，任务变为 `completed`。
+- Provider 返回的证据 modalities 必须与输入集合完全一致，不能声明未提供的证据。
+- 已知实际 LLM 成本超过预占时，不写分析结果；任务以 `provider_cost_exceeded_reservation` 失败，并把实际费用完整记入逐任务成本和当天预算。
 - 调用抛出异常：任务变为 `failed`，不自动退款、不重试。
 - 进程在调用附近中断且无法确认是否已计费：后续相同 task key 返回 `reconciliation_required`，禁止猜测性重跑。
 - 已完成或失败的 task key 重放：只返回已有聚合状态，不重新组装证据、不读取 Secret、不调用模型。
@@ -68,10 +72,12 @@ L3 模型执行的分类约定：
 - `llm_cost`：模型生成的实际或估算费用。
 - 模型调用失败且实际费用无法确认时，`llm_cost=NULL`，因此 `total_cost=NULL`。
 - 预算采用保守预占，不根据异常文本推断供应商未收费，也不自动退款。
+- `daily_budget.spent_cost` 是保守的预算占用口径，不是供应商实际账单；成功后实际/估算任务费用以 `research_task_cost` 为准。实际费用低于预占时本层不自动回调预算占用。
+- 已知实际费用高于预占时，预算会追加差额，即使追加后超过上限也保留真实发生额；该情况失败关闭，必须人工对账后才能调整后续预算。
 
 ## 数据与隐私边界
 
-`l3_execution_job` 保存模型/Prompt/Schema 版本、输入指纹、预算日期、估算成本和脱敏状态，不保存证据包或模型原始响应。
+`l3_execution_job` 保存模型/Prompt/Schema/证据/隐私复核/定价版本、输入指纹、Provider 契约指纹、证据 modalities、预算日期、估算成本和脱敏状态，不保存证据包或模型原始响应。
 
 证据包只在内存中交给 Provider，请求对象的调试表示也隐藏证据内容。Provider 返回结果必须：
 
