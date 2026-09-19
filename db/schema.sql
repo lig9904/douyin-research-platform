@@ -280,6 +280,23 @@ create table if not exists video_comment_feature_snapshot (
   reply_sum bigint,
   reply_median numeric,
   mean_text_length numeric,
+  eligible_text_count integer check (eligible_text_count >= 0),
+  normalized_unique_text_count integer check (normalized_unique_text_count >= 0),
+  duplicate_text_count integer check (duplicate_text_count >= 0),
+  duplicate_group_count integer check (duplicate_group_count >= 0),
+  max_duplicate_group_size integer check (max_duplicate_group_size >= 0),
+  url_text_count integer check (url_text_count >= 0),
+  mention_text_count integer check (mention_text_count >= 0),
+  emoji_only_text_count integer check (emoji_only_text_count >= 0),
+  repeated_char_text_count integer check (repeated_char_text_count >= 0),
+  short_text_count integer check (short_text_count >= 0),
+  template_like_text_count integer check (template_like_text_count >= 0),
+  char_bigram_count integer check (char_bigram_count >= 0),
+  unique_char_bigram_count integer check (unique_char_bigram_count >= 0),
+  top_char_bigram_count integer check (top_char_bigram_count >= 0),
+  top_char_bigram_share numeric check (
+    top_char_bigram_share is null or top_char_bigram_share between 0 and 1
+  ),
   metadata jsonb not null default '{}'::jsonb,
   unique(video_id, feature_version, evidence_fingerprint)
 );

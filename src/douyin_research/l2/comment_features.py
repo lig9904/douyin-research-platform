@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import statistics
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from typing import Any
@@ -14,7 +16,11 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 
-COMMENT_FEATURE_VERSION = "comment-features-v1.0.0"
+COMMENT_FEATURE_VERSION = "comment-features-v1.1.0"
+
+_URL_RE = re.compile(r"(?:https?://|www\.)\S+", re.IGNORECASE)
+_MENTION_RE = re.compile(r"[@＠][^\s@＠]+")
+_REPEATED_CHAR_RE = re.compile(r"(\S)\1{3,}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +36,21 @@ class CommentFeatureSnapshot:
     source_observation_count: int
     text_present_count: int
     question_text_count: int
+    eligible_text_count: int
+    normalized_unique_text_count: int
+    duplicate_text_count: int
+    duplicate_group_count: int
+    max_duplicate_group_size: int
+    url_text_count: int
+    mention_text_count: int
+    emoji_only_text_count: int
+    repeated_char_text_count: int
+    short_text_count: int
+    template_like_text_count: int
+    char_bigram_count: int
+    unique_char_bigram_count: int
+    top_char_bigram_count: int
+    top_char_bigram_share: float | None
     like_known_count: int
     like_sum: int | None
     like_median: float | None
@@ -87,10 +108,17 @@ class CommentFeatureExtractor:
                   source_observation_count, text_present_count,
                   question_text_count, like_known_count, like_sum, like_median,
                   reply_known_count, reply_sum, reply_median, mean_text_length,
-                  metadata
+                  eligible_text_count, normalized_unique_text_count,
+                  duplicate_text_count, duplicate_group_count,
+                  max_duplicate_group_size, url_text_count, mention_text_count,
+                  emoji_only_text_count, repeated_char_text_count, short_text_count,
+                  template_like_text_count, char_bigram_count,
+                  unique_char_bigram_count, top_char_bigram_count,
+                  top_char_bigram_share, metadata
                 )
                 values (
-                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                  %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
                 )
                 on conflict(video_id, feature_version, evidence_fingerprint)
                 do nothing
@@ -113,6 +141,21 @@ class CommentFeatureExtractor:
                     features["reply_sum"],
                     features["reply_median"],
                     features["mean_text_length"],
+                    features["eligible_text_count"],
+                    features["normalized_unique_text_count"],
+                    features["duplicate_text_count"],
+                    features["duplicate_group_count"],
+                    features["max_duplicate_group_size"],
+                    features["url_text_count"],
+                    features["mention_text_count"],
+                    features["emoji_only_text_count"],
+                    features["repeated_char_text_count"],
+                    features["short_text_count"],
+                    features["template_like_text_count"],
+                    features["char_bigram_count"],
+                    features["unique_char_bigram_count"],
+                    features["top_char_bigram_count"],
+                    features["top_char_bigram_share"],
                     Jsonb(features["metadata"]),
                 ),
             )
@@ -155,6 +198,21 @@ class CommentFeatureExtractor:
             source_observation_count=features["source_observation_count"],
             text_present_count=features["text_present_count"],
             question_text_count=features["question_text_count"],
+            eligible_text_count=features["eligible_text_count"],
+            normalized_unique_text_count=features["normalized_unique_text_count"],
+            duplicate_text_count=features["duplicate_text_count"],
+            duplicate_group_count=features["duplicate_group_count"],
+            max_duplicate_group_size=features["max_duplicate_group_size"],
+            url_text_count=features["url_text_count"],
+            mention_text_count=features["mention_text_count"],
+            emoji_only_text_count=features["emoji_only_text_count"],
+            repeated_char_text_count=features["repeated_char_text_count"],
+            short_text_count=features["short_text_count"],
+            template_like_text_count=features["template_like_text_count"],
+            char_bigram_count=features["char_bigram_count"],
+            unique_char_bigram_count=features["unique_char_bigram_count"],
+            top_char_bigram_count=features["top_char_bigram_count"],
+            top_char_bigram_share=features["top_char_bigram_share"],
             like_known_count=features["like_known_count"],
             like_sum=features["like_sum"],
             like_median=features["like_median"],
@@ -218,6 +276,7 @@ def _calculate(evidence: list[_CommentEvidence]) -> dict[str, Any]:
     replies = [item.reply_count for item in evidence if item.reply_count is not None]
     provider_counts = Counter(item.provider for item in evidence)
     reason_counts = Counter(item.sample_reason for item in evidence)
+    text_distribution = _text_distribution(texts)
 
     return {
         "sampled_comment_count": len(evidence),
@@ -243,14 +302,106 @@ def _calculate(evidence: list[_CommentEvidence]) -> dict[str, Any]:
         "mean_text_length": (
             sum(len(text) for text in texts) / len(texts) if texts else None
         ),
+        **text_distribution,
         "metadata": {
             "provider_counts": dict(sorted(provider_counts.items())),
             "sample_reason_counts": dict(sorted(reason_counts.items())),
             "text_length_unit": "unicode_codepoints",
             "population_scope": "collected_sample_only",
             "semantic_inference": False,
+            "stored_terms": False,
+            "text_rules": {
+                "normalization": "unicode_nfkc_lower_whitespace_collapse",
+                "short_text_min_alnum": 2,
+                "repeated_character_run": 4,
+                "frequency_unit": "unicode_alnum_character_bigram",
+                "mentions_removed_before_frequency": True,
+                "template_like_signals": [
+                    "duplicate_normalized_text",
+                    "url",
+                    "emoji_or_symbol_only",
+                    "repeated_character",
+                ],
+            },
             "llm_calls": 0,
         },
+    }
+
+
+def _normalize_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKC", text).lower()
+    return " ".join(normalized.split())
+
+
+def _alnum_characters(text: str) -> list[str]:
+    return [
+        char
+        for char in text
+        if unicodedata.category(char)[0] in {"L", "N"}
+    ]
+
+
+def _text_distribution(texts: list[str]) -> dict[str, Any]:
+    normalized_texts = [_normalize_text(text) for text in texts]
+    normalized_counts = Counter(normalized_texts)
+    duplicate_groups = [count for count in normalized_counts.values() if count >= 2]
+
+    url_flags = [bool(_URL_RE.search(text)) for text in normalized_texts]
+    mention_flags = [bool(_MENTION_RE.search(text)) for text in normalized_texts]
+    repeated_flags = [bool(_REPEATED_CHAR_RE.search(text)) for text in normalized_texts]
+    meaningful = [_alnum_characters(text) for text in normalized_texts]
+    emoji_only_flags = [not chars for chars in meaningful]
+    short_flags = [0 < len(chars) < 2 for chars in meaningful]
+    duplicate_flags = [normalized_counts[text] >= 2 for text in normalized_texts]
+    template_flags = [
+        duplicate or has_url or emoji_only or repeated
+        for duplicate, has_url, emoji_only, repeated in zip(
+            duplicate_flags,
+            url_flags,
+            emoji_only_flags,
+            repeated_flags,
+            strict=True,
+        )
+    ]
+
+    eligible_flags = [
+        not has_url and not emoji_only and not repeated and len(chars) >= 2
+        for has_url, emoji_only, repeated, chars in zip(
+            url_flags,
+            emoji_only_flags,
+            repeated_flags,
+            meaningful,
+            strict=True,
+        )
+    ]
+    bigrams: Counter[str] = Counter()
+    for text, eligible in zip(normalized_texts, eligible_flags, strict=True):
+        if not eligible:
+            continue
+        without_mentions = _MENTION_RE.sub("", text)
+        chars = _alnum_characters(without_mentions)
+        bigrams.update("".join(chars[index : index + 2]) for index in range(len(chars) - 1))
+
+    bigram_count = sum(bigrams.values())
+    top_bigram_count = max(bigrams.values(), default=0)
+    return {
+        "eligible_text_count": sum(eligible_flags),
+        "normalized_unique_text_count": len(normalized_counts),
+        "duplicate_text_count": sum(count - 1 for count in duplicate_groups),
+        "duplicate_group_count": len(duplicate_groups),
+        "max_duplicate_group_size": max(duplicate_groups, default=0),
+        "url_text_count": sum(url_flags),
+        "mention_text_count": sum(mention_flags),
+        "emoji_only_text_count": sum(emoji_only_flags),
+        "repeated_char_text_count": sum(repeated_flags),
+        "short_text_count": sum(short_flags),
+        "template_like_text_count": sum(template_flags),
+        "char_bigram_count": bigram_count,
+        "unique_char_bigram_count": len(bigrams),
+        "top_char_bigram_count": top_bigram_count,
+        "top_char_bigram_share": (
+            top_bigram_count / bigram_count if bigram_count else None
+        ),
     }
 
 
