@@ -136,7 +136,7 @@ def test_l3_preview_never_loads_evidence_or_adapter() -> None:
     ],
 )
 def test_wrong_confirmation_is_rejected_without_loading_anything(
-    module, request, kwargs, confirmation
+    module, preview_request, kwargs, confirmation
 ) -> None:
     calls = []
     safe_kwargs = {
@@ -144,15 +144,15 @@ def test_wrong_confirmation_is_rejected_without_loading_anything(
         for name in kwargs
     }
     with pytest.raises(PermissionError, match="exact paid-operation confirmation"):
-        module._execute(request, **safe_kwargs)
+        module._execute(preview_request, **safe_kwargs)
     assert calls == []
 
     values = {
-        field: getattr(request, field)
-        for field in request.__dataclass_fields__
+        field: getattr(preview_request, field)
+        for field in preview_request.__dataclass_fields__
     }
     values["confirmation"] = confirmation
-    confirmed = type(request)(**values)
+    confirmed = type(preview_request)(**values)
     with pytest.raises(RuntimeError, match="disabled until"):
         module._execute(confirmed, **safe_kwargs)
     assert calls == []
