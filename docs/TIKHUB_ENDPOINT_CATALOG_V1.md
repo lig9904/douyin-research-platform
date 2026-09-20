@@ -2,6 +2,10 @@
 
 日期：2026-09-19
 
+2026-09-20补充：[完整价格与请求契约清单](pricing/tikhub-20260920.md)
+覆盖116个业务候选/费用接口；[业务调用策略](API_BUSINESS_CALL_POLICY_V1.md)
+说明单条/批量的选择、数据用途与频率。下方仍是能力目录，不代表全部已上线。
+
 仅列当前 V1 候选接口。SDK method 以官方 Python SDK 2.1.1 reference 为准。
 
 ## Billboard
@@ -98,7 +102,9 @@ Creator 热门话题和热门视频素材已确认有旅行、剧情、二次元
 - get_tiered_discount_info
 - get_endpoint_info
 
-多数基础服务当前基础价约 0.001 USD/request，但正式成本由 endpoint info / calculate_price 动态读取，不硬编码。
+多数基础服务当前基础价约 0.001 USD/request。正式报价优先读取
+get_all_endpoints_info / get_endpoint_info 的 endpoint_cost 和折扣资格，
+calculate_price用于规模测算，最终由账户使用日志核对。
 已核验例外：`fetch_multi_video_v2` 在 2026-09-20 账户使用日志中为 0.050 USD/批次，
 每批最多 50 个去重视频 ID；不得把该接口套用 0.001 USD 的通用基础价。
 

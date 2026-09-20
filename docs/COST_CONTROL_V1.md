@@ -1,108 +1,37 @@
-# V1 成本控制策略
+# V1 调用效率与费用记录
 
-## 1. 原则
+更新：2026-09-20。当前用户要求取消金额硬上限、清楚记录消费。
+完整规则见 [业务接口调用策略](API_BUSINESS_CALL_POLICY_V1.md)，
+正式价格快照见 [逐接口清单](pricing/tikhub-20260920.md)。
 
-成本优先级：
+## 选择原则
 
-1. 不调用
-2. 缓存
-3. 批量接口
-4. 代码/SQL
-5. 低成本数据补充
-6. ASR/评论
-7. 大模型深研
+1. 明确业务需要的字段和时效。
+2. 复用仍有效的数据，按视频/字段去重，保留真实观测时间。
+3. 满足输出要求后，比较单条、小批、整批及必要替代路线的总成本。
+4. L0广泛发现，L1代码筛选；L2按缺口补评论/ASR；L3解释有证据的高价值案例。
 
-## 2. TikHub
+“批量永远比单条便宜”不成立：50条详情USD0.050，单条USD0.001；
+50人资料USD0.150，单人资料USD0.001。禁止逐条调用的旧规则撤回。
+增长监测可验证统计接口：2条USD0.001、50条USD0.025。
 
-大多数基础接口官方基础价约 0.001 USD / request，并采用每日请求量阶梯折扣。
+## 正确计算
 
-系统不硬编码价格，使用 TikHub：
-- get_endpoint_info
-- calculate_price
-- get_user_daily_usage
+- 请求数、返回条数、去重新增条数、缓存命中数分别记录。
+- 费用使用具体endpoint快照、折扣资格和版本；缺报价不当作0。
+- 本地不外呼的缓存为0新增调用费；供应商返回缓存URL与本地缓存是不同机制。
+- 成功请求单价估算与已对账实际扣费分别展示；超时未知费用保持unknown。
+- ASR按同一任务音频时长计，不把多次query当多个音频任务。
+- LLM按具体模型/版本/服务档、输入/缓存/输出token计费，缓存存储另算。
+- USD/CNY分列，不直接混加。
 
-定期同步真实计费信息。
+## 执行与验收
 
-## 3. 批量优先
+任务仍有明确的页数、对象数、终止游标和服务时限；这些控制工作量，不是美元预算。
+TikHub按endpoint限速；两个worker访问同一路径共享该路径的桶，不同路径可并行。
+桶按供应商、凭据身份与endpoint分开，不把整个账号误限成10 RPS。
+当前手动黄金采集/评论使用零自动重试，后续调度需核对Flow/SDK的重试是否叠加。
+每日对账和价格同步是待落地流程，现有项目仅本次USD0.051完成了人工账单对齐。
 
-视频详情优先 App V3 fetch_multi_video_v2：
-- 最多 50 IDs / request
-- 当前核验单价为 0.050 USD / request（价格版本 `usage-log-2026-09-20`）；
-  不能套用大多数基础接口约 0.001 USD / request 的通用费率
-- N 个去重视频 ID 按 `ceil(N / 50)` 个未缓存批次计费；缓存命中不产生供应商请求
-
-禁止在批量接口可覆盖时循环调用单条详情。
-
-## 4. L0
-
-只使用：
-- Billboard
-- Index
-- 已缓存筛选项
-
-不使用：
-- 评论
-- ASR
-- 视频下载
-- LLM
-
-## 5. L1
-
-只用：
-- SQL
-- Python/Go
-- metric snapshots
-- account baseline
-- deterministic scoring
-
-不使用 LLM。
-
-## 6. L2
-
-只有晋级样本：
-- 评论词云（实测可用性后）
-- Top page 评论
-- Transcript / ASR（确有必要时）
-- embedding / clustering（确有必要时）
-
-## 7. L3
-
-仅 Top-N Case：
-- 强模型
-- 多案例比较
-- 机制假设
-- IP适配
-
-## 8. API Guard
-
-Community Windmill 没有免费全局 concurrency limit。
-
-由 PostgreSQL：
-- api_rate_bucket
-- daily_budget
-
-统一控制多 worker 的 API 预算。
-
-## 9. 外部 API 日志
-
-每次外部请求记录：
-- endpoint
-- fingerprint
-- cached
-- http status
-- estimated cost
-- actual cost（可回填）
-- started/finished
-- metadata
-
-## 10. Agent 边界
-
-Codex MCP 默认只读已入库数据。
-
-会产生新收费请求的工具必须：
-- 名称明显
-- 先查缓存
-- 经过 daily_budget
-- 限制翻页
-- 限制 Top-N
-- 返回本次预计成本/调用数
+当前请求缓存、单价快照和日志已有实现；逐视频新鲜度、成本路由、自动对账与自动调度
+仍需按业务策略中的模块逐项实现验收。本次研究不改变测试服正在运行的接口选择。

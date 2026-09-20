@@ -329,7 +329,9 @@ CI 检查 provider 代码中是否引用已知写接口名。
 ## 11. TikHub Adapter 特殊策略
 
 ### 视频详情
-自动 chunk <= 50，优先 batch detail。
+当前适配器仍自动 chunk <= 50。2026-09-20重新核价后，目标策略改为按缺失字段、
+有效ID数量和折扣选择单条/10批/50批；纯增长指标优先验证统计接口。
+详见 [业务接口调用策略](API_BUSINESS_CALL_POLICY_V1.md)，新路由尚未部署。
 
 ### 账号作品
 默认 normal；仅重点账号、必要时一次 lite fallback。
