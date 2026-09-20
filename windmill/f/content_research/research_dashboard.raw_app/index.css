@@ -34,6 +34,9 @@ button, input { font: inherit; }
 .operations-page { display: grid; gap: 13px; }
 .operations-filters { display: flex; gap: 10px; padding: 13px; }
 .operations-filters .ant-select { min-width: 150px; }
+.operations-collector { padding: 15px 16px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.operations-collector h2 { margin: 0 0 5px; color: #1d3658; font-size: 15px; }
+.operations-collector p { margin: 0; color: #75849a; font-size: 12px; }
 .operations-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .operations-kpis .card { padding: 16px; }
 .operations-kpis span, .operations-kpis small { color: #75849a; font-size: 12px; display: block; }
@@ -224,6 +227,7 @@ button, input { font: inherit; }
   .global-search-item > .ant-btn { grid-column: 2; justify-self: start; padding-left: 0; }
   .operations-kpis, .operations-cost-grid { grid-template-columns: 1fr; }
   .operations-filters { flex-direction: column; }
+  .operations-collector { align-items: flex-start; flex-direction: column; }
   .kpi-grid { grid-template-columns: 1fr 1fr; }
   .dashboard-grid {
     grid-template-columns: 1fr;

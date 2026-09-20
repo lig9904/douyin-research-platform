@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Alert, Pagination, Select, Spin, Table, Tag } from 'antd'
+import { Alert, Button, Modal, Pagination, Select, Spin, Table, Tag } from 'antd'
 import { backend } from '../../backend'
 import PlatformIcon from './PlatformIcon'
 
@@ -14,6 +14,12 @@ type Operations = {
   runs: { id: string; run_type: string; run_version?: string | null; status: string; platform?: string | null; started_at: string; api_cost?: number | null; asr_cost?: number | null; llm_cost?: number | null; cost_currency?: string | null }[]
 }
 
+type GoldenIntakeResult = {
+  status: string; source_count: number; observations: number; unique_platform_videos: number
+  scored_videos: number; provider_call_count: number; uncached_call_count: number
+  retry_count: number; maximum_cost_usd: number; raw_provider_payload_included: boolean
+}
+
 function value(value?: number | null) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) }
 function time(value?: string | null) { return value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value)) : '—' }
 
@@ -23,6 +29,9 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
   const [data, setData] = useState<Operations | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [collecting, setCollecting] = useState(false)
+  const [collectionError, setCollectionError] = useState('')
+  const [collectionResult, setCollectionResult] = useState<GoldenIntakeResult | null>(null)
 
   const load = async (page = 1, nextPlatform = platform, nextDays = days) => {
     setLoading(true); setError('')
@@ -34,8 +43,46 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
   }
   useEffect(() => { load(1) }, [])
 
+  const runGoldenIntake = () => {
+    Modal.confirm({
+      title: '确认执行一次真实 TikHub 采集？',
+      content: '固定采集 1 条样本，最多 1 次外部请求、最高 0.01 USD、零重试。',
+      okText: '确认执行',
+      cancelText: '取消',
+      async onOk() {
+        setCollecting(true); setCollectionError(''); setCollectionResult(null)
+        try {
+          const result = await backend.run_manual_golden_intake({
+            execute: true,
+            confirmation: 'RUN_TIKHUB_GOLDEN_PAID',
+            max_items: 1,
+            max_external_calls: 1,
+            max_cost_usd: 0.01,
+            date_window_hours: 24,
+            enrich_details: false,
+            force_refresh: true,
+          }) as GoldenIntakeResult
+          setCollectionResult(result)
+          await load(1)
+        } catch (reason) {
+          setCollectionError(reason instanceof Error ? reason.message : '真实采集未完成。')
+          throw reason
+        } finally { setCollecting(false) }
+      },
+    })
+  }
+
   return <div className="operations-page">
-    <Alert type="info" showIcon message="Admin / Developer 只读概览" description="此页面不发起任务、不调用 Provider，且不展示请求指纹、原始响应、正文、错误载荷或 Secret。" />
+    <Alert type="info" showIcon message="Admin / Developer 运行台" description="账本保持只读；下方黄金采集入口必须二次确认，并由服务端固定限制请求次数与费用。页面不展示请求指纹、原始响应、正文、错误载荷或 Secret。" />
+    <section className="card operations-collector">
+      <div>
+        <h2>测试服黄金采集</h2>
+        <p>1 条抖音低粉榜样本 · 最多 1 次 TikHub 请求 · 上限 0.01 USD · 零重试</p>
+      </div>
+      <Button type="primary" danger loading={collecting} onClick={runGoldenIntake}>采集 1 条真实样本</Button>
+    </section>
+    {collectionError && <Alert type="error" showIcon message="真实采集未完成" description={collectionError} />}
+    {collectionResult && <Alert type="success" showIcon message="真实采集完成" description={`来源 ${collectionResult.source_count} · 观测 ${collectionResult.observations} · 未缓存请求 ${collectionResult.uncached_call_count} · 重试 ${collectionResult.retry_count}`} />}
     <div className="operations-filters card">
       <Select value={platform} onChange={(next) => { setPlatform(next); load(1, next, days) }} options={[{ value: 'all', label: '全部平台' }, ...platforms.filter((item) => item.enabled).map((item) => ({ value: item.key, label: item.name }))]} />
       <Select value={days} onChange={(next) => { setDays(next); load(1, platform, next) }} options={[{ value: 1, label: '近 24 小时' }, { value: 7, label: '近 7 天' }, { value: 30, label: '近 30 天' }, { value: 90, label: '近 90 天' }]} />
