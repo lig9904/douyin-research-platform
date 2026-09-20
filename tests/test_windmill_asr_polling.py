@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import nullcontext
 import inspect
 import os
 import sys
@@ -23,8 +24,21 @@ poller = load("poll_pending_asr")
 worker = load("run_reviewed_asr")
 
 
+@pytest.fixture(autouse=True)
+def synthetic_parent_slot(monkeypatch):
+    monkeypatch.setattr(poller, "scheduler_slot", lambda dsn: nullcontext(True))
+
+
 def test_scheduler_has_no_public_arguments():
     assert not inspect.signature(poller.main).parameters
+
+
+def test_busy_parent_does_not_query_or_dispatch(monkeypatch):
+    monkeypatch.setattr(poller, "scheduler_slot", lambda dsn: nullcontext(False))
+    monkeypatch.setattr(poller, "_pending", lambda dsn: pytest.fail("busy parent queried"))
+    monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(get_resource=lambda path:
+        dict(host="localhost", user="test", password="synthetic", dbname="test")))
+    assert poller.main() == dict(status="deferred", reason="analysis_scheduler_busy")
 
 
 @pytest.mark.parametrize("saved", [None, ("different-task", "running"), ("matching-task", "submitting"), ("matching-task", "failed")])

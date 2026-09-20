@@ -1,0 +1,8 @@
+summary: Dispatch approved L3 first submissions
+description: Fixed operator configuration. Skips existing content across model versions. Requires two normal workers; deploy and verify before enabling schedule.
+timeout: 2100
+lock: '!inline f/content_research/analysis/dispatch_reviewed_l3.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties: {}

@@ -169,6 +169,15 @@ def test_scheduled_configuration_errors_do_not_expose_secrets(monkeypatch):
     assert error.value.__suppress_context__
 
 
+def test_busy_parent_returns_without_selecting_or_waiting(monkeypatch):
+    monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
+        get_resource=lambda path: dict(host="localhost", user="test", password="synthetic", dbname="test"),
+        get_variable=lambda path: json.dumps({"public_endpoint": "https://media.example"})))
+    monkeypatch.setattr(dispatch, "scheduler_slot", lambda dsn: nullcontext(False))
+    monkeypatch.setattr(dispatch, "dispatch_reviewed", lambda *args, **kwargs: pytest.fail("busy selection"))
+    assert dispatch.run_scheduled("asr") == dict(status="deferred", reason="analysis_scheduler_busy")
+
+
 def test_scheduled_l3_wait_exceeds_child_timeout(monkeypatch):
     monkeypatch.setattr(dispatch, "scheduler_slot", lambda dsn: nullcontext(True))
     calls = []

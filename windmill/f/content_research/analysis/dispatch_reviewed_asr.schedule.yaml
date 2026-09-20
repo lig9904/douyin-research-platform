@@ -1,0 +1,7 @@
+summary: Dispatch approved ASR every ten minutes
+schedule: "0 1-59/10 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/analysis/dispatch_reviewed_asr
+is_flow: false
+enabled: false
+args: {}
