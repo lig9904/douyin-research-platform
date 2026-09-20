@@ -43,7 +43,7 @@
 
 ### 1.3 脱敏证据包
 
-上述输出必须汇总为受控的 `test-server-evidence-v1` JSON，而不是只留截图或口头结论。先在权限为 `0700` 的证据目录初始化一个严格 `0600`、全部 `not_run` 的模板；镜像参数必须使用实际的 digest 引用，不能使用 tag：
+上述输出必须汇总为受控的 `test-server-evidence-v1` JSON，而不是只留截图或口头结论。先在权限为 `0700` 的证据目录初始化一个严格 `0600`、全部 `not_run` 的模板；实际运行的镜像参数必须使用 digest 引用，不能使用 tag：
 
 ```bash
 install -d -m 0700 /srv/douyin-research-test/evidence
@@ -57,7 +57,20 @@ scripts/test-server-evidence.py init \
   --proxy-image <nginx镜像@sha256>
 ```
 
-证据结构 Schema 见 [test-server-evidence-v1.schema.json](test-server-evidence-v1.schema.json)，固定的 19 个检查以对象键表达，因此无法重复或漏项。它只允许固定状态、UTC 时间、`ev_...` 脱敏证据 ID、计数/耗时、SHA-256 和聚合成本状态；没有自由正文、URL、邮箱、请求 ID、媒体地址或 Provider 响应字段。备份、双库恢复与 globals 恢复必须回填同一归档的 manifest 指纹，globals 还必须匹配 inventory 指纹；计划安全/并发只能绑定本地监控契约，告警闭环则必须另有外部投递证据和严格递增的触发、确认、关闭时间。获准 Provider 才标记 `approved=true`；未获准项必须保持零调用、无成本。Schema 用于工具兼容和结构审阅，下面的 Python 验证器还执行跨字段指纹一致性、时间顺序、敏感值启发式拦截与最终完成态检查，是封存前的权威入口；不得仅凭通用 JSON Schema 校验声称通过。每次更新后执行：
+使用专用外部反代时，测试服务器没有 proxy 容器，必须如实初始化为外部模式，且不得填写一个未部署的代理镜像：
+
+```bash
+scripts/test-server-evidence.py init \
+  --output /srv/douyin-research-test/evidence/acceptance.json \
+  --commit-sha <40位已部署提交SHA> \
+  --compose-project douyin-research-test \
+  --fqdn <测试FQDN> \
+  --postgres-image <postgres镜像@sha256> \
+  --windmill-image <windmill镜像@sha256> \
+  --proxy-mode external
+```
+
+证据结构 Schema 见 [test-server-evidence-v1.schema.json](test-server-evidence-v1.schema.json)，固定的 19 个检查以对象键表达，因此无法重复或漏项。`proxy_mode=container` 必须绑定固定代理镜像，`proxy_mode=external` 则必须将本机代理镜像留空，避免虚构部署组件。它只允许固定状态、UTC 时间、`ev_...` 脱敏证据 ID、计数/耗时、SHA-256 和聚合成本状态；没有自由正文、URL、邮箱、请求 ID、媒体地址或 Provider 响应字段。备份、双库恢复与 globals 恢复必须回填同一归档的 manifest 指纹，globals 还必须匹配 inventory 指纹；计划安全/并发只能绑定本地监控契约，告警闭环则必须另有外部投递证据和严格递增的触发、确认、关闭时间。获准 Provider 才标记 `approved=true`；未获准项必须保持零调用、无成本。Schema 用于工具兼容和结构审阅，下面的 Python 验证器还执行跨字段指纹一致性、时间顺序、敏感值启发式拦截与最终完成态检查，是封存前的权威入口；不得仅凭通用 JSON Schema 校验声称通过。每次更新后执行：
 
 ```bash
 scripts/test-server-evidence.py verify \
