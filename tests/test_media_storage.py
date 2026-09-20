@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ class _ClientError(Exception):
 class _FakeS3:
     def __init__(self) -> None:
         self.objects: dict[str, dict[str, object]] = {}
+        self.bodies: dict[str, bytes] = {}
         self.uploads: list[tuple[str, str, str, dict[str, object]]] = []
         self.head_error: Exception | None = None
         self.presign_error: Exception | None = None
@@ -39,10 +41,17 @@ class _FakeS3:
     def upload_file(self, filename: str, bucket: str, key: str, *, ExtraArgs: dict[str, object]) -> None:
         self.uploads.append((filename, bucket, key, ExtraArgs))
         payload = Path(filename).read_bytes()
+        self.bodies[key] = payload
         self.objects[key] = {
             "ContentLength": len(payload),
+            "ContentType": ExtraArgs["ContentType"],
             "Metadata": dict(ExtraArgs["Metadata"]),
         }
+
+    def get_object(self, *, Bucket, Key):
+        from botocore.response import StreamingBody
+        payload = self.bodies[Key]
+        return {"Body": StreamingBody(io.BytesIO(payload), len(payload))}
 
     def generate_presigned_url(self, operation: str, *, Params: dict[str, str], ExpiresIn: int, HttpMethod: str) -> str:
         if self.presign_error is not None:
@@ -112,6 +121,44 @@ def test_existing_mismatched_content_addressed_object_is_not_overwritten(tmp_pat
     with pytest.raises(MediaStorageIntegrityError):
         store.upload_file(file)
     assert client.uploads == []
+
+
+def test_existing_mime_mismatch_rejected_on_upload_and_reference_verification(tmp_path: Path) -> None:
+    file = tmp_path / "sample.wav"
+    file.write_bytes(b"synthetic-wav")
+    client = _FakeS3()
+    store = PrivateS3MediaStorage(_config(), client=client)
+    stored = store.upload_file(file, content_type="audio/wav")
+    client.objects[stored.key]["ContentType"] = "video/mp4"
+    with pytest.raises(MediaStorageIntegrityError):
+        store.upload_file(file, content_type="audio/wav")
+    with pytest.raises(MediaStorageIntegrityError):
+        store.verify_object(stored)
+    assert len(client.uploads) == 1
+    client.objects[stored.key]["ContentType"] = "Audio/WAV"
+    store.verify_object(stored)
+    del client.objects[stored.key]["ContentType"]
+    with pytest.raises(MediaStorageIntegrityError):
+        store.verify_object(stored)
+
+
+def test_recover_private_object_verifies_bytes_and_never_overwrites(tmp_path: Path) -> None:
+    original = tmp_path / "original.mp4"
+    original.write_bytes(b"synthetic-video")
+    client = _FakeS3()
+    store = PrivateS3MediaStorage(_config(), client=client)
+    stored = store.upload_file(original)
+    recovered = tmp_path / "recovered.mp4"
+    store.download_file(stored, recovered)
+    assert recovered.read_bytes() == original.read_bytes()
+    with pytest.raises(MediaStorageError, match="already exists"):
+        store.download_file(stored, recovered)
+    client.bodies[stored.key] = b"corrupted"
+    with pytest.raises(MediaStorageIntegrityError):
+        store.download_file(stored, tmp_path / "corrupt.mp4")
+    assert not (tmp_path / "corrupt.mp4").exists()
+    assert not list(tmp_path.glob(".s3-media-*"))
+    assert len(client.uploads) == 1
 
 
 def test_unknown_or_forbidden_head_failures_are_not_treated_as_missing(tmp_path: Path) -> None:

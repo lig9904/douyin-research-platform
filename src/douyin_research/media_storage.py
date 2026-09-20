@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+import os
 import re
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -218,6 +220,56 @@ class PrivateS3MediaStorage:
         except Exception:
             raise MediaStorageError("S3 signed-read URL creation failed") from None
 
+    @property
+    def bucket(self) -> str:
+        """Non-secret bucket identity for persisted asset binding."""
+        return self._config.bucket
+
+    def verify_object(self, stored: StoredMediaObject) -> None:
+        """Confirm a persisted reference still points to the expected object."""
+        if stored.key != self.object_key(stored.sha256):
+            raise ValueError("invalid content-addressed media reference")
+        existing = self._head(stored.key)
+        if existing is None:
+            raise MediaStorageError("S3 media object is missing")
+        self._validate_existing(existing, stored)
+
+    def download_file(self, stored: StoredMediaObject, destination: str | Path) -> None:
+        """Recover an uploaded asset for an interrupted extraction, no CDN call."""
+        self.verify_object(stored)
+        target = Path(destination)
+        if target.exists() or target.is_symlink():
+            raise MediaStorageError("local media destination already exists")
+        descriptor, name = tempfile.mkstemp(prefix=".s3-media-", dir=target.parent)
+        temporary = Path(name)
+        body = None
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                response = self._client.get_object(Bucket=self._config.bucket, Key=stored.key)
+                body = response["Body"]
+                size = 0
+                digest = hashlib.sha256()
+                for chunk in body.iter_chunks(chunk_size=self._CHUNK_SIZE):
+                    size += len(chunk)
+                    if size > stored.size:
+                        raise MediaStorageIntegrityError("S3 media read exceeds recorded size")
+                    digest.update(chunk)
+                    output.write(chunk)
+            if size != stored.size or digest.hexdigest() != stored.sha256:
+                raise MediaStorageIntegrityError("S3 media read failed integrity validation")
+            os.link(temporary, target)
+        except MediaStorageError:
+            raise
+        except Exception:
+            raise MediaStorageError("S3 media download failed") from None
+        finally:
+            if body is not None:
+                try:
+                    body.close()
+                except Exception:
+                    pass  # Cleanup must not leak a transport's URL/error.
+            temporary.unlink(missing_ok=True)
+
     @classmethod
     def _is_canonical_key(cls, key: object) -> bool:
         if not isinstance(key, str):
@@ -254,7 +306,10 @@ class PrivateS3MediaStorage:
     def _validate_existing(existing: Mapping[str, Any], expected: StoredMediaObject) -> None:
         metadata = existing.get("Metadata")
         supplied_sha = metadata.get("sha256") if isinstance(metadata, Mapping) else None
-        if supplied_sha != expected.sha256 or existing.get("ContentLength") != expected.size:
+        if (supplied_sha != expected.sha256
+            or existing.get("ContentLength") != expected.size
+            or _canonical_content_type(existing.get("ContentType"))
+                != _canonical_content_type(expected.content_type)):
             raise MediaStorageIntegrityError("S3 content-addressed media object failed integrity validation")
 
     @classmethod
@@ -277,3 +332,12 @@ class PrivateS3MediaStorage:
                 raise ValueError("media content type is invalid")
             return explicit.strip()
         return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def _canonical_content_type(value: object) -> str | None:
+    # Media type is case-insensitive; parameter values may not be. Preserve
+    # parameter order/case and require explicit metadata, never assume a MIME.
+    if not isinstance(value, str) or not value.strip():
+        return None
+    media_type, *parameters = value.split(";")
+    return ";".join([media_type.strip().lower(), *(part.strip() for part in parameters)])
