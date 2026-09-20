@@ -137,6 +137,22 @@ def test_schema_and_windmill_contract_keep_one_daily_snapshot_not_per_call_alloc
     assert "concurrent_limit: 1" in metadata
 
 
+def test_hourly_schedule_is_explicitly_enabled_after_deployment_preflight():
+    from pathlib import Path
+
+    schedule = Path(
+        "windmill/f/content_research/collectors/sync_daily_spend.schedule.yaml"
+    ).read_text(encoding="utf-8")
+    assert 'schedule: "0 0 * * * *"' in schedule
+    assert "timezone: Etc/UTC" in schedule
+    assert "script_path: f/content_research/collectors/sync_daily_spend" in schedule
+    assert "is_flow: false" in schedule
+    assert "enabled: false" in schedule
+    assert 'db: "$res:f/content_research/research_db"' in schedule
+    assert "account_scope: default" in schedule
+    assert "api_key" not in schedule
+
+
 @pytest.mark.skipif(not DSN, reason="isolated TEST_DATABASE_URL required")
 def test_upsert_keeps_newer_supplier_snapshot_when_an_old_worker_finishes_late():
     scope = f"daily-spend-{uuid4()}"

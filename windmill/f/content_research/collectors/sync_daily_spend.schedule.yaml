@@ -1,0 +1,9 @@
+summary: Hourly TikHub daily supplier spend
+schedule: "0 0 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/collectors/sync_daily_spend
+is_flow: false
+enabled: false
+args:
+  db: "$res:f/content_research/research_db"
+  account_scope: default
