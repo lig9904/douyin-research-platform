@@ -48,7 +48,7 @@ Windmill workspace role 使用 Operator，并只给研究台相关 folder 的 re
 建议统一放：
 
 ```text
-f/douyin_research/
+f/content_research/
   app/
   queries/
   research_tools/
@@ -89,7 +89,40 @@ Windmill 文档明确提示：Operator 如果获得 variable 的 read 权限，�
 
 MCP 只暴露指定研究工具，不暴露所有 workspace scripts。
 
-建议 MCP scope 对应：
-`f/douyin_research/research_tools`
+测试服务器的 workspace-bound MCP token scope 对应：
+`mcp:scripts:f/content_research/research_tools/*`
 
-收费工具与只读工具分开命名和路径。
+当前该 folder 仅包含七项只读工具：`search_cases`、`get_case_detail`、
+`get_hot_videos`、`get_blackhorse_videos`、`search_accounts`、
+`get_account_videos`、`get_metric_history`。MCP 身份只能调用这些工具，不能读取
+Resource/Secret、枚举 workspace、访问 App backend、collectors、analysis 或
+`admin_tools`。
+
+Windmill 对 granular script scope 会自动增加内置 `runScriptByPath` 工具；该工具仍按
+同一 path scope 检查参数，只能运行 `research_tools` 下的脚本。验收应期待七个业务
+脚本工具加这个内置启动器，而不是误把它当成跨目录权限。token 不能设置
+`read_only=true`，因为 Windmill 会因此禁止所有 job-run；业务只读由精确 scope、
+无写脚本、只读事务和数据库 reader role落实。
+
+这些工具在服务端固定使用 `f/content_research/research_db`，但 MCP token 不应因此
+获得 Resource 的 read 权限。应以独立的最小权限数据库 role 作为该 Resource 的
+连接身份，且只授予所需表的 `SELECT`；代码内的只读事务是第二道边界，不替代 ACL。
+
+七项入口还会导入 `f/content_research/research_tool_lib/queries`。MCP scope 仍只列出
+`research_tools`，但执行身份必须能 view 这个 helper；helper 自身不得进入 MCP
+工具列表。测试服务器应给 helper 精确 view 权限，不能把整个 `content_research`
+folder 授予 MCP 身份。
+
+收费/写操作必须与只读 folder 和 MCP token 分开。`run_deep_analysis` 当前未开放；
+不得把 `manual_l3_preview`、审核或预算预览放入 MCP 作为执行器，也不得由调用参数
+升级为付费执行。
+
+测试服务器 ACL 验收至少覆盖：
+
+- MCP token 的 `tools/list` 只展示七项只读业务脚本和受相同 path scope 约束的
+  `runScriptByPath`，不展示其他 workspace 或 API endpoint 工具；
+- 每项工具能在最小结果集下读取，未知工具/超限输入失败关闭；
+- MCP token 不能读取 Resource/Secret、调用收费脚本或运行 collectors/analysis/admin；
+- Admin、Developer、Viewer 与 MCP token 的 Folder 权限分别按预期生效。
+
+上述是部署前验收项，不表示当前本机或任何测试服务器已经配置完成。

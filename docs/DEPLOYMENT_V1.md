@@ -159,11 +159,23 @@ Windmill 作为 MCP Server 给 Codex。
 推荐：
 - Streamable HTTP
 - Authorization Bearer
-- folder/tool scope 限定
-- 只暴露 research tools
-- 收费/写操作工具仍过 daily_budget
+- script scope 限定为 `mcp:scripts:f/content_research/research_tools/*`
+- 当前仅暴露七项只读 research scripts，以及 Windmill 自动提供、受同一路径 scope
+  约束的 `runScriptByPath`；不暴露其他 workspace scripts、Resources 或 Secrets
+- `run_deep_analysis` 尚未开放；preview/审核/预算预览不能作为付费 MCP 执行器
 
 不要把 Token 写进 `?token=` URL。
+
+测试服务器应使用 `https://<windmill-fqdn>/api/mcp/w/<workspace>/mcp`；token 仅经
+`Authorization: Bearer` 传递，开启 `mcp_disable_token_query_param`，并在代理日志中
+脱敏 Authorization header。上线前以该 token 验证 `tools/list` 仅含七项业务脚本和
+受相同 scope 约束的 Windmill 内置 `runScriptByPath`、每项
+只读小结果集调用、超限/未知工具拒绝及跨 folder/Resource/Secret 拒绝。该要求不表示
+当前 Gateway 已部署或已完成现场验证。
+
+Windmill 的 token `read_only=true` 会阻止脚本 job-run，不能用于这个 Gateway token；
+业务只读性由精确 `mcp:scripts:` scope、代码无写入口、数据库只读事务和 reader role
+保证，不能用全权 token 代替。
 
 ## 11. 安全
 

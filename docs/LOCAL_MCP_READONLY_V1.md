@@ -60,7 +60,24 @@ reviewer 对 `source_video` 没有 `INSERT` 权限且实际写入被拒绝。没
 ## 与正式 Windmill MCP 的差距
 
 正式接入仍应使用 `docs/CODEX_WINDMILL_MCP_V1.md` 规定的 Windmill
-Gateway：HTTPS、Bearer 环境变量、关闭 URL token、限定 `f/douyin_research/research_tools`
+Gateway：HTTPS、Bearer 环境变量、关闭 URL token、限定
+`mcp:scripts:f/content_research/research_tools/*`
 folder、最小 token/Folder ACL 与反代 Authorization-header 脱敏。本地 MCP 不创建
 Windmill token、账号、workspace、resource、变量或 App，也不证明多用户 ACL、TLS、
 审计日志或正式数据保留策略。
+
+仓库另有待同步的 Windmill Gateway 只读工具目录
+`f/content_research/research_tools`，包含七项工具：`search_cases`、
+`get_case_detail`、`get_hot_videos`、`get_blackhorse_videos`、`search_accounts`、
+`get_account_videos` 与 `get_metric_history`。它们通过服务器端固定 Resource 读取
+规范化数据；本 stdio 服务的三项工具与该 Gateway 目录不是同一部署单元、认证面或
+验收证据。
+
+Windmill 会为 granular script scope 额外列出一个受同一路径限制的内置
+`runScriptByPath`，因此 Gateway 的协议 surface 是七个业务脚本工具加该内置启动器，
+不是八个任意权限工具。token 的 `read_only` 标志不能开启，因为它会连只读脚本的
+job-run 一并拒绝；数据库只读仍由脚本、事务和 reader role 保证。
+
+特别是，`run_deep_analysis` 尚未加入 Gateway。`manual_l3_preview` 和研究台的
+审核/预算预览只证明零调用准备度，不能被视为模型执行、预算扣减、Gateway 付费工具
+或任何测试服务器部署已完成的证据。

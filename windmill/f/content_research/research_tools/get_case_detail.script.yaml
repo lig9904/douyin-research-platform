@@ -1,0 +1,19 @@
+summary: MCP read - get canonical case detail
+description: |
+  Read one canonical case and completed L3 field counts/version/cost metadata.
+  Raw evidence, comments, transcript, URLs and provider payloads are excluded.
+lock: '!inline f/content_research/research_tools/get_case_detail.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    video_id:
+      type: string
+      default: null
+      format: uuid
+      originalType: string
+  required:
+    - video_id
+timeout: 10

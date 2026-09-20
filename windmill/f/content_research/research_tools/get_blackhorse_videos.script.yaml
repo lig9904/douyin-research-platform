@@ -1,0 +1,28 @@
+summary: MCP read - get blackhorse candidates
+description: |
+  Read videos whose latest versioned priority score meets a bounded threshold.
+  The response includes rule_version and never invokes a provider.
+lock: '!inline f/content_research/research_tools/get_blackhorse_videos.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    limit:
+      type: integer
+      default: 10
+      maximum: 50
+      minimum: 1
+    min_score:
+      type: number
+      default: 60
+      maximum: 100
+      minimum: 0
+    platform:
+      type: string
+      default: ''
+      maxLength: 64
+      originalType: string
+  required: []
+timeout: 10

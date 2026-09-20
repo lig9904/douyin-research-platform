@@ -17,6 +17,7 @@ dependencies = [
 dev = [
   "jsonschema>=4.23,<5",
   "pytest>=8.3,<9",
+  "wmill==1.815.0",
 ]
 
 [tool.setuptools.packages.find]

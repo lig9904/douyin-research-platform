@@ -1,0 +1,30 @@
+summary: MCP read - search canonical cases
+description: >
+  Read-only bounded search over canonical video metadata. No URL, raw payload,
+
+  transcript, comment text, provider call, write or budget reservation is
+  exposed.
+lock: '!inline f/content_research/research_tools/search_cases.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    limit:
+      type: integer
+      default: 10
+      maximum: 50
+      minimum: 1
+    platform:
+      type: string
+      default: ''
+      maxLength: 64
+      originalType: string
+    query:
+      type: string
+      default: ''
+      maxLength: 120
+      originalType: string
+  required: []
+timeout: 10

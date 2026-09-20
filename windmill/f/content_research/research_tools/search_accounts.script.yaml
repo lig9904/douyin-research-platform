@@ -1,0 +1,28 @@
+summary: MCP read - search canonical accounts
+description: |
+  Read bounded canonical account identifiers, normalized metrics and content
+  domain tags. Profiles, biographies, URLs and raw provider data are excluded.
+lock: '!inline f/content_research/research_tools/search_accounts.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    limit:
+      type: integer
+      default: 10
+      maximum: 50
+      minimum: 1
+    platform:
+      type: string
+      default: ''
+      maxLength: 64
+      originalType: string
+    query:
+      type: string
+      default: ''
+      maxLength: 120
+      originalType: string
+  required: []
+timeout: 10
