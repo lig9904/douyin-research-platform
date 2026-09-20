@@ -82,7 +82,7 @@ def main(video_id: str, asset_id: str, review_version: str, resume_job_id: str |
                     (run_date, VOLCENGINE_ASR_PROVIDER, ASR_BUDGET_KEY,
                      cfg["max_daily_requests"], cfg["max_daily_cost_cny"]))
         result = LiveASRService(dsn).run(replace(request, budget_date=run_date))
-        if result.get("status") not in {"submitted", "running", "completed"}:
+        if result.get("error_code") or result.get("status") not in {"submitted", "running", "completed"}:
             raise RuntimeError("ASR requires operator attention")
         return result
     except Exception:

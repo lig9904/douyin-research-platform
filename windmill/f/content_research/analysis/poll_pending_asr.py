@@ -40,7 +40,9 @@ def main() -> dict:
             result = wmill.run_script(path=WORKER_PATH, args={
                 "video_id": str(video_id), "asset_id": asset, "review_version": version,
                 "resume_job_id": str(job_id)}, timeout=310, verbose=False)
-            if result.get("status") == "completed":
+            if result.get("error_code"):
+                failed += 1
+            elif result.get("status") == "completed":
                 completed += 1
             elif result.get("status") in {"submitted", "running"}:
                 pending += 1

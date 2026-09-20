@@ -45,7 +45,7 @@ def test_resume_guard_never_creates_new_budget_or_calls_provider(monkeypatch, sa
         worker.main(str(uuid4()), str(uuid4()), "v1", str(uuid4()))
 
 
-@pytest.mark.parametrize("statuses", [[], ["completed", "running", "submitted"], ["failed", "completed"], ["exception", "completed"]])
+@pytest.mark.parametrize("statuses", [[], ["completed", "running", "submitted"], ["failed", "completed"], ["exception", "completed"], ["poll_failed", "completed"]])
 def test_polling_serializes_saved_job_arguments_and_continues_after_failure(monkeypatch, statuses):
     rows = [(uuid4(), uuid4(), dict(reviewed_asset_id=str(uuid4()), media_review_version="v1")) for _ in statuses]
     monkeypatch.setattr(poller, "_pending", lambda _: rows)
@@ -59,12 +59,12 @@ def test_polling_serializes_saved_job_arguments_and_continues_after_failure(monk
             timeout=310, verbose=False)
         if statuses[index] == "exception":
             raise RuntimeError("private-provider-detail")
-        return {"status": statuses[index]}
+        return {"status": "running", "error_code": "poll_failed"} if statuses[index] == "poll_failed" else {"status": statuses[index]}
     def resource(path):
         assert path == "f/content_research/research_db"
         return dict(host="localhost", user="test", password="secret", dbname="test")
     monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(get_resource=resource, run_script=run_script))
-    if any(s in {"failed", "exception"} for s in statuses):
+    if any(s in {"failed", "exception", "poll_failed"} for s in statuses):
         with pytest.raises(RuntimeError) as caught:
             poller.main()
         assert "private-provider" not in str(caught.value)
