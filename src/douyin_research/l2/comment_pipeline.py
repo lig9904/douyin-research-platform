@@ -148,6 +148,7 @@ class CommentPipeline:
         with psycopg.connect(self.dsn) as lock_conn, lock_conn.cursor() as lock_cur:
             lock_key = _advisory_lock_key(source_id, self.rule_version)
             lock_cur.execute("select pg_advisory_lock(%s)", (lock_key,))
+            run_id: UUID | None = None
             try:
                 source_videos, platform = self._load_and_validate_source(source_id)
                 # Do not silently take the first 20: omitted source videos must
@@ -210,6 +211,21 @@ class CommentPipeline:
                     created=created,
                     videos=video_results,
                 )
+            except Exception:
+                if run_id is not None:
+                    try:
+                        with psycopg.connect(self.dsn) as conn:
+                            conn.execute(
+                                """update pipeline_run set status='failed', finished_at=now(),
+                                   error_summary=%s where id=%s""",
+                                (Jsonb({"error_code": "comment_batch_orchestration_failed"}), run_id),
+                            )
+                    except psycopg.Error:
+                        # A database outage must not hide the safe primary
+                        # failure; checkpoints remain available for recovery.
+                        pass
+                    raise RuntimeError("comment batch orchestration failed; inspect persisted run") from None
+                raise
             finally:
                 lock_cur.execute("select pg_advisory_unlock(%s)", (lock_key,))
 
