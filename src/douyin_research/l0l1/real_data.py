@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Callable
 
 from douyin_research.providers.store import PostgresProviderStore
 from douyin_research.providers.types import ProviderCallMeta
 from douyin_research.providers.tikhub_provider import TikHubDouyinProvider
 from douyin_research.providers.transport import TikHubTransport
 from douyin_research.providers.video_fetch_plan import plan_video_fetches
+from douyin_research.providers.endpoints import EndpointSpec
+from douyin_research.providers.errors import ProviderBudgetError
 
 from .budget import DailyBudgetGuard
 from .ingest import L0L1Store
@@ -120,6 +122,45 @@ def plan_dict(plan: GoldenIntakePlan) -> dict[str, Any]:
     return asdict(plan)
 
 
+def _make_run_limited_before_external_call(
+    *,
+    reserve_daily_ledger: Callable[[EndpointSpec], None],
+    max_external_calls: int,
+) -> Callable[[EndpointSpec], None]:
+    """Combine the per-run call envelope with the unlimited daily ledger.
+
+    ``daily_budget`` is an accounting row shared by every golden run on a
+    date, so its ``max_requests`` must not be used for one run's call cap.
+    The provider invokes this hook only for uncached calls, which makes this
+    small in-process counter the exact limit for the current execution while
+    the delegated hook continues to atomically record daily request/cost use.
+    """
+    if (
+        isinstance(max_external_calls, bool)
+        or not isinstance(max_external_calls, int)
+        or not 1 <= max_external_calls <= GOLDEN_MAX_EXTERNAL_CALLS
+    ):
+        raise ValueError(
+            "max_external_calls must be a non-boolean integer between 1 and "
+            f"{GOLDEN_MAX_EXTERNAL_CALLS}"
+        )
+    reserved_calls = 0
+
+    def reserve(spec: EndpointSpec) -> None:
+        nonlocal reserved_calls
+        if reserved_calls >= max_external_calls:
+            raise ProviderBudgetError(
+                "golden run external-call limit exceeded: "
+                f"{reserved_calls + 1}>{max_external_calls}"
+            )
+        # Do not consume the run allowance if the durable ledger rejects this
+        # call (for example, an explicit operator cost ceiling).
+        reserve_daily_ledger(spec)
+        reserved_calls += 1
+
+    return reserve
+
+
 def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: str) -> dict[str, Any]:
     """Execute the one-page plan with ledger-backed exact external-call gating.
 
@@ -134,12 +175,26 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         raise ValueError("database DSN is required")
     if not api_key:
         raise ValueError("TikHub API key is required")
+    # ``GoldenIntakePlan`` is public and frozen but can still be constructed
+    # directly; re-check the paid-call envelope before changing its ledger.
+    if (
+        isinstance(plan.max_external_calls, bool)
+        or not isinstance(plan.max_external_calls, int)
+        or not 1 <= plan.max_external_calls <= GOLDEN_MAX_EXTERNAL_CALLS
+    ):
+        raise ValueError(
+            "max_external_calls must be a non-boolean integer between 1 and "
+            f"{GOLDEN_MAX_EXTERNAL_CALLS}"
+        )
 
     budget = DailyBudgetGuard(dsn)
     budget.configure(
         provider="tikhub",
         budget_key=GOLDEN_BUDGET_KEY,
-        max_requests=plan.max_external_calls,
+        # This row is the all-day cost/request ledger, not a run-local quota.
+        # Keep it uncapped by default; the bounded hook below enforces the
+        # plan's call envelope without old runs blocking a new batch.
+        max_requests=None,
         max_cost=plan.max_cost_usd,
         cost_currency="USD",
     )
@@ -149,8 +204,11 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         transport=transport,
         store=provider_store,
         auth_scope="golden-local-v1",
-        before_external_call=budget.make_before_external_call(
-            provider="tikhub", budget_key=GOLDEN_BUDGET_KEY
+        before_external_call=_make_run_limited_before_external_call(
+            reserve_daily_ledger=budget.make_before_external_call(
+                provider="tikhub", budget_key=GOLDEN_BUDGET_KEY
+            ),
+            max_external_calls=plan.max_external_calls,
         ),
         detail_strategy=plan.detail_strategy,
     )
