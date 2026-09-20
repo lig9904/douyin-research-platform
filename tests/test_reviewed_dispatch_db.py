@@ -15,6 +15,17 @@ DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="isolated TEST_DATABASE_URL required")
 
 
+def test_parent_slot_is_nonblocking_and_released_after_failure():
+    with pytest.raises(RuntimeError, match="synthetic failure"):
+        with dispatch.scheduler_slot(DSN) as first:
+            assert first
+            with dispatch.scheduler_slot(DSN) as second:
+                assert not second
+            raise RuntimeError("synthetic failure")
+    with dispatch.scheduler_slot(DSN) as recovered:
+        assert recovered
+
+
 @pytest.fixture
 def reviewed_asset():
     video = uuid4()

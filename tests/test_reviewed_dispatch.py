@@ -1,4 +1,4 @@
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import sys
 from types import SimpleNamespace
@@ -135,6 +135,7 @@ def test_invalid_origin_fails_before_selection(harness, origin):
 
 
 def test_scheduled_asr_uses_fixed_resources_and_quiet_child(monkeypatch):
+    monkeypatch.setattr(dispatch, "scheduler_slot", lambda dsn: nullcontext(True))
     calls = []
     def resource(path):
         assert path == "f/content_research/research_db"
@@ -166,6 +167,27 @@ def test_scheduled_configuration_errors_do_not_expose_secrets(monkeypatch):
         dispatch.run_scheduled("asr")
     assert "private-password" not in str(error.value)
     assert error.value.__suppress_context__
+
+
+def test_scheduled_l3_wait_exceeds_child_timeout(monkeypatch):
+    monkeypatch.setattr(dispatch, "scheduler_slot", lambda dsn: nullcontext(True))
+    calls = []
+    cfg = dict(ark=dict(api_key="synthetic", endpoint_id="ep-test", model_revision="r1",
+        expected_response_model="ep-test", pricing_version="test",
+        input_cost_per_million_tokens=1, output_cost_per_million_tokens=2),
+        prompt_version="p1", max_daily_requests=None, max_daily_cost_cny=None)
+    monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
+        get_resource=lambda path: dict(host="localhost", user="test", password="synthetic", dbname="test"),
+        get_variable=lambda path: json.dumps(cfg), run_script=lambda **kwargs: calls.append(kwargs)))
+    def select(dsn, **kwargs):
+        assert kwargs["stage"] == "l3"
+        assert kwargs["prompt_version"] == "p1"
+        kwargs["execute_worker"](dispatch.WORKERS["l3"], {"approval_id": "synthetic"})
+        return dict(dispatched=1, failed=0, attention=0, blocked=0)
+    monkeypatch.setattr(dispatch, "dispatch_reviewed", select)
+    dispatch.run_scheduled("l3")
+    assert calls[0]["timeout"] == 370
+    assert calls[0]["verbose"] is False
 
 
 @pytest.mark.parametrize("stale", [False, True])

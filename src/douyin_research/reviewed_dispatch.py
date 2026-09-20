@@ -24,6 +24,23 @@ WORKERS = {"asr": "f/content_research/analysis/run_reviewed_asr",
            "l3": "f/content_research/analysis/run_reviewed_l3"}
 
 
+@contextmanager
+def scheduler_slot(dsn):
+    """Keep one worker free for children across all analysis parent scripts.
+
+    Contenders exit immediately, never wait while occupying another worker.
+    This session lock is distinct from provider execution/accounting locks and
+    is released by PostgreSQL on connection loss or process termination.
+    """
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        acquired = conn.execute("select pg_try_advisory_lock(%s)", (724901830215,)).fetchone()[0]
+        try:
+            yield acquired
+        finally:
+            if acquired:
+                conn.execute("select pg_advisory_unlock(%s)", (724901830215,))
+
+
 def run_scheduled(stage):
     """Internal runtime for two fixed, no-argument Windmill entrypoints.
 
@@ -49,9 +66,12 @@ def run_scheduled(stage):
                 raise ValueError("invalid fixed configuration")
             configuration = dict(ark=LiveArkConfiguration(**cfg["ark"]),
                                  prompt_version=cfg["prompt_version"])
-        counts = dispatch_reviewed(dsn, stage=stage, **configuration,
-            execute_worker=lambda path, args: wmill.run_script(
-                path=path, args=args, timeout=310, verbose=False))
+        with scheduler_slot(dsn) as acquired:
+            if not acquired:
+                return {"status": "deferred", "reason": "analysis_scheduler_busy"}
+            counts = dispatch_reviewed(dsn, stage=stage, **configuration,
+                execute_worker=lambda path, args: wmill.run_script(
+                    path=path, args=args, timeout=370 if stage == "l3" else 310, verbose=False))
     except Exception:
         raise RuntimeError(f"{stage.upper()} reviewed dispatch unavailable; inspect fixed configuration and database") from None
     if counts["failed"] or counts["attention"] or counts["blocked"]:
