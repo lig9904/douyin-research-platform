@@ -29,7 +29,7 @@ class DailyBudgetGuard:
                 provider=provider,
                 budget_key=budget_key,
                 requests=1,
-                estimated_cost=float(spec.unit_cost_usd or 0.0),
+                estimated_cost=spec.unit_cost_usd if spec.paid else 0.0,
             )
 
         return reserve
@@ -72,11 +72,11 @@ class DailyBudgetGuard:
             conn.commit()
 
     def acquire(self, *, provider: str, budget_key: str, requests: int = 1,
-                estimated_cost: float = 0.0, budget_date: date | None = None) -> None:
+                estimated_cost: float | None = 0.0, budget_date: date | None = None) -> None:
         if isinstance(requests, bool) or not isinstance(requests, int) or requests < 0:
             raise ValueError("budget requests must be a non-negative integer")
-        estimated_cost = float(estimated_cost)
-        if not math.isfinite(estimated_cost) or estimated_cost < 0:
+        estimated_cost = float(estimated_cost) if estimated_cost is not None else None
+        if estimated_cost is not None and (not math.isfinite(estimated_cost) or estimated_cost < 0):
             raise ValueError("budget cost must be finite and non-negative")
         budget_date = budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
@@ -96,7 +96,9 @@ class DailyBudgetGuard:
                 )
             max_cost, max_requests, spent_cost, used_requests = row
             next_requests = used_requests + requests
-            next_cost = float(spent_cost) + float(estimated_cost)
+            if max_cost is not None and estimated_cost is None:
+                raise ProviderBudgetError("unknown price cannot satisfy a configured cost ceiling")
+            next_cost = float(spent_cost) + (estimated_cost if estimated_cost is not None else 0.0)
             if max_requests is not None and next_requests > max_requests:
                 raise ProviderBudgetError(f"request budget exceeded: {next_requests}>{max_requests}")
             if max_cost is not None and next_cost > float(max_cost):
@@ -106,19 +108,21 @@ class DailyBudgetGuard:
             cur.execute(
                 """
                 update daily_budget
-                set used_requests=%s, spent_cost=%s, updated_at=now()
+                set used_requests=%s, spent_cost=%s,
+                    unknown_price_requests=unknown_price_requests+%s, updated_at=now()
                 where budget_date=%s and provider=%s and budget_key=%s
                 """,
-                (next_requests, next_cost, budget_date, provider, budget_key),
+                (next_requests, next_cost, requests if estimated_cost is None else 0,
+                 budget_date, provider, budget_key),
             )
             conn.commit()
 
     def refund(self, *, provider: str, budget_key: str, requests: int = 1,
-               estimated_cost: float = 0.0, budget_date: date | None = None) -> None:
+               estimated_cost: float | None = 0.0, budget_date: date | None = None) -> None:
         if isinstance(requests, bool) or not isinstance(requests, int) or requests < 0:
             raise ValueError("budget requests must be a non-negative integer")
-        estimated_cost = float(estimated_cost)
-        if not math.isfinite(estimated_cost) or estimated_cost < 0:
+        estimated_cost = float(estimated_cost) if estimated_cost is not None else None
+        if estimated_cost is not None and (not math.isfinite(estimated_cost) or estimated_cost < 0):
             raise ValueError("budget cost must be finite and non-negative")
         budget_date = budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
@@ -127,9 +131,11 @@ class DailyBudgetGuard:
                 update daily_budget
                 set used_requests=greatest(0, used_requests-%s),
                     spent_cost=greatest(0, spent_cost-%s),
+                    unknown_price_requests=greatest(0, unknown_price_requests-%s),
                     updated_at=now()
                 where budget_date=%s and provider=%s and budget_key=%s
                 """,
-                (requests, estimated_cost, budget_date, provider, budget_key),
+                (requests, estimated_cost if estimated_cost is not None else 0.0,
+                 requests if estimated_cost is None else 0, budget_date, provider, budget_key),
             )
             conn.commit()

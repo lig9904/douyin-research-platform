@@ -75,15 +75,49 @@ def main(
             """,
             (days, platform, platform),
         )[0]
+        # `actual_cost` is not, by itself, proof of a supplier settlement.  Old
+        # TikHub rows used it for the published unit price, so treat that value
+        # as an estimate unless the row explicitly says it was supplier-billed.
         api_costs = _rows(
             cur,
             f"""
-            select cost_currency as currency, coalesce(sum(actual_cost), 0)::numeric as actual_cost
-            from external_api_call
-            where started_at >= now() - (%s || ' days')::interval
-              and {scope}
-            group by cost_currency
-            order by cost_currency
+            with calls as (
+              select
+                coalesce(cost_currency, 'UNKNOWN') as currency,
+                estimated_cost,
+                actual_cost,
+                coalesce(metadata->>'cost_basis', '') as cost_basis,
+                coalesce(metadata->>'billing_status', '') as billing_status
+              from external_api_call
+              where started_at >= now() - (%s || ' days')::interval
+                and {scope}
+            )
+            select
+              currency,
+              coalesce(sum(case
+                when cost_basis in ('estimated_unit_price', 'verified_unit_price')
+                  and coalesce(estimated_cost, actual_cost) is not null
+                  then coalesce(estimated_cost, actual_cost)
+                else 0
+              end), 0)::numeric as estimated_cost,
+              coalesce(sum(case
+                when cost_basis = 'supplier_bill' and actual_cost is not null then actual_cost
+                else 0
+              end), 0)::numeric as reconciled_cost,
+              count(*) filter (where cost_basis in (
+                'cache_zero', 'free_endpoint', 'nonbillable_http'
+              ))::int as known_zero_calls,
+              count(*) filter (where billing_status = 'unknown'
+                or cost_basis not in (
+                  'estimated_unit_price', 'verified_unit_price', 'supplier_bill',
+                  'cache_zero', 'free_endpoint', 'nonbillable_http'
+                ) or (cost_basis = 'supplier_bill' and actual_cost is null)
+                or (cost_basis in ('estimated_unit_price', 'verified_unit_price')
+                    and estimated_cost is null and actual_cost is null)
+              )::int as unknown_cost_calls
+            from calls
+            group by currency
+            order by currency
             """,
             (days, platform, platform),
         )
@@ -106,7 +140,38 @@ def main(
               coalesce(metadata->>'cost_basis', 'unpriced') as cost_basis,
               metadata->>'price_source' as price_source,
               metadata->>'pricing_version' as pricing_version,
-              coalesce((metadata->>'retry_count')::int, 0) as retry_count
+              case
+                when metadata->>'http_attempt_count' ~ '^[0-9]+$'
+                  then (metadata->>'http_attempt_count')::int
+                else null
+              end as http_attempt_count,
+              case
+                when metadata->>'unknown_attempt_count' ~ '^[0-9]+$'
+                  then (metadata->>'unknown_attempt_count')::int
+                else null
+              end as unknown_attempt_count,
+              case
+                when coalesce(metadata->>'cost_basis', '') = 'supplier_bill'
+                  and actual_cost is not null then 'reconciled'
+                when coalesce(metadata->>'cost_basis', '') in (
+                  'estimated_unit_price', 'verified_unit_price'
+                ) and coalesce(estimated_cost, actual_cost) is not null then 'estimated'
+                when coalesce(metadata->>'cost_basis', '') in (
+                  'cache_zero', 'free_endpoint', 'nonbillable_http'
+                ) then 'known_zero'
+                else 'unknown'
+              end as cost_status,
+              case
+                when coalesce(metadata->>'cost_basis', '') in ('estimated_unit_price', 'verified_unit_price')
+                  and estimated_cost is null and actual_cost is null then 'unknown'
+                when metadata->>'billing_status' in ('estimated', 'unknown', 'known_zero')
+                  then metadata->>'billing_status'
+                when coalesce(metadata->>'cost_basis', '') in ('estimated_unit_price', 'verified_unit_price')
+                  then 'estimated'
+                when coalesce(metadata->>'cost_basis', '') in ('cache_zero', 'free_endpoint', 'nonbillable_http')
+                  then 'known_zero'
+                else 'unknown'
+              end as billing_status
             from external_api_call
             where started_at >= now() - (%s || ' days')::interval
               and {scope}

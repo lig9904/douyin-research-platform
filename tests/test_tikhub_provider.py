@@ -71,21 +71,23 @@ def test_persistent_cache_avoids_second_external_call() -> None:
     assert len(store.calls) == 2
     assert store.calls[1].cached is True
     assert store.calls[1].actual_cost == 0.0
-    assert store.calls[0].actual_cost == pytest.approx(0.001)
-    assert store.calls[0].metadata["cost_basis"] == "verified_unit_price"
-    assert store.calls[0].metadata["pricing_version"] == "verified-2026-09-20"
+    assert store.calls[0].actual_cost is None
+    assert store.calls[0].estimated_cost == pytest.approx(0.001)
+    assert store.calls[0].metadata["cost_basis"] == "estimated_unit_price"
+    assert store.calls[0].metadata["pricing_version"] == "public-tariff-2026-09-20"
     assert store.calls[1].metadata["cost_basis"] == "cache_zero"
 
 
-def test_batch_detail_fee_matches_provider_bill_and_cache_is_free():
+def test_batch_detail_quote_is_not_reconciled_spend_and_cache_is_free():
     store = MemoryProviderStore()
     transport = FakeTransport()
     provider = TikHubProvider(transport=transport, store=store)
     provider.fetch_videos(["v1", "v2", "v3"])
     provider.fetch_videos(["v1", "v2", "v3"])
     assert len(transport.calls) == 1
-    assert store.calls[0].actual_cost == pytest.approx(0.05)
-    assert store.calls[0].metadata["price_source"] == "tikhub.usage_log"
+    assert store.calls[0].actual_cost is None
+    assert store.calls[0].estimated_cost == pytest.approx(0.05)
+    assert store.calls[0].metadata["price_source"] == "tikhub.get_all_endpoints_info"
     assert store.calls[1].actual_cost == 0
 
 

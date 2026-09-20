@@ -54,6 +54,36 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
               actual_cost, cost_currency, metadata
             ) values ('private-provider', 'douyin', 'ops-fixture', 'private-request', 'failed', false,
               0.5, 'USD', '{"raw":"never return"}'::jsonb)""")
+            cur.execute("""insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status, cached,
+              estimated_cost, actual_cost, cost_currency, metadata
+            ) values ('tikhub', 'douyin', 'ops-estimated', 'estimated-request', 'success', false,
+              0.001, null, 'USD', '{"cost_basis":"estimated_unit_price","price_source":"official-tariff","pricing_version":"2026-09-20","http_attempt_count":1,"billing_status":"estimated"}'::jsonb)""")
+            cur.execute("""insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status, cached,
+              estimated_cost, actual_cost, cost_currency, metadata
+            ) values ('tikhub', 'douyin', 'ops-estimated-unknown', 'unknown-attempt-request', 'success', false,
+              0.001, null, 'USD', '{"cost_basis":"estimated_unit_price","http_attempt_count":3,"unknown_attempt_count":1,"billing_status":"unknown"}'::jsonb)""")
+            cur.execute("""insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status, cached,
+              estimated_cost, actual_cost, cost_currency, metadata
+            ) values ('tikhub', 'douyin', 'ops-unpriced-estimate', 'missing-price-request', 'success', false,
+              null, null, 'USD', '{"cost_basis":"estimated_unit_price","billing_status":"estimated"}'::jsonb)""")
+            cur.execute("""insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status, cached,
+              estimated_cost, actual_cost, cost_currency, metadata
+            ) values ('tikhub', 'douyin', 'ops-legacy-quote', 'legacy-request', 'success', false,
+              null, 0.001, 'USD', '{"cost_basis":"verified_unit_price"}'::jsonb)""")
+            cur.execute("""insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status, cached,
+              actual_cost, cost_currency, metadata
+            ) values ('tikhub', 'douyin', 'ops-billed', 'billed-request', 'success', false,
+              0.002, 'USD', '{"cost_basis":"supplier_bill"}'::jsonb)""")
+            cur.execute("""insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status, cached,
+              actual_cost, cost_currency, metadata
+            ) values ('tikhub', 'douyin', 'ops-free', 'free-request', 'success', true,
+              0, 'USD', '{"cost_basis":"cache_zero","billing_status":"known_zero"}'::jsonb)""")
             conn.commit()
 
         result = _backend().main(_resource(), platform="douyin", days=999, page=1, page_size=1)
@@ -65,7 +95,30 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
         assert call["actual_cost"] == pytest.approx(0.5)
         assert call["cost_currency"] == "USD"
         assert call["cost_basis"] == "unpriced"
+        assert call["cost_status"] == "unknown"
+        assert call["billing_status"] == "unknown"
+        assert call["http_attempt_count"] is None
         assert "request_fingerprint" not in call and "metadata" not in call
+        estimated = next(row for row in result["api_calls"] if row["endpoint_key"] == "ops-estimated")
+        assert estimated["cost_status"] == "estimated"
+        assert estimated["billing_status"] == "estimated"
+        assert estimated["http_attempt_count"] == 1
+        uncertain = next(row for row in result["api_calls"] if row["endpoint_key"] == "ops-estimated-unknown")
+        assert uncertain["cost_status"] == "estimated"
+        assert uncertain["billing_status"] == "unknown"
+        assert uncertain["unknown_attempt_count"] == 1
+        missing_price = next(row for row in result["api_calls"] if row["endpoint_key"] == "ops-unpriced-estimate")
+        assert missing_price["cost_status"] == "unknown"
+        assert missing_price["billing_status"] == "unknown"
+        billed = next(row for row in result["api_calls"] if row["endpoint_key"] == "ops-billed")
+        assert billed["cost_status"] == "reconciled"
+        free = next(row for row in result["api_calls"] if row["endpoint_key"] == "ops-free")
+        assert free["cost_status"] == "known_zero"
+        usd = next(row for row in result["api_costs"] if row["currency"] == "USD")
+        assert float(usd["estimated_cost"]) >= 0.003
+        assert float(usd["reconciled_cost"]) >= 0.002
+        assert usd["known_zero_calls"] >= 1
+        assert usd["unknown_cost_calls"] >= 3
         assert any(row["known_total"] == pytest.approx(6) for row in result["task_costs"])
         task = next(row for row in result["tasks"] if row["task_type"] == "ops-task")
         assert task["total_cost"] == pytest.approx(6)
@@ -73,7 +126,7 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
         assert "request_fingerprint" in result["excluded_fields"]
     finally:
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
-            cur.execute("delete from external_api_call where endpoint_key='ops-fixture'")
+            cur.execute("delete from external_api_call where endpoint_key like 'ops-%'")
             cur.execute("delete from source_video where id=%s", (video_id,))
             cur.execute("delete from pipeline_run where id=%s", (run_id,))
             conn.commit()

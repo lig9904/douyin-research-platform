@@ -30,8 +30,9 @@ def parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--live", action="store_true", help="execute only with explicit environment gate")
     p.add_argument("--max-items", type=int, default=5)
-    p.add_argument("--max-external-calls", type=int, default=2)
-    p.add_argument("--max-cost-usd", type=float, default=0.01)
+    p.add_argument("--max-external-calls", type=int, default=None)
+    p.add_argument("--max-cost-usd", type=float, default=None)
+    p.add_argument("--detail-strategy", choices=("batch50", "cost_aware"), default="batch50")
     p.add_argument("--date-window-hours", type=int, default=24)
     p.add_argument("--no-enrich-details", action="store_true")
     p.add_argument("--triggered-by", default="local-golden-operator")
@@ -53,6 +54,7 @@ def main(argv: list[str] | None = None) -> int:
         date_window_hours=args.date_window_hours,
         enrich_details=not args.no_enrich_details,
         force_refresh=args.force_refresh,
+        detail_strategy=args.detail_strategy,
     )
     if not args.live:
         print(json.dumps({"mode": "dry_run", "plan": plan_dict(plan)}, ensure_ascii=False))

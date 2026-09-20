@@ -101,9 +101,12 @@ def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
             return SimpleNamespace(run_id="run-1", platform="douyin", source_count=1,
                                    observations=3, unique_platform_videos=3, scores={})
 
-    calls = [SimpleNamespace(actual_cost=0.001, cached=False),
-             SimpleNamespace(actual_cost=0.050, cached=False),
-             SimpleNamespace(actual_cost=0, cached=True)]
+    calls = [SimpleNamespace(estimated_cost=0.001, actual_cost=None, cached=False,
+                             metadata={"billing_status": "estimated", "http_attempt_count": 1}),
+             SimpleNamespace(estimated_cost=0.050, actual_cost=None, cached=False,
+                             metadata={"billing_status": "estimated", "http_attempt_count": 1}),
+             SimpleNamespace(estimated_cost=0, actual_cost=0, cached=True,
+                             metadata={"billing_status": "known_zero", "http_attempt_count": 0})]
     monkeypatch.setattr(real_data, "DailyBudgetGuard", lambda _: Budget())
     monkeypatch.setattr(real_data, "TikHubTransport", lambda *a, **kw: SimpleNamespace(close=lambda: None))
     monkeypatch.setattr(real_data, "_RecordingPostgresProviderStore", lambda _: SimpleNamespace(recorded_calls=calls))
@@ -116,6 +119,9 @@ def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
     assert result["uncached_call_count"] == 2
     assert completions[0][1]["api_cost"] == pytest.approx(0.051)
     assert completions[0][1]["cost_currency"] == "USD"
+    assert completions[0][1]["summary"]["api_cost_basis"] == "estimated"
+    assert result["cost_summary"]["reconciled_api_cost_usd"] is None
+    assert result["cost_summary"]["observed_http_attempts"] == 2
 
 
 def test_provider_budget_mode_does_not_double_reserve_runner_calls() -> None:
