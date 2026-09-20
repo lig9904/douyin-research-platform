@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -228,3 +231,34 @@ def test_home_backend_all_platforms_works() -> None:
 
     assert result["selected_platform"] == "all"
     assert result["kpis"]["blackhorse_candidates"] == 1
+
+
+def test_home_returns_supplier_account_total_independent_of_selected_platform() -> None:
+    assert DSN
+    scope = f"home-daily-{uuid4()}"
+    billing_date = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Los_Angeles")).date()
+    try:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into supplier_daily_spend(
+                  provider, account_scope, billing_date, cost_currency, billing_timezone,
+                  total_cost, balance_cost, free_credit_cost, total_requests, paid_requests, fetched_at
+                ) values ('tikhub', %s, %s, 'USD', 'America/Los_Angeles',
+                  0.052, 0.052, 0, 3, 2, now())
+                """,
+                (scope, billing_date),
+            )
+            conn.commit()
+        result = load_backend().main(resource_from_dsn(DSN), platform="kuaishou", hours=24)
+        spend = result["supplier_daily_spend"]
+        row = next(item for item in spend["today"] if item["account_scope"] == scope)
+        assert spend["status"] == "available"
+        assert row["billing_date"] == billing_date.isoformat()
+        assert row["billing_timezone"] == "America/Los_Angeles"
+        assert row["period_status"] == "current_accumulating"
+        assert row["total_cost"] == pytest.approx(0.052)
+    finally:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute("delete from supplier_daily_spend where account_scope=%s", (scope,))
+            conn.commit()

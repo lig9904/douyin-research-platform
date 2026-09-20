@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, TypedDict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg
 from psycopg.rows import dict_row
@@ -28,6 +29,8 @@ def _json(value: Any) -> Any:
         return float(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, dict):
         return {k: _json(v) for k, v in value.items()}
     if isinstance(value, list):
@@ -44,6 +47,59 @@ def _fetch_all(conn, sql: str, args=()) -> list[dict[str, Any]]:
 def _fetch_one(conn, sql: str, args=()) -> dict[str, Any]:
     rows = _fetch_all(conn, sql, args)
     return rows[0] if rows else {}
+
+
+def _daily_supplier_spend(conn, days: int = 7) -> dict[str, Any]:
+    """Read supplier-account daily totals; never blend them with platform data."""
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("select to_regclass('public.supplier_daily_spend') as table_name")
+        if cur.fetchone()["table_name"] is None:
+            return {
+                "status": "not_synced",
+                "records": [],
+                "today": [],
+                "message": "供应商日费用尚未同步。",
+            }
+        cur.execute(
+            """
+            select provider, account_scope, billing_date, cost_currency, billing_timezone,
+                   total_cost, balance_cost, free_credit_cost, total_requests,
+                   paid_requests, fetched_at
+            from supplier_daily_spend
+            where billing_date >= current_date - %s
+            order by billing_date desc, provider, account_scope, cost_currency
+            """,
+            (max(days, 7),),
+        )
+        rows = [_json(dict(row)) for row in cur.fetchall()]
+
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        timezone_name = row.get("billing_timezone") or "UTC"
+        try:
+            supplier_today = now.astimezone(ZoneInfo(timezone_name)).date().isoformat()
+        except ZoneInfoNotFoundError:
+            supplier_today = None
+        try:
+            fetched = datetime.fromisoformat(str(row.get("fetched_at")).replace("Z", "+00:00"))
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            stale = now - fetched.astimezone(timezone.utc) > timedelta(hours=2)
+        except (TypeError, ValueError):
+            stale = True
+        row["supplier_current_date"] = supplier_today
+        row["period_status"] = (
+            "current_accumulating" if supplier_today and row["billing_date"] == supplier_today
+            else "prior_snapshot"
+        )
+        row["freshness_status"] = "stale" if stale else "fresh"
+    today = [row for row in rows if row["period_status"] == "current_accumulating"]
+    return {
+        "status": "available" if rows else "not_synced",
+        "records": rows,
+        "today": today,
+        "message": None if rows else "尚未同步到供应商日费用记录。",
+    }
 
 
 def main(db: postgresql, platform: str = "douyin", hours: int = 24):
@@ -363,6 +419,10 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
             (selected, selected2),
         )
 
+        # This is an account-level supplier bill, not a per-platform cost.  It
+        # intentionally ignores the dashboard's selected platform.
+        supplier_daily_spend = _daily_supplier_spend(conn, days=7)
+
     cases = []
     for item in blackhorse[:3]:
         score = float(item.get("priority") or 0)
@@ -386,6 +446,7 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
         "platforms": platforms,
         "kpis": kpis,
         "api_costs": api_costs,
+        "supplier_daily_spend": supplier_daily_spend,
         "blackhorse": blackhorse[:5],
         "trend": trend,
         "keywords": keywords,

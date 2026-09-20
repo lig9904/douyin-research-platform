@@ -1,0 +1,22 @@
+summary: Sync TikHub daily supplier spend
+description: |
+  Free, zero-retry hourly-capable synchronization of TikHub's supplier-reported
+  daily aggregate. It records only daily totals and request counts; it does not
+  retain a provider payload or allocate costs to individual research calls.
+  The repository dependency is pinned to the reviewed daily-spend implementation.
+concurrency_time_window_s: 0
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    account_scope:
+      type: string
+      default: default
+      description: Non-secret label for an independently billed TikHub account.
+    db:
+      type: object
+      default: null
+      format: resource-postgresql
+  required:
+    - db
+timeout: 45

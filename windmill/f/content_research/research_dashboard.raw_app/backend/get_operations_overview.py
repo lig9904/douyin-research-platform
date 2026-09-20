@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, TypedDict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg
 from psycopg.rows import dict_row
@@ -24,6 +25,8 @@ def _json(value: Any) -> Any:
         return float(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, dict):
         return {key: _json(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -34,6 +37,64 @@ def _json(value: Any) -> Any:
 def _rows(cur, sql: str, args: tuple[Any, ...]) -> list[dict[str, Any]]:
     cur.execute(sql, args)
     return [_json(dict(row)) for row in cur.fetchall()]
+
+
+def _daily_supplier_spend(cur, days: int) -> dict[str, Any]:
+    """Return account-level supplier bills without attaching them to a platform.
+
+    ``billing_date`` belongs to the supplier's stated timezone.  In particular,
+    it must not be compared with the dashboard server's date (or Beijing's date)
+    for US-billed providers such as TikHub.
+    """
+    cur.execute("select to_regclass('public.supplier_daily_spend') as table_name")
+    if cur.fetchone()["table_name"] is None:
+        return {
+            "status": "not_synced",
+            "records": [],
+            "today": [],
+            "message": "供应商日费用尚未同步。",
+        }
+
+    rows = _rows(
+        cur,
+        """
+        select provider, account_scope, billing_date, cost_currency, billing_timezone,
+               total_cost, balance_cost, free_credit_cost, total_requests,
+               paid_requests, fetched_at
+        from supplier_daily_spend
+        where billing_date >= current_date - %s
+        order by billing_date desc, provider, account_scope, cost_currency
+        """,
+        (max(days, 7),),
+    )
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        timezone_name = row.get("billing_timezone") or "UTC"
+        try:
+            supplier_today = now.astimezone(ZoneInfo(timezone_name)).date().isoformat()
+        except ZoneInfoNotFoundError:
+            supplier_today = None
+        fetched_at = row.get("fetched_at")
+        try:
+            fetched = datetime.fromisoformat(str(fetched_at).replace("Z", "+00:00"))
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            stale = now - fetched.astimezone(timezone.utc) > timedelta(hours=2)
+        except (TypeError, ValueError):
+            stale = True
+        row["supplier_current_date"] = supplier_today
+        row["period_status"] = (
+            "current_accumulating" if supplier_today and row["billing_date"] == supplier_today
+            else "prior_snapshot"
+        )
+        row["freshness_status"] = "stale" if stale else "fresh"
+    current = [row for row in rows if row["period_status"] == "current_accumulating"]
+    return {
+        "status": "available" if rows else "not_synced",
+        "records": rows,
+        "today": current,
+        "message": None if rows else "尚未同步到供应商日费用记录。",
+    }
 
 
 def main(
@@ -272,6 +333,9 @@ def main(
             """,
             (days, platform, platform),
         )
+        # Supplier bills are account-level facts.  Deliberately do not apply the
+        # platform selector used by the local call ledger above.
+        supplier_daily_spend = _daily_supplier_spend(cur, days)
     return {
         "platform": platform,
         "days": days,
@@ -280,6 +344,7 @@ def main(
         "task_total": task_total,
         "api_summary": api_summary,
         "api_costs": api_costs,
+        "supplier_daily_spend": supplier_daily_spend,
         "api_calls": api_calls,
         "run_summary": run_summary,
         "task_costs": task_costs,

@@ -8,11 +8,23 @@ type Operations = {
   days: number; page: number; page_size: number; task_total: number; readonly: boolean
   api_summary: { total_calls?: number; successful_calls?: number; failed_calls?: number; cache_hits?: number }
   api_costs: { currency: string; estimated_cost: number; reconciled_cost: number; known_zero_calls: number; unknown_cost_calls: number }[]
+  supplier_daily_spend: {
+    status: 'available' | 'not_synced'; message?: string | null
+    today: SupplierDailySpend[]; records: SupplierDailySpend[]
+  }
   api_calls: { id: string; provider: string; platform: string; endpoint_key: string; status: string; http_status?: number | null; cached: boolean; estimated_cost?: number | null; actual_cost?: number | null; cost_currency: string; cost_basis: string; price_source?: string | null; pricing_version?: string | null; http_attempt_count?: number | null; unknown_attempt_count?: number | null; cost_status: 'estimated' | 'reconciled' | 'known_zero' | 'unknown'; billing_status: 'estimated' | 'unknown' | 'known_zero'; started_at: string }[]
   run_summary: { total_runs?: number; running_runs?: number; failed_runs?: number }
   task_costs: { currency: string; basis: string; task_count: number; completed_count: number; failed_count: number; known_total: number }[]
   tasks: { id: string; task_type: string; task_version: string; status: string; cost_basis: string; total_cost?: number | null; cost_currency: string; created_at: string; platform?: string | null }[]
   runs: { id: string; run_type: string; run_version?: string | null; status: string; platform?: string | null; started_at: string; api_cost?: number | null; asr_cost?: number | null; llm_cost?: number | null; cost_currency?: string | null }[]
+}
+
+type SupplierDailySpend = {
+  provider: string; account_scope: string; billing_date: string
+  cost_currency: string; billing_timezone: string; total_cost?: number | null
+  total_requests?: number | null; paid_requests?: number | null; fetched_at?: string | null
+  period_status: 'current_accumulating' | 'prior_snapshot'
+  freshness_status: 'fresh' | 'stale'
 }
 
 type GoldenIntakeResult = {
@@ -35,6 +47,16 @@ function attemptText(row: Operations['api_calls'][number]) {
   if (row.http_attempt_count !== null && row.http_attempt_count !== undefined) return `${row.http_attempt_count} 次`
   if (row.unknown_attempt_count !== null && row.unknown_attempt_count !== undefined) return `未知（${row.unknown_attempt_count} 条待核验）`
   return '未知'
+}
+
+function supplierAmount(row: SupplierDailySpend) {
+  return row.total_cost === null || row.total_cost === undefined
+    ? '金额待供应商核验'
+    : `${value(row.total_cost)} ${row.cost_currency}`
+}
+
+function supplierPeriod(row: SupplierDailySpend) {
+  return row.period_status === 'current_accumulating' ? '当前账期累计' : '历史末次累计（未终账）'
 }
 
 export default function OperationsOverview({ platforms }: { platforms: Platform[] }) {
@@ -108,7 +130,25 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
         <div className="card"><span>业务运行</span><strong>{value(data?.run_summary.total_runs)}</strong><small>运行中 {value(data?.run_summary.running_runs)} · 失败 {value(data?.run_summary.failed_runs)}</small></div>
         <div className="card"><span>已记账任务</span><strong>{value(data?.task_total)}</strong><small>任务列表按创建时间分页</small></div>
       </div>
-      <section className="card operations-section"><h2>成本口径（按币种分别统计，不跨币种相加）</h2>
+      <section className="card operations-section"><h2>供应商每日实际费用</h2>
+        <p className="operations-supplier-note">账户总费用，不按页面的平台筛选；按供应商账期和币种分别展示，不跨币种相加。当前账期是累计值，最终以供应商结算页为准。</p>
+        {data?.supplier_daily_spend.status !== 'available' ? (
+          <Alert type="warning" showIcon message="供应商日费用未同步" description={data?.supplier_daily_spend.message || '暂无可显示的实际费用；不会用 0 替代。'} />
+        ) : <>
+          {data.supplier_daily_spend.today.some((row) => row.freshness_status === 'stale') && <Alert type="warning" showIcon message="供应商当日费用可能过期" description="最近同步时间超过 2 小时，请检查供应商费用同步任务。" />}
+          <Table size="small" rowKey={(row) => `${row.provider}-${row.account_scope}-${row.billing_date}-${row.cost_currency}`} pagination={false} dataSource={data.supplier_daily_spend.records} columns={[
+            { title: '账期日期', dataIndex: 'billing_date' },
+            { title: '供应商 / 账户', render: (_, row) => `${row.provider} · ${row.account_scope}` },
+            { title: '实际费用', render: (_, row) => supplierAmount(row) },
+            { title: '调用次数', render: (_, row) => row.total_requests === null || row.total_requests === undefined ? '次数待供应商核验' : `${value(row.total_requests)}（付费 ${row.paid_requests === null || row.paid_requests === undefined ? '待核验' : value(row.paid_requests)}）` },
+            { title: '账期状态', render: (_, row) => <Tag color={row.period_status === 'current_accumulating' ? 'blue' : 'default'}>{supplierPeriod(row)}</Tag> },
+            { title: '供应商时区', dataIndex: 'billing_timezone' },
+            { title: '最后同步', render: (_, row) => <span>{time(row.fetched_at)}{row.period_status === 'prior_snapshot' ? <Tag>采集快照</Tag> : row.freshness_status === 'stale' ? <Tag color="warning">可能过期</Tag> : <Tag color="green">已同步</Tag>}</span> },
+          ]} />
+        </>}
+      </section>
+      <section className="card operations-section"><h2>本地调用诊断与报价估算</h2>
+        <p className="operations-supplier-note">仅用于定位请求和预估，不代表供应商实际扣费；实际费用以上方供应商每日费用为准。</p>
         <div className="operations-cost-grid">
           <div><h3>API 费用事实</h3>{data?.api_costs.length ? data.api_costs.map((cost) => <p key={cost.currency}>{cost.currency} · 报价估算 <b>{value(cost.estimated_cost)}</b> · 已对账 <b>{value(cost.reconciled_cost)}</b><br /><small>来源未核验 {cost.unknown_cost_calls} 条 · 已知免费/缓存 {cost.known_zero_calls} 条</small></p>) : <p>暂无</p>}</div>
           <div><h3>研究任务费用</h3>{data?.task_costs.map((cost) => <p key={`${cost.currency}-${cost.basis}`}>{cost.currency} · {cost.basis}：<b>{value(cost.known_total)}</b>（{cost.task_count} 项）</p>) || <p>暂无</p>}</div>

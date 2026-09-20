@@ -64,6 +64,12 @@ type Overview = {
     known_zero_calls: number
     unknown_cost_calls: number
   }[]
+  supplier_daily_spend: {
+    status: 'available' | 'not_synced'
+    message?: string | null
+    today: SupplierDailySpend[]
+    records: SupplierDailySpend[]
+  }
   blackhorse: BlackhorseItem[]
   trend: { day: string; value: number }[]
   keywords: { keyword: string; hits: number }[]
@@ -98,6 +104,20 @@ type Overview = {
   }
 }
 
+type SupplierDailySpend = {
+  provider: string
+  account_scope: string
+  billing_date: string
+  cost_currency: string
+  billing_timezone: string
+  total_cost?: number | null
+  total_requests?: number | null
+  paid_requests?: number | null
+  fetched_at?: string | null
+  period_status: 'current_accumulating' | 'prior_snapshot'
+  freshness_status: 'fresh' | 'stale'
+}
+
 const sourceLabels: Record<string, string> = {
   low_fan: '低粉榜',
   search: '搜索',
@@ -122,6 +142,25 @@ function apiCostSummary(costs?: Overview['api_costs']) {
 function apiCostFootnote(costs?: Overview['api_costs'], records?: number) {
   const unknown = (costs || []).reduce((sum, cost) => sum + Number(cost.unknown_cost_calls || 0), 0)
   return `${records ?? 0} 条调用记录${unknown ? ` · ${unknown} 条来源未核验` : ''}`
+}
+
+function supplierDailySpendSummary(spend?: Overview['supplier_daily_spend']) {
+  if (!spend || spend.status !== 'available') return '未同步'
+  if (!spend.today.length) return '当前账期暂无累计'
+  return spend.today.map((item) => {
+    const amount = item.total_cost
+    return amount === null || amount === undefined
+      ? `${item.provider} 待核验`
+      : `${item.provider} ${item.cost_currency} ${Number(amount).toFixed(3)}`
+  }).join('；')
+}
+
+function supplierDailySpendFootnote(spend?: Overview['supplier_daily_spend']) {
+  if (!spend || spend.status !== 'available') return spend?.message || '等待供应商账单同步'
+  if (!spend.today.length) return '账户总费用 · 尚无供应商当前账期记录'
+  const stale = spend.today.some((item) => item.freshness_status === 'stale')
+  const record = spend.today[0]
+  return `账户总费用 · ${record.billing_date}（${record.billing_timezone}）${stale ? ' · 更新可能过期' : ''}`
 }
 
 function priorityTone(score: number) {
@@ -344,7 +383,7 @@ function App() {
                 ['🔥', '新增热点', data?.kpis.new_hotspots || 0, '过去所选时间窗'],
                 ['🚀', '黑马候选', data?.kpis.blackhorse_candidates || 0, '优先级 ≥ 60'],
                 ['◎', '进入 L1', data?.kpis.entered_l1 || 0, '纯代码粗筛'],
-                ['◉', 'API 费用事实', apiCostSummary(data?.api_costs), apiCostFootnote(data?.api_costs, data?.kpis.api_call_records)],
+                ['◉', '供应商当日费用', supplierDailySpendSummary(data?.supplier_daily_spend), supplierDailySpendFootnote(data?.supplier_daily_spend)],
               ].map(([icon, label, value, foot]) => (
                 <div className="kpi-card card" key={String(label)}>
                   <div className="kpi-icon">{icon}</div>
