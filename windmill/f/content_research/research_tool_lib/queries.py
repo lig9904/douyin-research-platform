@@ -111,7 +111,7 @@ def validate_score(value: object) -> Decimal:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ToolInputError("min_score must be numeric")
     score = Decimal(str(value))
-    if score < 0 or score > 100:
+    if not score.is_finite() or score < 0 or score > 100:
         raise ToolInputError("min_score is outside the allowed range")
     return score
 

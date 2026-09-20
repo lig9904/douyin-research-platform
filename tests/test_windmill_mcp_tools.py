@@ -101,6 +101,8 @@ def test_public_input_bounds_accept_contract_edges(call, valid) -> None:
         lambda: _queries.validate_query("x" * 121),
         lambda: _queries.validate_platform("bad platform"),
         lambda: _queries.validate_score(101),
+        lambda: _queries.validate_score(float("nan")),
+        lambda: _queries.validate_score(float("inf")),
         lambda: _queries.validate_uuid("not-a-uuid", field="video_id"),
     ],
 )
