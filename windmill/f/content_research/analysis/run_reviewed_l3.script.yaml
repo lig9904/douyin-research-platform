@@ -1,0 +1,10 @@
+summary: Execute one persisted L3 approval with fixed Ark configuration
+description: May call paid Ark model. Current evidence and privacy approval are revalidated by the existing coordinator. No caller identity, model or credentials.
+timeout: 360
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    approval_id:
+      type: string
+  required: [approval_id]
