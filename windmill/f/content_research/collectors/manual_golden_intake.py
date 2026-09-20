@@ -1,5 +1,5 @@
 #requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@370c09880ae1ae6332143834e165a45a0dfe8284
+#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b7341ed0f4d86c6959a9045cad50ea6c1bb3b74
 #psycopg[binary]==3.3.6
 #wmill==1.815.0
 
