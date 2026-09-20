@@ -1,6 +1,7 @@
 name: infra-validate
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "docker-compose.yml"
