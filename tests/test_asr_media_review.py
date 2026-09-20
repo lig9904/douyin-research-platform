@@ -60,6 +60,20 @@ def test_missing_and_revoked_approval_are_rejected(media):
         approve(media)
 
 
+def test_preview_is_read_only_and_tracks_approval_state(media):
+    def preview():
+        return review.prepare_asr_media(DSN, video_id=media.video_id, asset_id=media.id, review_version="test-v1")
+    first = preview()
+    assert first["review_status"] == "not_reviewed"
+    assert first["db_writes"] == 0 and first["external_calls"] == 0
+    assert "object_key" not in first and "media_url" not in first
+    approve(media, expected_asset_fingerprint=first["asset_fingerprint"])
+    assert preview()["review_status"] == "approved"
+    with psycopg.connect(DSN) as conn:
+        conn.execute("update asr_media_review set active=false where asset_id=%s", (media.id,))
+    assert preview()["review_status"] == "revoked"
+
+
 @pytest.mark.parametrize("changes", [
     {"video_id": uuid4()}, {"review_version": "unapproved"},
     {"source_fingerprint": "c" * 64},
