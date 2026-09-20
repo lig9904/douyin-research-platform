@@ -1,0 +1,37 @@
+# Test-server overlay. It removes every direct database/Windmill host port and
+# exposes only the TLS reverse proxy. Do not use it without the deployment
+# preflight and a reviewed .env.test-server.
+services:
+  postgres:
+    ports: !reset []
+
+  windmill_server:
+    environment:
+      BASE_URL: ${WINDMILL_BASE_URL:?WINDMILL_BASE_URL is required}
+    ports: !reset []
+
+  proxy:
+    image: ${NGINX_IMAGE:?NGINX_IMAGE is required}
+    restart: unless-stopped
+    depends_on:
+      windmill_server:
+        condition: service_healthy
+    ports:
+      - "${TEST_SERVER_BIND_HOST:-0.0.0.0}:${TEST_SERVER_HTTP_PORT:-80}:8080"
+      - "${TEST_SERVER_BIND_HOST:-0.0.0.0}:${TEST_SERVER_HTTPS_PORT:-443}:8443"
+    volumes:
+      - ./ops/test-server/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${TEST_SERVER_TLS_DIR:?TEST_SERVER_TLS_DIR is required}:/etc/nginx/certs:ro
+    networks: [research]
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}

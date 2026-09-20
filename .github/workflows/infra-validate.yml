@@ -6,17 +6,21 @@ on:
       - "docker-compose.yml"
       - "docker-compose.l3-local.yml"
       - "docker-compose.local-security.yml"
+      - "docker-compose.test-server.yml"
       - ".env.example"
       - ".env.l3-local.example"
       - ".env.local-security.example"
+      - ".env.test-server.example"
       - "config/l3-local-*"
       - "config/l3-security-local-*"
       - "db/**"
       - "ops/local-security/**"
+      - "ops/test-server/**"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
       - "scripts/local-security-env.sh"
+      - "scripts/test-server-*.sh"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
   pull_request:
@@ -24,17 +28,21 @@ on:
       - "docker-compose.yml"
       - "docker-compose.l3-local.yml"
       - "docker-compose.local-security.yml"
+      - "docker-compose.test-server.yml"
       - ".env.example"
       - ".env.l3-local.example"
       - ".env.local-security.example"
+      - ".env.test-server.example"
       - "config/l3-local-*"
       - "config/l3-security-local-*"
       - "db/**"
       - "ops/local-security/**"
+      - "ops/test-server/**"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
       - "scripts/local-security-env.sh"
+      - "scripts/test-server-*.sh"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
 
@@ -55,6 +63,7 @@ jobs:
           cp .env.example .env
           cp .env.l3-local.example .env.l3-local
           cp .env.local-security.example .env.local-security
+          cp .env.test-server.example .env.test-server
 
       - name: Validate shell syntax
         run: |
@@ -64,6 +73,9 @@ jobs:
           bash -n scripts/local-l3-env.sh
           bash -n scripts/local-windmill-sync.sh
           bash -n scripts/local-security-env.sh
+          bash -n scripts/test-server-preflight.sh
+          bash -n scripts/test-server-release.sh
+          bash -n scripts/test-server-windmill-preflight.sh
           bash -n scripts/verify-stack.sh
           bash -n scripts/tikhub/v0_smoke.py 2>/dev/null || true
 
@@ -80,6 +92,24 @@ jobs:
             -f docker-compose.yml \
             -f docker-compose.local-security.yml \
             config >/dev/null
+          docker compose -p research-test-ci \
+            --env-file .env.test-server \
+            -f docker-compose.yml \
+            -f docker-compose.test-server.yml \
+            config >/dev/null
+
+      - name: Validate test-server proxy
+        run: |
+          mkdir -p work/ci-tls
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=localhost' \
+            -keyout work/ci-tls/privkey.pem \
+            -out work/ci-tls/fullchain.pem >/dev/null 2>&1
+          nginx_image="$(awk -F= '$1 == "NGINX_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' .env.test-server.example)"
+          docker run --rm --add-host windmill_server:127.0.0.1 \
+            -v "$PWD/ops/test-server/nginx.conf:/etc/nginx/nginx.conf:ro" \
+            -v "$PWD/work/ci-tls:/etc/nginx/certs:ro" \
+            "$nginx_image" nginx -t
 
       - name: Start PostgreSQL only
         run: docker compose up -d postgres
@@ -103,6 +133,70 @@ jobs:
 
           test "$count" -gt 10
           echo "research tables: $count"
+
+      - name: Exercise test-server migration, backup, and restore contract
+        run: |
+          chmod 600 .env.test-server
+          install -d -m 0700 work/release-ci-backups
+          compose=(docker compose -p test-server-release-ci --env-file .env.test-server -f docker-compose.yml -f docker-compose.test-server.yml)
+          "${compose[@]}" up -d postgres
+          for i in {1..30}; do
+            if "${compose[@]}" exec -T postgres pg_isready -U postgres -d windmill >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$i" = 30 ]; then
+              "${compose[@]}" logs postgres
+              exit 1
+            fi
+            sleep 2
+          done
+
+          # Windmill normally creates these during server startup. Minimal
+          # sentinels keep this release-script integration test PostgreSQL-only.
+          "${compose[@]}" exec -T postgres psql -U postgres -d windmill -v ON_ERROR_STOP=1 <<'SQL'
+          create table workspace(id text primary key);
+          create table usr(id text primary key);
+          insert into workspace values ('ci-workspace');
+          insert into usr values ('ci-user');
+          SQL
+
+          TEST_SERVER_RESEARCH_MIGRATE=YES scripts/test-server-release.sh migrate \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups"
+          scripts/test-server-release.sh verify \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups"
+
+          middle_migration="$(find db/migrations -maxdepth 1 -type f -name '*.sql' -print | sort | tail -2 | head -1 | xargs basename)"
+          middle_sha="$(sha256sum "db/migrations/$middle_migration" | awk '{print $1}')"
+          "${compose[@]}" exec -T postgres psql -U postgres -d douyin_research -v ON_ERROR_STOP=1 \
+            -c "delete from schema_migrations where filename='$middle_migration'"
+          if TEST_SERVER_RESEARCH_MIGRATE=YES scripts/test-server-release.sh migrate \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups" >work/non-prefix.out 2>&1; then
+            echo "non-prefix migration ledger unexpectedly passed" >&2
+            exit 1
+          fi
+          grep -Fq "not a contiguous reviewed prefix" work/non-prefix.out
+          "${compose[@]}" exec -T postgres psql -U postgres -d douyin_research -v ON_ERROR_STOP=1 \
+            -c "insert into schema_migrations(filename, sha256) values ('$middle_migration', '$middle_sha')"
+
+          last_migration="$(find db/migrations -maxdepth 1 -type f -name '*.sql' -print | sort | tail -1 | xargs basename)"
+          "${compose[@]}" exec -T postgres psql -U postgres -d douyin_research -v ON_ERROR_STOP=1 \
+            -c "delete from schema_migrations where filename='$last_migration'"
+          sleep 1
+          TEST_SERVER_RESEARCH_MIGRATE=YES scripts/test-server-release.sh migrate \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups"
+
+          sleep 1
+          backup_output="$(scripts/test-server-release.sh backup \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups")"
+          backup_dir="${backup_output#BACKUP }"
+          TEST_SERVER_RESTORE_DRILL=YES scripts/test-server-release.sh restore-drill \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups" "$backup_dir"
 
       - name: Start isolated reviewer PostgreSQL
         run: |
@@ -170,6 +264,11 @@ jobs:
         if: always()
         run: |
           docker compose down -v
+          docker compose -p test-server-release-ci \
+            --env-file .env.test-server \
+            -f docker-compose.yml \
+            -f docker-compose.test-server.yml \
+            down -v --remove-orphans
           docker compose -p l3-review-ci \
             --env-file .env.l3-local \
             -f docker-compose.yml \
