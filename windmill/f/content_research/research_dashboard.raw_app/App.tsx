@@ -9,7 +9,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd'
-import { backend } from './wmill'
+import { backend } from './backend'
 import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
 import HotspotLibrary from './HotspotLibrary'

@@ -11,7 +11,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd'
-import { backend } from './wmill'
+import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
 import MetricTimeline from './src/components/MetricTimeline'

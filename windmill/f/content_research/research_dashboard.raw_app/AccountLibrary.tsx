@@ -11,7 +11,7 @@ import {
   Tag,
   Tooltip,
 } from 'antd'
-import { backend } from './wmill'
+import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import PlatformIcon from './src/components/PlatformIcon'
 import { mutateResearchState } from './src/components/ResearchActions'

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Pagination, Select, Spin } from 'antd'
-import { backend } from '../../wmill'
+import { backend } from '../../backend'
 
 type Metric = {
   captured_at: string

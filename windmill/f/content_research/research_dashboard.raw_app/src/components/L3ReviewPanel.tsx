@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Checkbox, Input, Tag } from 'antd'
-import { backend } from '../../wmill'
+import { backend } from '../../backend'
 
 type ReviewManifest = {
   status?: string
