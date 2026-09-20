@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Callable
 from urllib.parse import urlsplit
@@ -87,6 +88,7 @@ class LiveASRRequest:
     estimated_api_cost: Decimal | float | int | None = None
     estimated_asr_cost: Decimal | float | int | None = None
     cost_currency: str = "CNY"
+    budget_date: date | None = None
 
 
 def live_asr_task_key(
@@ -203,6 +205,7 @@ def execution_request(request: LiveASRRequest) -> ASRExecutionRequest:
         trigger_source="schedule",
         reviewed_asset_id=request.reviewed_asset_id,
         media_review_version=request.media_review_version,
+        budget_date=request.budget_date,
     )
 
 
