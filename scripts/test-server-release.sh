@@ -8,6 +8,7 @@ BASE_COMPOSE="$ROOT_DIR/docker-compose.yml"
 SERVER_COMPOSE="$ROOT_DIR/docker-compose.test-server.yml"
 RESTORE_DATABASE="test_server_research_restore"
 RESTORE_WINDMILL_DATABASE="test_server_windmill_restore"
+BACKUP_VERIFY="$ROOT_DIR/scripts/test-server-backup-verify.py"
 
 usage() {
   cat <<'EOF'
@@ -135,9 +136,20 @@ write_checksums() {
   for file in "$@"; do printf '%s  %s\n' "$(sha256_file "$file")" "$file" >> SHA256SUMS; done
 }
 
-check_checksums() {
-  if command -v sha256sum >/dev/null 2>&1; then sha256sum -c SHA256SUMS >/dev/null
-  else shasum -a 256 -c SHA256SUMS >/dev/null; fi
+# This deliberately excludes rolpassword and rolconfig.  The inventory is a
+# restore-verification target, not another copy of credential material.
+write_globals_inventory() {
+  compose exec -T postgres psql -At -v ON_ERROR_STOP=1 -U "$postgres_user" -d postgres -c "
+    select 'role|' || encode(convert_to(rolname, 'UTF8'), 'hex') || '|' || rolsuper || '|' || rolinherit || '|' || rolcreaterole || '|' || rolcreatedb || '|' || rolcanlogin || '|' || rolreplication || '|' || rolbypassrls || '|' || rolconnlimit || '|' || coalesce(to_char(rolvaliduntil at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '')
+      from pg_roles where rolname !~ '^pg_' order by rolname;
+    select 'member|' || encode(convert_to(parent.rolname, 'UTF8'), 'hex') || '|' || encode(convert_to(child.rolname, 'UTF8'), 'hex') || '|' || encode(convert_to(grantor.rolname, 'UTF8'), 'hex') || '|' || membership.admin_option || '|' || membership.inherit_option || '|' || membership.set_option
+      from pg_auth_members membership
+      join pg_roles parent on parent.oid = membership.roleid
+      join pg_roles child on child.oid = membership.member
+      join pg_roles grantor on grantor.oid = membership.grantor
+      where parent.rolname !~ '^pg_' and child.rolname !~ '^pg_'
+      order by parent.rolname, child.rolname;" \
+    | LC_ALL=C sort
 }
 
 create_backup() (
@@ -159,11 +171,13 @@ create_backup() (
   compose exec -T postgres bash -c \
     'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec pg_dump -U "$RESEARCH_DB_USER" -Fc "$RESEARCH_DB_NAME"' \
     > "$temporary/research.dump"
-  chmod 600 "$temporary/globals.sql" "$temporary/windmill.dump" "$temporary/research.dump"
-  (cd "$temporary" && write_checksums globals.sql windmill.dump research.dump)
-  printf 'created_at_utc=%s\ncompose_project=%s\nresearch_database=%s\nwindmill_database=%s\n' \
-    "$stamp" "$project" "$research_database" "$windmill_database" > "$temporary/manifest.txt"
+  write_globals_inventory > "$temporary/globals.inventory"
+  chmod 600 "$temporary/globals.sql" "$temporary/globals.inventory" "$temporary/windmill.dump" "$temporary/research.dump"
+  (cd "$temporary" && write_checksums globals.sql globals.inventory windmill.dump research.dump)
+  printf 'format=test-server-backup-v1\ncreated_at_utc=%s\ncompose_project=%s\nresearch_database=%s\nwindmill_database=%s\npostgres_role=%s\nglobals_inventory_sha256=%s\n' \
+    "$stamp" "$project" "$research_database" "$windmill_database" "$postgres_user" "$(sha256_file "$temporary/globals.inventory")" > "$temporary/manifest.txt"
   chmod 600 "$temporary/manifest.txt" "$temporary/SHA256SUMS"
+  "$BACKUP_VERIFY" --backup-root "$backup_root" --backup-dir "$temporary" >/dev/null
   # The test-server host is Linux (enforced by the host preflight), where GNU
   # mv -T fails instead of nesting if a destination appears during the rename.
   # The guarded fallback keeps this command locally testable on macOS; the
@@ -272,14 +286,21 @@ cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
   [[ -n "$backup_argument" ]] || { echo 'ERROR: restore-drill requires one backup directory.' >&2; exit 2; }
   local backup_dir source_counts restored_counts windmill_source_counts windmill_restored_counts remaining research_verified windmill_verified existing
+  local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
   case "$backup_dir" in "$backup_root"/*) ;; *) echo 'ERROR: restore drill accepts backups only beneath --backup-root.' >&2; exit 2;; esac
+  verification="$("$BACKUP_VERIFY" --backup-root "$backup_root" --backup-dir "$backup_dir")"
+  [[ "$verification" =~ ^BACKUP_VALID\ format=test-server-backup-v1\ manifest_sha256=([a-f0-9]{64})\ inventory_sha256=([a-f0-9]{64})\ created_at_utc=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)\ verified_at_utc=([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)$ ]] || { echo 'ERROR: backup verifier returned an invalid summary.' >&2; exit 1; }
+  archive_manifest_sha="${BASH_REMATCH[1]}"
+  globals_inventory_sha="${BASH_REMATCH[2]}"
+  archive_created_at="${BASH_REMATCH[3]}"
+  archive_verified_at="${BASH_REMATCH[4]}"
+  start_epoch="$(date +%s)"
   [[ -f "$backup_dir/research.dump" && -f "$backup_dir/windmill.dump" && -f "$backup_dir/globals.sql" && -f "$backup_dir/SHA256SUMS" && -f "$backup_dir/manifest.txt" ]] || { echo 'ERROR: backup is incomplete.' >&2; exit 1; }
   grep -Fqx 'research.dump' <(awk '{print $2}' "$backup_dir/SHA256SUMS") && grep -Fqx 'windmill.dump' <(awk '{print $2}' "$backup_dir/SHA256SUMS") && grep -Fqx 'globals.sql' <(awk '{print $2}' "$backup_dir/SHA256SUMS") || { echo 'ERROR: checksum manifest does not cover every backup artifact.' >&2; exit 1; }
   [[ "$(awk -F= '$1 == "compose_project" {print $2}' "$backup_dir/manifest.txt")" == "$project" ]] || { echo 'ERROR: backup manifest Compose project does not match --project.' >&2; exit 1; }
   [[ "$(awk -F= '$1 == "research_database" {print $2}' "$backup_dir/manifest.txt")" == "$research_database" && "$(awk -F= '$1 == "windmill_database" {print $2}' "$backup_dir/manifest.txt")" == "$windmill_database" ]] || { echo 'ERROR: backup manifest database names do not match the selected env file.' >&2; exit 1; }
-  (cd "$backup_dir" && check_checksums)
   wait_for_postgres
   cleanup() {
     if [[ "$research_created" == 1 ]]; then
@@ -316,7 +337,10 @@ cmd_restore_drill() (
   remaining="$(admin_query postgres "select exists(select 1 from pg_database where datname in ('${RESTORE_DATABASE}', '${RESTORE_WINDMILL_DATABASE}'))")"
   [[ "$remaining" == f ]] || { echo 'ERROR: fixed temporary restore database remains after cleanup.' >&2; exit 1; }
   trap - EXIT
-  echo 'RESTORE_DRILL passed dump checksums, two isolated database restores, sentinel row counts, owners, key objects, and cleanup. globals.sql integrity was checked but role restore requires a separate disposable PostgreSQL cluster.'
+  completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  duration_seconds="$(( $(date +%s) - start_epoch ))"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds"
 )
 
 case "$command_name" in

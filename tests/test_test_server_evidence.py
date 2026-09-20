@@ -62,13 +62,30 @@ def _complete(bundle: dict) -> None:
         check["evidence_id"] = "ev_" + check_id
     bundle["backup"].update(
         {
+            "archive_format": "test-server-backup-v1",
+            "archive_created_at_utc": "2026-09-20T00:00:00Z",
             "archive_manifest_sha256": "5" * 64,
+            "archive_verified_at_utc": "2026-09-20T00:01:00Z",
+            "globals_inventory_sha256": "6" * 64,
             "offsite_copy_evidence_id": "ev_offsite_copy",
+            "offsite_copy_verified_at_utc": "2026-09-20T00:10:00Z",
             "database_restore_seconds": 12,
+            "database_restore_manifest_sha256": "5" * 64,
             "globals_restore_seconds": 8,
+            "globals_restore_manifest_sha256": "5" * 64,
+            "globals_restore_inventory_sha256": "6" * 64,
             "rpo_seconds": 60,
         }
     )
+    bundle["monitoring"]["contract_sha256"] = "7" * 64
+    bundle["monitoring"]["contract_verified_at_utc"] = "2026-09-20T00:20:00Z"
+    bundle["monitoring"]["external_alert"] = {
+        "state": "closed",
+        "fired_at_utc": "2026-09-20T00:21:00Z",
+        "acknowledged_at_utc": "2026-09-20T00:22:00Z",
+        "closed_at_utc": "2026-09-20T00:23:00Z",
+        "external_delivery_evidence_id": "ev_external_alert_delivery",
+    }
 
 
 def test_init_is_secret_free_mode_0600_and_never_overwrites(tmp_path: Path) -> None:
@@ -153,6 +170,61 @@ def test_rejects_inconsistent_not_run_and_non_utc_evidence(tmp_path: Path) -> No
     check["checked_at_utc"] = "2026-09-20"
     _write(output, bundle)
     assert "executed checks require" in _run_verify(output).stderr
+
+
+def test_restore_and_monitoring_gates_are_bound_to_real_evidence(tmp_path: Path) -> None:
+    output = _init(tmp_path)
+    bundle = _load(output)
+    _complete(bundle)
+
+    bundle["backup"]["database_restore_manifest_sha256"] = "8" * 64
+    _write(output, bundle)
+    assert "bound to the verified archive" in _run_verify(output).stderr
+
+    bundle["backup"]["database_restore_manifest_sha256"] = "5" * 64
+    bundle["backup"]["globals_restore_inventory_sha256"] = "9" * 64
+    _write(output, bundle)
+    assert "archive and inventory" in _run_verify(output).stderr
+
+    bundle["backup"]["globals_restore_inventory_sha256"] = "6" * 64
+    bundle["monitoring"]["contract_sha256"] = None
+    _write(output, bundle)
+    assert "verified monitoring contract" in _run_verify(output).stderr
+
+    bundle["monitoring"]["contract_sha256"] = "7" * 64
+    bundle["monitoring"]["external_alert"] = {
+        "state": "not_run",
+        "fired_at_utc": None,
+        "acknowledged_at_utc": None,
+        "closed_at_utc": None,
+        "external_delivery_evidence_id": None,
+    }
+    _write(output, bundle)
+    assert "closed externally delivered" in _run_verify(output).stderr
+
+def test_single_restore_pass_still_requires_verified_archive_metadata(tmp_path: Path) -> None:
+    output = _init(tmp_path)
+    bundle = _load(output)
+    check = bundle["checks"]["gate_e_database_restore"]
+    check.update({"status": "pass", "checked_at_utc": STAMP, "evidence_id": "ev_database_restore"})
+    bundle["backup"]["database_restore_seconds"] = 1
+    bundle["backup"]["archive_manifest_sha256"] = "5" * 64
+    bundle["backup"]["database_restore_manifest_sha256"] = "5" * 64
+    _write(output, bundle)
+    assert "bound to the verified archive" in _run_verify(output).stderr
+
+
+def test_external_alert_lifecycle_requires_delivery_and_strict_time_order(tmp_path: Path) -> None:
+    output = _init(tmp_path)
+    bundle = _load(output)
+    alert = bundle["monitoring"]["external_alert"]
+    alert.update({"state": "closed", "fired_at_utc": STAMP, "acknowledged_at_utc": STAMP, "closed_at_utc": STAMP})
+    _write(output, bundle)
+    assert "requires delivery evidence" in _run_verify(output).stderr
+
+    alert["external_delivery_evidence_id"] = "ev_external_delivery"
+    _write(output, bundle)
+    assert "strictly ordered" in _run_verify(output).stderr
 
 
 def test_rejects_sensitive_value_without_echoing_it(tmp_path: Path) -> None:

@@ -57,7 +57,7 @@ scripts/test-server-evidence.py init \
   --proxy-image <nginx镜像@sha256>
 ```
 
-证据结构 Schema 见 [test-server-evidence-v1.schema.json](test-server-evidence-v1.schema.json)，固定的 19 个检查以对象键表达，因此无法重复或漏项。它只允许固定状态、UTC 时间、`ev_...` 脱敏证据 ID、计数/耗时、SHA-256 和聚合成本状态；没有自由正文、URL、邮箱、请求 ID、媒体地址或 Provider 响应字段。获准 Provider 才标记 `approved=true`；未获准项必须保持零调用、无成本。Schema 用于工具兼容和结构审阅，下面的 Python 验证器还执行敏感值启发式拦截与最终完成态检查，是封存前的权威入口；不得仅凭通用 JSON Schema 校验声称通过。每次更新后执行：
+证据结构 Schema 见 [test-server-evidence-v1.schema.json](test-server-evidence-v1.schema.json)，固定的 19 个检查以对象键表达，因此无法重复或漏项。它只允许固定状态、UTC 时间、`ev_...` 脱敏证据 ID、计数/耗时、SHA-256 和聚合成本状态；没有自由正文、URL、邮箱、请求 ID、媒体地址或 Provider 响应字段。备份、双库恢复与 globals 恢复必须回填同一归档的 manifest 指纹，globals 还必须匹配 inventory 指纹；计划安全/并发只能绑定本地监控契约，告警闭环则必须另有外部投递证据和严格递增的触发、确认、关闭时间。获准 Provider 才标记 `approved=true`；未获准项必须保持零调用、无成本。Schema 用于工具兼容和结构审阅，下面的 Python 验证器还执行跨字段指纹一致性、时间顺序、敏感值启发式拦截与最终完成态检查，是封存前的权威入口；不得仅凭通用 JSON Schema 校验声称通过。每次更新后执行：
 
 ```bash
 scripts/test-server-evidence.py verify \
@@ -142,9 +142,13 @@ scripts/test-server-evidence.py seal \
      --env-file .env.test-server \
      --project douyin-research-test \
      --backup-root /srv/douyin-research-test/backups
+
+   scripts/test-server-backup-verify.py \
+     --backup-root /srv/douyin-research-test/backups \
+     --backup-dir <上述命令输出的备份目录>
    ```
 
-   脚本不会 `source` env；env 必须严格为 `0600` 且数据库标识键只能各出现一次。备份目录通过锁、临时目录、三份 SHA-256 和原子发布完成；输出的 `globals.sql`、`windmill.dump`、`research.dump` 及 `manifest.txt` 必须一并保留。
+   脚本不会 `source` env；env 必须严格为 `0600` 且数据库标识键只能各出现一次。备份目录通过锁、临时目录、四份 artifact SHA-256、`test-server-backup-v1` 严格校验和原子发布完成；输出的 `globals.sql`、`globals.inventory`、`windmill.dump`、`research.dump`、`SHA256SUMS` 及 `manifest.txt` 必须作为一个整体保留。独立 verifier 的成功摘要提供 format、manifest/inventory 指纹和归档创建/验证 UTC 时间，可直接绑定脱敏证据包，不输出归档路径或内容。`globals.inventory` 只包含十六进制编码的角色名、非秘密角色属性及完整 membership 语义，不含密码散列或角色配置。
 2. 复核上述备份路径后，以单次显式确认开关执行迁移，再独立验证 ledger、owner、权限和关键对象：
 
    ```bash
@@ -228,7 +232,7 @@ Secret 最小集与用途如下；名称是接口契约，不是实际值：
 
 操作：
 
-1. 首先用不外呼或 dry-run flow 验证 schedule 的时区、启停、失败状态、重复触发和手工停用；外呼 schedule 保持关闭，直到有单独的测试窗口和预算确认。
+1. 首先按 [TEST_SERVER_MONITORING_V1.md](TEST_SERVER_MONITORING_V1.md) 生成并校验本地无外发监控契约，再用不外呼或 dry-run flow 验证 schedule 的时区、启停、失败状态、重复触发和手工停用；外呼 schedule 保持关闭，直到有单独的测试窗口和预算确认。本地契约的 `disabled_no_external_delivery` 只能证明调度边界，不能证明真实告警已投递或关闭。
 2. 以测试数据验证同一 Provider/同一实体的并发与幂等行为；记录排队、拒绝或预算阻断，而不是通过增加无界 worker 规避。
 3. 在暂停写入的验收窗口再次运行门 B 的 `backup`，把输出的**迁移后**备份目录记录为 `<backup-dir>`，生成/核验完整性清单，再复制到已确认的异机加密落点。
 4. 在同一测试 PostgreSQL 实例执行数据库级恢复演练：
@@ -241,9 +245,19 @@ Secret 最小集与用途如下；名称是接口契约，不是实际值：
      <backup-dir>
    ```
 
-   脚本只创建固定临时库 `test_server_research_restore` 与 `test_server_windmill_restore`；其中任一名称已存在时立即拒绝，绝不删除或复用。成功后比较双库哨兵表行数、关键对象和 owner，并只清理本次创建的两个临时库。`globals.sql` 在这里仅验证 SHA-256，**不会**在共享实例恢复角色；角色/全局授权恢复必须另在一次性、完全隔离的 PostgreSQL 集群执行，未执行时不得声称 globals 恢复已验证。
-5. 比较恢复库的 schema、约束与研究台只读路径，记录数据库恢复耗时；另在一次性集群完成 globals/roles 验证后，记录端到端实际 RTO。
-6. 触发一次无敏感内容的任务失败/阈值告警，验证告警路由、值班接收和关闭记录；不要将真实 Secret 或正文作为告警探针。
+   脚本只创建固定临时库 `test_server_research_restore` 与 `test_server_windmill_restore`；其中任一名称已存在时立即拒绝，绝不删除或复用。成功后比较双库哨兵表行数、关键对象和 owner，并只清理本次创建的两个临时库。成功摘要只输出归档格式、manifest/inventory SHA-256、归档/完成 UTC 时间和实测秒数，不输出路径或内容。`globals.sql` 在这里仅验证 SHA-256，**不会**在共享实例恢复角色。
+5. 使用与测试服务器相同的固定 PostgreSQL digest，在无网络、无端口、无宿主 bind mount 的一次性集群完成 globals/roles 演练：
+
+   ```bash
+   TEST_SERVER_GLOBALS_RESTORE_DRILL=YES scripts/test-server-globals-restore-drill.sh \
+     --backup-root /srv/douyin-research-test/backups \
+     --postgres-image <postgres镜像@sha256> \
+     <backup-dir>
+   ```
+
+   脚本拒绝 tablespace，恢复失败即失败，并比较不含秘密的角色及完整 membership inventory；容器、卷或运行目录任一清理失败也不得宣称通过。将两个恢复摘要中相同的 manifest/inventory 指纹和各自实测耗时写入证据包。
+6. 比较恢复库的 schema、约束与研究台只读路径，记录数据库恢复耗时及端到端实际 RTO。
+7. 触发一次无敏感内容的任务失败/阈值告警，验证外部告警路由、值班接收和关闭记录；不要将真实 Secret 或正文作为告警探针。本地监控契约的 seal 不能代替这项外部证据。
 
 输出与验收：计划任务状态、并发策略、备份清单、异机可取回证据、恢复验证、实际 RTO、已知 RPO、告警闭环。测试服务器只能声明其测得的值，不得将本机的 429 基线或恢复耗时外推为生产容量/SLO。
 
@@ -262,7 +276,7 @@ Secret 最小集与用途如下；名称是接口契约，不是实际值：
 - [ ] 研究台共享监测与 actor 私有专题/收藏/筛选的读写边界通过。
 - [ ] 每个获准 Provider 完成一次小流量 smoke，账本、预算和成本状态已记录。
 - [ ] schedule/并发的安全停用与失败处理通过；未授权外呼 schedule 保持禁用。
-- [ ] 双库备份已校验并存放于异机受控位置；数据库恢复库演练、清理和实测耗时通过；globals/roles 已在一次性隔离集群验证，或明确保留为未验收项。
+- [ ] 同一 `test-server-backup-v1` 归档已校验并存放于异机受控位置；双库恢复与一次性 globals/roles 恢复的 manifest/inventory 指纹绑定、清理和实测耗时通过。
 - [ ] 监控/告警已至少触发一次并完成关闭；日志与证据中无 Secret、正文或 bearer 数据。
 - [ ] `test-server-evidence-v1` 通过 `--require-complete` 校验并生成独立 SHA-256；原始证据位于受控位置且未写入 Git。
 
