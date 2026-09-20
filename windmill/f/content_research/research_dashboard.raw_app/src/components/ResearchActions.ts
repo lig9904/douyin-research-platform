@@ -1,4 +1,4 @@
-import { backend } from '../../wmill'
+import { backend } from '../../backend'
 
 export type ResearchCollection = {
   name: string

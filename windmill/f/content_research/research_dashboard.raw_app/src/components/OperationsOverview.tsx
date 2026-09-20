@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Pagination, Select, Spin, Table, Tag } from 'antd'
-import { backend } from '../../wmill'
+import { backend } from '../../backend'
 import PlatformIcon from './PlatformIcon'
 
 type Platform = { key: string; name: string; enabled: boolean }
