@@ -27,7 +27,9 @@
 
 视频详情优先 App V3 fetch_multi_video_v2：
 - 最多 50 IDs / request
-- 固定 0.001 USD / request
+- 当前核验单价为 0.050 USD / request（价格版本 `usage-log-2026-09-20`）；
+  不能套用大多数基础接口约 0.001 USD / request 的通用费率
+- N 个去重视频 ID 按 `ceil(N / 50)` 个未缓存批次计费；缓存命中不产生供应商请求
 
 禁止在批量接口可覆盖时循环调用单条详情。
 
