@@ -1,0 +1,7 @@
+summary: Dispatch approved L3 every ten minutes
+schedule: "0 6-59/10 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/analysis/dispatch_reviewed_l3
+is_flow: false
+enabled: false
+args: {}

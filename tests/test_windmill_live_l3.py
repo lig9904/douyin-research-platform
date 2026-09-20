@@ -18,6 +18,16 @@ worker = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(worker)
 
 
+def test_worker_release_lock_matches_pinned_core_and_python():
+    lock = PATH.with_suffix(".script.lock").read_text()
+    metadata = PATH.with_suffix(".script.yaml").read_text()
+    revision = "fe801f7fd922f54bf8f4e4d36693bea8137d6024"
+    assert revision in lock and revision in PATH.read_text()
+    assert "# py: 3.13" in lock and "wmill==1.815.0" in lock
+    assert "!inline f/content_research/analysis/run_reviewed_l3.script.lock" in metadata
+    assert "f/content_research/analysis/run_reviewed_l3:" in (Path(__file__).parents[1] / "windmill/wmill-lock.yaml").read_text()
+
+
 def selection():
     return worker.ReviewedL3Selection(video_id=uuid4(), privacy_review_version="v1",
         expected_input_fingerprint="a" * 64, expected_evidence_version="evidence-v1",

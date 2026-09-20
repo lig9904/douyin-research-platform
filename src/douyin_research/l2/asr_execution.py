@@ -131,6 +131,15 @@ class ASRExecutionCoordinator:
                 self._assert_provider(provider, request)
                 return self._poll_existing(request, existing, provider)
 
+            # A retained cost entry is evidence of an earlier attempt even if
+            # its execution row was lost. Never infer permission to resubmit.
+            with psycopg.connect(self.dsn) as conn:
+                paid = conn.execute("select 1 from research_task_cost where task_key=%s",
+                    (request.task_key,)).fetchone()
+            if paid is not None:
+                return {"status": "reconciliation_required", "reason": "orphan_cost_record",
+                    "execute": True, "created": False, "external_calls": 0,
+                    "sdk_retries": 0, "llm_calls": 0}
             self._preflight(request)
             provider = provider_factory()
             contract_fingerprint = self._assert_provider(provider, request)

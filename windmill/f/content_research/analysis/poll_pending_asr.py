@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@8849f6e742f800b35c8f7ec431f488b7638b361e",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@ab1255f97e2a05e226a24e3a47ac8c52398b9296",
 #   "psycopg[binary]==3.3.6", "wmill==1.815.0",
 # ]
 # ///
@@ -10,6 +10,7 @@ from uuid import UUID
 import psycopg
 from psycopg.conninfo import make_conninfo
 from douyin_research.l2.asr_execution import MAX_SCHEDULED_POLLS, MAX_SCHEDULED_AGE_SECONDS
+from douyin_research.reviewed_dispatch import scheduler_slot
 
 WORKER_PATH = "f/content_research/analysis/run_reviewed_asr"
 BATCH_SIZE = 5
@@ -38,9 +39,19 @@ def main() -> dict:
         db = wmill.get_resource("f/content_research/research_db")
         dsn = make_conninfo(host=db["host"], port=db.get("port", 5432), user=db["user"],
             password=db["password"], dbname=db["dbname"], sslmode=db.get("sslmode", "prefer"))
-        rows, limited = _pending(dsn)
     except Exception:
         raise RuntimeError("ASR pending jobs unavailable") from None
+    try:
+        with scheduler_slot(dsn) as acquired:
+            if not acquired:
+                return {"status": "deferred", "reason": "analysis_scheduler_busy"}
+            return _run_pending(dsn, wmill)
+    except psycopg.Error:
+        raise RuntimeError("ASR pending jobs unavailable") from None
+
+
+def _run_pending(dsn, wmill):
+    rows, limited = _pending(dsn)
     completed = pending = failed = 0
     for job_id, video_id, metadata in rows:
         try:
