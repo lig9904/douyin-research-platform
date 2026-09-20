@@ -62,6 +62,40 @@ def ark(**overrides: object) -> LiveArkConfiguration:
     return LiveArkConfiguration(**values)
 
 
+@pytest.mark.parametrize("field", ["input_cost_per_million_tokens", "output_cost_per_million_tokens"])
+@pytest.mark.parametrize("zero", [0, "0", Decimal("0")])
+def test_zero_price_rejected_before_identity_or_provider(field, zero):
+    evidence = bundle()
+    with pytest.raises(ValueError, match="positive"):
+        execute_reviewed_live_ark("test", selection=selection(evidence), ark=ark(**{field: zero}),
+            identity_reader=lambda _: pytest.fail("identity read"),
+            provider_factory=lambda **kwargs: pytest.fail("provider created"))
+
+
+@pytest.mark.parametrize("execution_fails,cleanup_fails", [(False, False), (False, True), (True, False), (True, True)])
+def test_provider_closed_without_masking_paid_result(execution_fails, cleanup_fails):
+    evidence = bundle()
+    closed = []
+    class Provider:
+        def close(self):
+            closed.append(True)
+            if cleanup_fails: raise RuntimeError("private-cleanup-detail")
+    class Execution:
+        def run(self, request, *, evidence_factory, provider_factory):
+            provider_factory()
+            if execution_fails: raise ValueError("execution failed")
+            return {"status": "completed"}
+    def run():
+        return execute_reviewed_live_ark("test", selection=selection(evidence), ark=ark(),
+            identity_reader=lambda _: "worker", assembler_factory=lambda _: Assembler(evidence),
+            coordinator_factory=lambda _: Execution(), provider_factory=lambda **kwargs: Provider())
+    if execution_fails:
+        with pytest.raises(ValueError, match="execution failed"): run()
+    else:
+        assert run() == {"status": "completed"}
+    assert closed == [True]
+
+
 class Assembler:
     def __init__(self, evidence: L3EvidenceBundle | Exception) -> None:
         self.evidence = evidence
