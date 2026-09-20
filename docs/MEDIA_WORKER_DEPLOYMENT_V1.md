@@ -39,6 +39,8 @@ CDN 域名来自测试服已缓存详情的实际媒体 origin，不根据任意
 
 ## 部署顺序
 
+CI 运行 `35525573965` 已实际构建该镜像并在无网络容器内完成音频转换：Python 3.13 检查通过，输出为 `pcm_s16le`、16000 Hz、单声道；ffmpeg 包版本 `7:7.1.5-0+deb13u1`。镜像继承上游默认用户（Config.User 为空），未增加 USER 覆盖。此证据仅证明 CI 镜像运行时，不证明测试服务器挂载、Windmill 作业或真实媒体链路。
+
 可重复运行时草案为 `deploy/media-worker/Dockerfile` 与显式启用的 `docker-compose.media-worker.yml`。它只替换普通 Worker 镜像，不修改服务器/native Worker，不新增 Nginx 或端口。基础 Windmill 镜像固定 digest；ffmpeg 来自基础镜像官方 apt 仓库，最终构建镜像应保存镜像 ID 与包版本（不是字节级可复现构建）。本机没有 Docker daemon，此草案尚未实际构建验证，不得直接视为已可部署。
 
 上线前先确认上游容器用户与运行权限兼容，再构建验证 `ffmpeg -version`、`ffprobe -version`、Python 3.13 和实际音频转换。指定 `MEDIA_WORKER_IMAGE` 为版本化镜像标签，`MEDIA_TEMP_HOST_PATH` 为通过 `findmnt -T` 核验在 500G 盘上的现有目录；挂载不会自动创建不存在的主机目录。Secret 中 `temp_directory` 对应 `/srv/research-media-tmp`，`ffmpeg_binary` 对应 `/usr/bin/ffmpeg`。不得仅凭路径包含 `/srv` 就认定物理磁盘正确。
