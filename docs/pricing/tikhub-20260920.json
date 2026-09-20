@@ -1,0 +1,5067 @@
+{
+  "snapshot_date": "2026-09-20",
+  "currency": "USD",
+  "tariff_at_utc": "2026-09-20T13:42:05+00:00",
+  "sources": {
+    "prices": "https://api.tikhub.io/api/v1/tikhub/user/get_all_endpoints_info",
+    "contract": "https://api.tikhub.io/openapi.json",
+    "marketplace": "https://user.tikhub.io/dashboard/api-marketplace?platform=douyin"
+  },
+  "sha256": {
+    "prices": "c876fc5b1847e3bf9eed05b43170b8fbb26924be4391921a6f6dbce42740025b",
+    "contract": "adc16607b3d4c74398c1356ca4ff0ec0cd241ffef01274b42e7f41faf40b6426"
+  },
+  "note": "Public price snapshot, not a bill or a runtime allowlist. Missing facts remain null.",
+  "endpoints": [
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_city_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_city_list_api_v1_douyin_billboard_fetch_city_list_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_content_tag",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "5/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_content_tag_api_v1_douyin_billboard_fetch_content_tag_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_category_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_category_list_api_v1_douyin_billboard_fetch_hot_category_list_get",
+          "parameters": [
+            {
+              "name": "billboard_type",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "snapshot_time",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "20250106151500"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_account_list_api_v1_douyin_billboard_fetch_hot_account_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "page_num": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "query_tag": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "integer"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "children": {
+                      "anyOf": [
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "value": {}
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_city_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_city_list_api_v1_douyin_billboard_fetch_hot_city_list_get",
+          "parameters": [
+            {
+              "name": "page",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "page_size",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "order",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "city_code",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "sentence_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_comment_word_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_comment_word_list_api_v1_douyin_billboard_fetch_hot_comment_word_list_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_item_trends_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_item_trends_list_api_v1_douyin_billboard_fetch_hot_item_trends_list_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "option",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 7
+              }
+            },
+            {
+              "name": "date_window",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_rise_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_rise_list_api_v1_douyin_billboard_fetch_hot_rise_list_get",
+          "parameters": [
+            {
+              "name": "page",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "page_size",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "order",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "sentence_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_high_fan_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_high_fan_list_api_v1_douyin_billboard_fetch_hot_total_high_fan_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_high_like_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_high_like_list_api_v1_douyin_billboard_fetch_hot_total_high_like_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_high_play_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_high_play_list_api_v1_douyin_billboard_fetch_hot_total_high_play_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_high_search_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_high_search_list_api_v1_douyin_billboard_fetch_hot_total_high_search_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page_num": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": "抖音"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_high_topic_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_high_topic_list_api_v1_douyin_billboard_fetch_hot_total_high_topic_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_hot_word_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_hot_word_list_api_v1_douyin_billboard_fetch_hot_total_hot_word_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page_num": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": "抖音"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_total_list_api_v1_douyin_billboard_fetch_hot_total_list_get",
+          "parameters": [
+            {
+              "name": "page",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "page_size",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "type",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "snapshot_time",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "20250106151500"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "sentence_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_low_fan_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "live_intake_verified",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_low_fan_list_api_v1_douyin_billboard_fetch_hot_total_low_fan_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_search_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_search_list_api_v1_douyin_billboard_fetch_hot_total_search_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page_num": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": "抖音"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_topic_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_topic_list_api_v1_douyin_billboard_fetch_hot_total_topic_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_video_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_hot_total_video_list_api_v1_douyin_billboard_fetch_hot_total_video_list_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "page_size": {
+                  "type": "integer",
+                  "default": 10
+                },
+                "date_window": {
+                  "type": "integer",
+                  "default": 24
+                },
+                "sub_type": {
+                  "type": "integer",
+                  "default": 1001
+                },
+                "keyword": {
+                  "type": "string",
+                  "default": ""
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "children": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_total_hot_word_detail_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_total_hot_word_detail_list_api_v1_douyin_billboard_fetch_hot_total_hot_word_detail_list_get",
+          "parameters": [
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "word_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "query_day",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_user_portrait_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_user_portrait_list_api_v1_douyin_billboard_fetch_hot_user_portrait_list_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "option",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 4
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_search_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_search_list_api_v1_douyin_billboard_fetch_hot_account_search_list_get",
+          "parameters": [
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "cursor",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "integer"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_trends_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_trends_list_api_v1_douyin_billboard_fetch_hot_account_trends_list_get",
+          "parameters": [
+            {
+              "name": "sec_uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "option",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 2
+              }
+            },
+            {
+              "name": "date_window",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 24
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_item_analysis_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_item_analysis_list_api_v1_douyin_billboard_fetch_hot_account_item_analysis_list_get",
+          "parameters": [
+            {
+              "name": "sec_uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_fans_interest_account_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_fans_interest_account_list_api_v1_douyin_billboard_fetch_hot_account_fans_interest_account_list_get",
+          "parameters": [
+            {
+              "name": "sec_uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_fans_interest_search_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_fans_interest_search_list_api_v1_douyin_billboard_fetch_hot_account_fans_interest_search_list_get",
+          "parameters": [
+            {
+              "name": "sec_uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_fans_interest_topic_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_fans_interest_topic_list_api_v1_douyin_billboard_fetch_hot_account_fans_interest_topic_list_get",
+          "parameters": [
+            {
+              "name": "sec_uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "billboard",
+      "path": "/api/v1/douyin/billboard/fetch_hot_account_fans_portrait_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_account_fans_portrait_list_api_v1_douyin_billboard_fetch_hot_account_fans_portrait_list_get",
+          "parameters": [
+            {
+              "name": "sec_uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "option",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_hot_spot_billboard",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_hot_spot_billboard_api_v1_douyin_creator_fetch_creator_hot_spot_billboard_get",
+          "parameters": [
+            {
+              "name": "billboard_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "0"
+              }
+            },
+            {
+              "name": "hot_search_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            },
+            {
+              "name": "city_code",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_hot_topic_billboard",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_hot_topic_billboard_api_v1_douyin_creator_fetch_creator_hot_topic_billboard_get",
+          "parameters": [
+            {
+              "name": "billboard_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "order_key",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            },
+            {
+              "name": "time_filter",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_hot_music_billboard",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_hot_music_billboard_api_v1_douyin_creator_fetch_creator_hot_music_billboard_get",
+          "parameters": [
+            {
+              "name": "billboard_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "order_key",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            },
+            {
+              "name": "time_filter",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_material_center_billboard",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "adapter_present",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_material_center_billboard_api_v1_douyin_creator_fetch_creator_material_center_billboard_get",
+          "parameters": [
+            {
+              "name": "billboard_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "order_key",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            },
+            {
+              "name": "time_filter",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_material_center_config",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_material_center_config_api_v1_douyin_creator_fetch_creator_material_center_config_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_material_center_related",
+      "documented_max_items": 100,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_material_center_related_api_v1_douyin_creator_fetch_creator_material_center_related_get",
+          "parameters": [
+            {
+              "name": "query_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "billboard_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 2
+              }
+            },
+            {
+              "name": "limit",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20,
+                "minimum": 1,
+                "maximum": 100
+              }
+            },
+            {
+              "name": "offset",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_hot_props_billboard",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_hot_props_billboard_api_v1_douyin_creator_fetch_creator_hot_props_billboard_get",
+          "parameters": [
+            {
+              "name": "billboard_tag",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "order_key",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            },
+            {
+              "name": "time_filter",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "creator",
+      "path": "/api/v1/douyin/creator/fetch_creator_hot_challenge_billboard",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_creator_hot_challenge_billboard_api_v1_douyin_creator_fetch_creator_hot_challenge_billboard_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_all_valid_date",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_all_valid_date_api_v1_douyin_index_fetch_all_valid_date_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_valid_date_for_relation",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_valid_date_for_relation_api_v1_douyin_index_fetch_valid_date_for_relation_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_all_area",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_all_area_api_v1_douyin_index_fetch_all_area_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_current_hot_topic",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_current_hot_topic_api_v1_douyin_index_fetch_current_hot_topic_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_hot_detail",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_detail_api_v1_douyin_index_fetch_hot_detail_get",
+          "parameters": [
+            {
+              "name": "topic_name",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_hot_words",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_words_api_v1_douyin_index_fetch_hot_words_get",
+          "parameters": [
+            {
+              "name": "app_name",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "aweme",
+                "enum": [
+                  "aweme",
+                  "toutiao"
+                ]
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_hot_trend_word",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_hot_trend_word_api_v1_douyin_index_fetch_hot_trend_word_get",
+          "parameters": [
+            {
+              "name": "app_name",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "aweme",
+                "enum": [
+                  "aweme",
+                  "toutiao"
+                ]
+              }
+            },
+            {
+              "name": "type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0,
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_keyword_valid_date",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_keyword_valid_date_api_v1_douyin_index_fetch_keyword_valid_date_post",
+          "parameters": [
+            {
+              "name": "keyword_list",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_multi_keyword_hot_trend",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.003,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_multi_keyword_hot_trend_api_v1_douyin_index_fetch_multi_keyword_hot_trend_post",
+          "parameters": [
+            {
+              "name": "keyword_list",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "app_name",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "aweme",
+                "enum": [
+                  "aweme",
+                  "toutiao"
+                ]
+              }
+            },
+            {
+              "name": "region",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_multi_keyword_interpretation",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_multi_keyword_interpretation_api_v1_douyin_index_fetch_multi_keyword_interpretation_post",
+          "parameters": [
+            {
+              "name": "keyword_list",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "app_name",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "aweme",
+                "enum": [
+                  "aweme",
+                  "toutiao"
+                ]
+              }
+            },
+            {
+              "name": "region",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_relation_word",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_relation_word_api_v1_douyin_index_fetch_relation_word_post",
+          "parameters": [
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "app_name",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "aweme",
+                "enum": [
+                  "aweme",
+                  "toutiao"
+                ]
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_portrait",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_portrait_api_v1_douyin_index_fetch_portrait_post",
+          "parameters": [
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "app_name",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "aweme",
+                "enum": [
+                  "aweme",
+                  "toutiao"
+                ]
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_encrypt_user_id",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_encrypt_user_id_api_v1_douyin_index_fetch_encrypt_user_id_get",
+          "parameters": [
+            {
+              "name": "uid",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_daren_sug_great_user_list",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_daren_sug_great_user_list_api_v1_douyin_index_fetch_daren_sug_great_user_list_post",
+          "parameters": [
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "total",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "20"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_daren_compare_users_stable",
+      "documented_max_items": 5,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_daren_compare_users_stable_api_v1_douyin_index_fetch_daren_compare_users_stable_post",
+          "parameters": [
+            {
+              "name": "user_list",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "days",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "7",
+                "enum": [
+                  "7",
+                  "30"
+                ]
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_daren_similar_users",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_daren_similar_users_api_v1_douyin_index_fetch_daren_similar_users_post",
+          "parameters": [
+            {
+              "name": "user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_daren_great_user_top_video",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_daren_great_user_top_video_api_v1_douyin_index_fetch_daren_great_user_top_video_post",
+          "parameters": [
+            {
+              "name": "user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_daren_great_item_mile_info",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_daren_great_item_mile_info_api_v1_douyin_index_fetch_daren_great_item_mile_info_post",
+          "parameters": [
+            {
+              "name": "user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_daren_great_user_fans_info",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_daren_great_user_fans_info_api_v1_douyin_index_fetch_daren_great_user_fans_info_post",
+          "parameters": [
+            {
+              "name": "user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_filter_options",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_item_filter_options_api_v1_douyin_index_fetch_item_filter_options_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_sug",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_sug_api_v1_douyin_index_fetch_item_sug_post",
+          "parameters": [
+            {
+              "name": "query",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_query",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_query_api_v1_douyin_index_fetch_item_query_post",
+          "parameters": [
+            {
+              "name": "query",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "category_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "0"
+              }
+            },
+            {
+              "name": "date_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "label_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "duration_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_base",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_base_api_v1_douyin_index_fetch_item_base_post",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_index",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_index_api_v1_douyin_index_fetch_item_index_post",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_index_interpret",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_index_interpret_api_v1_douyin_index_fetch_item_index_interpret_post",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_analysis",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_analysis_api_v1_douyin_index_fetch_item_analysis_post",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_item_user_profile",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_item_user_profile_api_v1_douyin_index_fetch_item_user_profile_post",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_valid_date",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_content_valid_date_api_v1_douyin_index_fetch_content_valid_date_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_brand_hot_videos_time_scope",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_brand_hot_videos_time_scope_api_v1_douyin_index_fetch_brand_hot_videos_time_scope_post",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_creative_keywords",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_creative_keywords_api_v1_douyin_index_fetch_content_creative_keywords_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "period",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "7",
+                "enum": [
+                  "1",
+                  "3",
+                  "7"
+                ]
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_creative_keyword_items",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_creative_keyword_items_api_v1_douyin_index_fetch_content_creative_keyword_items_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "period",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "7",
+                "enum": [
+                  "1",
+                  "3",
+                  "7"
+                ]
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "keyword",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_creative_topic",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_creative_topic_api_v1_douyin_index_fetch_content_creative_topic_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "period",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "7",
+                "enum": [
+                  "1",
+                  "3",
+                  "7"
+                ]
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "rank_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "index",
+                "enum": [
+                  "index",
+                  "rise"
+                ]
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_publish_trend",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_content_publish_trend_api_v1_douyin_index_fetch_content_publish_trend_get",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_creative_duration",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_creative_duration_api_v1_douyin_index_fetch_content_creative_duration_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "period",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "week",
+                "enum": [
+                  "week",
+                  "month"
+                ]
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_author_portrait",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_author_portrait_api_v1_douyin_index_fetch_content_author_portrait_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "period",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "month",
+                "enum": [
+                  "week",
+                  "month"
+                ]
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_consumer_portrait",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_consumer_portrait_api_v1_douyin_index_fetch_content_consumer_portrait_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "period",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "month",
+                "enum": [
+                  "week",
+                  "month"
+                ]
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_interact_trend",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_interact_trend_api_v1_douyin_index_fetch_content_interact_trend_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_content_consume_trend",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_content_consume_trend_api_v1_douyin_index_fetch_content_consume_trend_post",
+          "parameters": [
+            {
+              "name": "tag_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "start_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "end_date",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_insight_recommend",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_insight_recommend_api_v1_douyin_index_fetch_insight_recommend_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_report_search",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_report_search_api_v1_douyin_index_fetch_report_search_post",
+          "parameters": [
+            {
+              "name": "current_page",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "1"
+              }
+            },
+            {
+              "name": "page_size",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "16"
+              }
+            },
+            {
+              "name": "type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "",
+                "enum": [
+                  "",
+                  "行业洞察",
+                  "产品洞察",
+                  "用户洞察",
+                  "趋势洞察"
+                ]
+              }
+            },
+            {
+              "name": "business",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "report_time",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "search",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": ""
+              }
+            },
+            {
+              "name": "category",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "6"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_report_detail",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_report_detail_api_v1_douyin_index_fetch_report_detail_get",
+          "parameters": [
+            {
+              "name": "report_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "index",
+      "path": "/api/v1/douyin/index/fetch_insight_get_rec",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_insight_get_rec_api_v1_douyin_index_fetch_insight_get_rec_get",
+          "parameters": [
+            {
+              "name": "report_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_user_search",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_user_search_api_v1_douyin_search_fetch_user_search_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "douyin_user_fans": {
+                  "type": "string",
+                  "default": ""
+                },
+                "douyin_user_type": {
+                  "type": "string",
+                  "default": ""
+                },
+                "search_id": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_user_search_v2",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_user_search_v2_api_v1_douyin_search_fetch_user_search_v2_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_video_search_v1",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_video_search_v1_api_v1_douyin_search_fetch_video_search_v1_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "sort_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "publish_time": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "filter_duration": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "content_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "search_id": {
+                  "type": "string",
+                  "default": ""
+                },
+                "backtrace": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_video_search_v2",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "adapter_present",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_video_search_v2_api_v1_douyin_search_fetch_video_search_v2_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "sort_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "publish_time": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "filter_duration": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "content_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "search_id": {
+                  "type": "string",
+                  "default": ""
+                },
+                "backtrace": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_video_search_v3",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_video_search_v3_api_v1_douyin_search_fetch_video_search_v3_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "query": {
+                  "type": "string",
+                  "default": "美食"
+                },
+                "date_type": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "label_type": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "duration_type": {
+                  "type": "integer",
+                  "default": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_video_search_v4",
+      "documented_max_items": 12,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_video_search_v4_api_v1_douyin_search_fetch_video_search_v4_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_video_search_v5",
+      "documented_max_items": 10,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "5/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_video_search_v5_api_v1_douyin_search_fetch_video_search_v5_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "offset": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "page": {
+                  "type": "integer",
+                  "default": 1
+                },
+                "search_id": {
+                  "type": "string",
+                  "default": ""
+                },
+                "backtrace": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_general_search_v2",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_general_search_v2_api_v1_douyin_search_fetch_general_search_v2_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "sort_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "publish_time": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "filter_duration": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "content_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "search_id": {
+                  "type": "string",
+                  "default": ""
+                },
+                "backtrace": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_challenge_search_v2",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_challenge_search_v2_api_v1_douyin_search_fetch_challenge_search_v2_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "猫咪"
+                },
+                "cursor": {
+                  "type": "integer",
+                  "default": 0
+                },
+                "sort_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "publish_time": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "filter_duration": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "content_type": {
+                  "type": "string",
+                  "default": "0"
+                },
+                "search_id": {
+                  "type": "string",
+                  "default": ""
+                },
+                "backtrace": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_search_suggest",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_search_suggest_api_v1_douyin_search_fetch_search_suggest_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "人工智能"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "search",
+      "path": "/api/v1/douyin/search/fetch_search_suggest_v2",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": null,
+      "allow_discount": null,
+      "allow_free_credit": null,
+      "rate_limit": null,
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_search_suggest_v2_api_v1_douyin_search_fetch_search_suggest_v2_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "keyword": {
+                  "type": "string",
+                  "default": "人工智能"
+                },
+                "history_words": {
+                  "type": "string",
+                  "default": ""
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_one_video",
+      "documented_max_items": 1,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_one_video_api_v1_douyin_app_v3_fetch_one_video_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_one_video_v2",
+      "documented_max_items": 1,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_one_video_v2_api_v1_douyin_app_v3_fetch_one_video_v2_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_one_video_v3",
+      "documented_max_items": 1,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_one_video_v3_api_v1_douyin_app_v3_fetch_one_video_v3_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_multi_video",
+      "documented_max_items": 10,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.01,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_multi_video_api_v1_douyin_app_v3_fetch_multi_video_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_multi_video_v2",
+      "documented_max_items": 50,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "live_intake_verified",
+      "base_price_usd": 0.05,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_multi_video_v2_api_v1_douyin_app_v3_fetch_multi_video_v2_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_video_statistics",
+      "documented_max_items": 2,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_video_statistics_api_v1_douyin_app_v3_fetch_video_statistics_get",
+          "parameters": [
+            {
+              "name": "aweme_ids",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_multi_video_statistics",
+      "documented_max_items": 50,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.025,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_multi_video_statistics_api_v1_douyin_app_v3_fetch_multi_video_statistics_get",
+          "parameters": [
+            {
+              "name": "aweme_ids",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_user_post_videos",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "adapter_present",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_user_post_videos_api_v1_douyin_app_v3_fetch_user_post_videos_get",
+          "parameters": [
+            {
+              "name": "sec_user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "max_cursor",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "count",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20
+              }
+            },
+            {
+              "name": "sort_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "channel",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "normal"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/handler_user_profile",
+      "documented_max_items": 1,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "handler_user_profile_api_v1_douyin_app_v3_handler_user_profile_get",
+          "parameters": [
+            {
+              "name": "sec_user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_video_comments",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "adapter_present",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_video_comments_api_v1_douyin_app_v3_fetch_video_comments_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "cursor",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "count",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_video_comment_replies",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "adapter_present",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_video_comments_reply_api_v1_douyin_app_v3_fetch_video_comment_replies_get",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "comment_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "cursor",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "count",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_video_high_quality_play_url",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.005,
+      "allow_discount": true,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_video_high_quality_play_url_api_v1_douyin_app_v3_fetch_video_high_quality_play_url_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "share_url",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "region",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "app/v3",
+      "path": "/api/v1/douyin/app/v3/fetch_multi_video_high_quality_play_url",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.25,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_multi_video_high_quality_play_url_api_v1_douyin_app_v3_fetch_multi_video_high_quality_play_url_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "object",
+              "properties": {
+                "aweme_ids": {
+                  "type": "string",
+                  "default": "7512756548356492544,7448118827402972455,7126745726494821640"
+                },
+                "region": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_one_video",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_one_video_api_v1_douyin_web_fetch_one_video_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "need_anchor_info",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_one_video_v2",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_one_video_v2_api_v1_douyin_web_fetch_one_video_v2_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_multi_video",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.05,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "POST",
+          "operation_id": "fetch_multi_video_api_v1_douyin_web_fetch_multi_video_post",
+          "parameters": [],
+          "body_required": true,
+          "body": {
+            "application/json": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/handler_user_profile",
+      "documented_max_items": 1,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "handler_user_profile_api_v1_douyin_web_handler_user_profile_get",
+          "parameters": [
+            {
+              "name": "sec_user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_batch_user_profile_v1",
+      "documented_max_items": 10,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.03,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_batch_user_profile_v1_api_v1_douyin_web_fetch_batch_user_profile_v1_get",
+          "parameters": [
+            {
+              "name": "sec_user_ids",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_batch_user_profile_v2",
+      "documented_max_items": 50,
+      "capacity_evidence": "reviewed_operation_description_or_schema",
+      "status": "candidate",
+      "base_price_usd": 0.15,
+      "allow_discount": false,
+      "allow_free_credit": false,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_batch_user_profile_v2_api_v1_douyin_web_fetch_batch_user_profile_v2_get",
+          "parameters": [
+            {
+              "name": "sec_user_ids",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_user_post_videos",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_user_post_videos_api_v1_douyin_web_fetch_user_post_videos_get",
+          "parameters": [
+            {
+              "name": "sec_user_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "max_cursor",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "0"
+              }
+            },
+            {
+              "name": "count",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20
+              }
+            },
+            {
+              "name": "filter_type",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string",
+                "default": "0"
+              }
+            },
+            {
+              "name": "cookie",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_video_comments",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_video_comments_api_v1_douyin_web_fetch_video_comments_get",
+          "parameters": [
+            {
+              "name": "aweme_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "cursor",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "count",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "web",
+      "path": "/api/v1/douyin/web/fetch_video_comment_replies",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "candidate",
+      "base_price_usd": 0.001,
+      "allow_discount": true,
+      "allow_free_credit": true,
+      "rate_limit": "10/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "fetch_video_comments_reply_api_v1_douyin_web_fetch_video_comment_replies_get",
+          "parameters": [
+            {
+              "name": "item_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "comment_id",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "cursor",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 0
+              }
+            },
+            {
+              "name": "count",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 20
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "metadata",
+      "path": "/api/v1/tikhub/user/get_endpoint_info",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "metadata",
+      "base_price_usd": 0.0,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "1/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "get_endpoint_info_api_v1_tikhub_user_get_endpoint_info_get",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "metadata",
+      "path": "/api/v1/tikhub/user/get_all_endpoints_info",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "metadata",
+      "base_price_usd": 0.0,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "1/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "get_all_endpoints_info_api_v1_tikhub_user_get_all_endpoints_info_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "metadata",
+      "path": "/api/v1/tikhub/user/calculate_price",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "metadata",
+      "base_price_usd": 0.0,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "1/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "calculate_price_api_v1_tikhub_user_calculate_price_get",
+          "parameters": [
+            {
+              "name": "endpoint",
+              "in": "query",
+              "required": true,
+              "schema": {
+                "type": "string"
+              }
+            },
+            {
+              "name": "request_per_day",
+              "in": "query",
+              "required": false,
+              "schema": {
+                "type": "integer",
+                "default": 1
+              }
+            }
+          ],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "metadata",
+      "path": "/api/v1/tikhub/user/get_user_daily_usage",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "metadata",
+      "base_price_usd": 0.0,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "1/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "get_user_daily_usage_api_v1_tikhub_user_get_user_daily_usage_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    },
+    {
+      "group": "metadata",
+      "path": "/api/v1/tikhub/user/get_tiered_discount_info",
+      "documented_max_items": null,
+      "capacity_evidence": null,
+      "status": "metadata",
+      "base_price_usd": 0.0,
+      "allow_discount": false,
+      "allow_free_credit": true,
+      "rate_limit": "1/second",
+      "contract_found": true,
+      "operations": [
+        {
+          "method": "GET",
+          "operation_id": "get_tiered_discount_info_api_v1_tikhub_user_get_tiered_discount_info_get",
+          "parameters": [],
+          "body_required": false,
+          "body": {}
+        }
+      ]
+    }
+  ]
+}
