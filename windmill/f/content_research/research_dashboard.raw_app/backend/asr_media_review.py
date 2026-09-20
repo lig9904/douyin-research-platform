@@ -1,7 +1,10 @@
-#requirements:
-#douyin-research-platform@git+https://github.com/lig9904/douyin-research-platform@92153f603368a3ab2cb7810924d6d3948857987a
-#psycopg[binary]==3.3.6
-#wmill==1.815.0
+# /// script
+# requires-python = "==3.13.*"
+# dependencies = [
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@92153f603368a3ab2cb7810924d6d3948857987a",
+#   "psycopg[binary]==3.3.6", "wmill==1.815.0",
+# ]
+# ///
 
 """Authenticated review only; does not submit ASR or create public media URLs."""
 from uuid import UUID

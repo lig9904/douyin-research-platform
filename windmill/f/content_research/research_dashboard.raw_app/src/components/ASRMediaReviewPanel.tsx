@@ -20,6 +20,7 @@ export default function ASRMediaReviewPanel({ videoId }: { videoId: string }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const canApprove = !!selected && selected.review_status === 'not_reviewed' && confirmed && playable && !busy
 
   async function load() {
     setBusy(true); setError(''); setNotice(''); setSelected(null); setUrl(''); setConfirmed(false)
@@ -40,7 +41,7 @@ export default function ASRMediaReviewPanel({ videoId }: { videoId: string }) {
     finally { setBusy(false) }
   }
   async function approve() {
-    if (!selected || !confirmed || !playable || ['approved', 'revoked'].includes(selected.review_status)) return
+    if (!selected || !canApprove) return
     setBusy(true); setError(''); setNotice('')
     try {
       const result = await backend.asr_media_review({video_id: videoId, asset_id: selected.asset_id,
@@ -67,10 +68,11 @@ export default function ASRMediaReviewPanel({ videoId }: { videoId: string }) {
     {selected && url && <div>
       <audio controls preload="metadata" src={url} onLoadedMetadata={() => setPlayable(true)} onError={() => {setPlayable(false); setConfirmed(false); setError('播放失败或链接已过期，请刷新链接。')}} />
       <p>链接有效期 5 分钟；云端读取地址：{selected.delivery_origin}</p>
-      <Checkbox checked={confirmed} disabled={!playable || busy || selected.review_status === 'approved' || selected.review_status === 'revoked'} onChange={(e) => setConfirmed(e.target.checked)}>
+      {selected.review_status === 'stale' && <Alert type="warning" message="资产已变化，当前审核版本不可再次批准，请联系管理员核对并更新审核版本。" />}
+      <Checkbox checked={confirmed} disabled={!playable || busy || selected.review_status !== 'not_reviewed'} onChange={(e) => setConfirmed(e.target.checked)}>
         我已核对音频内容并同意交由云端转写
       </Checkbox>{' '}
-      <Button disabled={!confirmed || !playable || busy} onClick={approve}>保存审核</Button>
+      <Button disabled={!canApprove} onClick={approve}>保存审核</Button>
     </div>}
   </section>
 }

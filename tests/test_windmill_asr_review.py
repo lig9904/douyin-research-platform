@@ -2,6 +2,7 @@ import importlib.util
 import inspect
 import sys
 import json
+import tomllib
 from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +27,12 @@ def test_backend_dependency_lock_matches_source_revision_and_runtime():
     assert "# py: 3.13" in lock
     assert "wmill==1.815.0" in lock
     assert "boto3==" in lock and "psycopg-binary==3.3.6" in lock
+    metadata = source.split("# /// script\n", 1)[1].split("# ///", 1)[0]
+    config = tomllib.loads("\n".join(line.removeprefix("# ") for line in metadata.splitlines()))
+    assert config["requires-python"] == "==3.13.*"
+    assert any(revision in dependency for dependency in config["dependencies"])
+    workspace_lock = (Path(__file__).parents[1] / "windmill/wmill-lock.yaml").read_text()
+    assert "f/content_research/research_dashboard.raw_app+asr_media_review.py:" in workspace_lock
 
 
 def test_approve_requires_preview_before_configuration(monkeypatch):
