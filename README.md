@@ -92,10 +92,10 @@ Canonical ID 始终使用：
 - TikHub Provider + 缓存层：完成
 - L0/L1 纯代码粗筛：完成
 - 多平台基础抽象：完成
-- TikHub 真实付费接口 V0：已用本机登录账号的现有 Secret 完成 1 次低粉爆款榜 smoke；SDK 2.1.1、零重试、业务成功并返回 4 项，Secret 未写入仓库或日志
+- TikHub 真实付费接口 V0：已完成低粉爆款、创作者素材、视频/账号搜索、账号详情与作品、批量视频详情、评论/回复、分页去重、报价和日用量的受控小批量实测；SDK 2.1.1、零重试，Secret 与原始响应未进入仓库或日志。当前结论仍为 PARTIAL，删除/私密映射、更多账号分层、准确性对照、受控故障和本地账单对账继续保留在 Issue #1
 - 本机真实数据黄金链路：已提供默认 dry-run、最多 5 条 / 2 次未缓存调用 / 零重试的 TikHub → 规范化 → PostgreSQL → L0/L1 入口；详情见 `docs/LOCAL_REAL_DATA_GOLDEN_V1.md`
-- Web 研究台：已在本机 Windmill CE 部署，已验收首页、视频库、账号库、热点库、全局搜索、运行/成本只读页，以及 L3 待审摘要→一次性正文页→审核保存→零调用预算预览全链路
+- Web 研究台：已在本机 Windmill CE 部署，已验收首页、视频库、账号库、热点库、全局搜索、运行/成本只读页、可解释账号相似度，以及 L3 待审摘要→一次性正文页→审核保存→零调用预算预览全链路
 - 研究台内部写操作：团队共享监测使用 actor 审计；专题、视频收藏和保存筛选按登录身份隔离；全部使用幂等事务与零外呼边界
 - 本机 V1 全链路验收：真实 TikHub、Ark、ASR、浏览器写操作、HTTPS/ACL/备份恢复的脱敏结果见 `docs/LOCAL_V1_ACCEPTANCE_2026-09-20.md`；不等同于测试服务器或生产生效
 - 测试服务器部署与验收：本机/CI 已提供五服务一次性 Overlay 烟测、`test-server-backup-v1` 双库与 globals 隔离恢复、无外发监控契约；域名、真实三账号 ACL、服务器 Secret、小流量 Provider、异机备份和真实外部告警闭环见 `docs/TEST_SERVER_READINESS_V1.md`；须取得目标环境输入后执行，不用本机契约冒充目标环境生效
-- 本机只读 MCP：stdio 三项工具已使用受限 reviewer 角色完成真实业务库集成冒烟；写入尝试由 PostgreSQL 拒绝
+- 本机只读 MCP：stdio 三项工具已使用受限 reviewer 角色完成真实业务库集成冒烟；Windmill HTTP Gateway 的七项研究工具已用短期、workspace-bound、精确 path scope token 完成真实 `initialize`、`tools/list`、逐工具调用、参数拒绝和跨目录拒绝，临时 token 已撤销。两条路径均未触发 Provider/LLM/付费调用；测试服务器 TLS、独立 reader role 与多账号 ACL 仍待现场验收
