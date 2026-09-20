@@ -66,6 +66,7 @@ _L3_OUTPUT_BOOL_FIELDS = (
 )
 _L3_ANALYSIS_TYPE = "l3_structured_research"
 _L3_SCHEMA_VERSION = "l3-research-v1.0.0"
+_ASR_TRANSCRIPT_TEXT_LIMIT = 12_000
 
 
 def _public_l3_output(output: Any) -> dict[str, Any]:
@@ -82,6 +83,31 @@ def _public_l3_output(output: Any) -> dict[str, Any]:
         if type(value) is bool:
             public[field] = value
     return public
+
+
+def _public_asr_transcript(row: dict[str, Any]) -> dict[str, Any]:
+    """Return the bounded transcript display contract, excluding execution internals."""
+
+    return {
+        "text": row["text"],
+        "truncated": row["truncated"],
+        "quality_status": row["quality_status"],
+        "provider": row["asr_provider"],
+        "model_id": row["model_id"],
+        "model_revision": row["model_revision"],
+        "engine_version": row["engine_version"],
+        "language": row["language"],
+        "audio_duration_ms": row["audio_duration_ms"],
+        "created_at": row["created_at"],
+        "cost": {
+            "api_cost": row["api_cost"],
+            "asr_cost": row["asr_cost"],
+            "llm_cost": row["llm_cost"],
+            "total_cost": row["total_cost"],
+            "currency": row["cost_currency"],
+            "basis": row["cost_basis"],
+        },
+    }
 
 
 def main(
@@ -363,6 +389,38 @@ def main(
                 """,
                 (selected_id,),
             )
+            asr_row = _fetch_one(
+                conn,
+                """
+                select
+                  left(t.text_content, %s) as text,
+                  char_length(t.text_content) > %s as truncated,
+                  t.quality_status,
+                  t.asr_provider,
+                  t.model_id,
+                  t.model_revision,
+                  t.engine_version,
+                  t.language,
+                  t.audio_duration_ms,
+                  t.created_at,
+                  c.api_cost,
+                  c.asr_cost,
+                  c.llm_cost,
+                  c.total_cost,
+                  c.cost_currency,
+                  c.cost_basis
+                from transcript t
+                join research_task_cost c on c.id=t.task_cost_id
+                where t.video_id=%s::uuid
+                  and c.status='completed'
+                  and c.task_type='asr_transcription'
+                  and c.video_id=t.video_id
+                  and c.input_fingerprint=t.source_fingerprint
+                order by t.created_at desc, t.id desc
+                limit 1
+                """,
+                (_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
+            )
             l3_row = _fetch_one(
                 conn,
                 """
@@ -407,6 +465,9 @@ def main(
             )
             detail["evidence"] = evidence
             detail["comments"] = comments
+            detail["asr_transcript"] = (
+                _public_asr_transcript(asr_row) if asr_row else None
+            )
             detail["l3_analysis"] = (
                 {
                     "analysis_type": l3_row["analysis_type"],
