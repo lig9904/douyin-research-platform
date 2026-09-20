@@ -115,7 +115,7 @@ def execute_reviewed_live_ark(
 
     _validate_dsn(dsn)
     _validate_selection(selection)
-    _validate_ark_configuration(ark)
+    validate_live_ark_configuration(ark)
     if selection.confirmation != L3_CONFIRMATION:
         raise PermissionError("exact paid-operation confirmation is required")
 
@@ -176,10 +176,9 @@ def execute_reviewed_live_ark(
     # The lambda closes over a validated immutable snapshot.  The coordinator
     # verifies it again and re-checks the persisted review immediately before
     # budget reservation, so this service cannot substitute raw evidence.
-    return coordinator_factory(dsn).run(
-        execution,
-        evidence_factory=lambda: assembled,
-        provider_factory=lambda: provider_factory(
+    providers = []
+    def construct_provider():
+        provider = provider_factory(
             api_key=ark.api_key,
             endpoint_id=ark.endpoint_id,
             model_id=ark.model_id,
@@ -190,8 +189,21 @@ def execute_reviewed_live_ark(
             input_cost_per_million_tokens=ark.input_cost_per_million_tokens,
             output_cost_per_million_tokens=ark.output_cost_per_million_tokens,
             timeout_seconds=ark.timeout_seconds,
-        ),
-    )
+        )
+        providers.append(provider)
+        return provider
+    try:
+        return coordinator_factory(dsn).run(execution,
+            evidence_factory=lambda: assembled, provider_factory=construct_provider)
+    finally:
+        for provider in providers:
+            close = getattr(provider, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    # A cleanup error must not turn a paid result into a retry.
+                    pass
 
 
 def _blocked(reason: str) -> dict[str, object]:
@@ -235,7 +247,7 @@ def _validate_selection(selection: ReviewedL3Selection) -> None:
     _optional_decimal(selection.estimated_llm_cost, "estimated LLM cost")
 
 
-def _validate_ark_configuration(ark: LiveArkConfiguration) -> None:
+def validate_live_ark_configuration(ark: LiveArkConfiguration) -> None:
     if not isinstance(ark.api_key, str) or not ark.api_key.strip():
         raise ValueError("L3 live Ark API key is required")
     for name in _REQUIRED_STRINGS:
@@ -251,8 +263,10 @@ def _validate_ark_configuration(ark: LiveArkConfiguration) -> None:
         or ark.timeout_seconds > 300
     ):
         raise ValueError("L3 live Ark timeout must be between 1 and 300 seconds")
-    _decimal(ark.input_cost_per_million_tokens, "input token price")
-    _decimal(ark.output_cost_per_million_tokens, "output token price")
+    for value, label in ((ark.input_cost_per_million_tokens, "input token price"),
+                         (ark.output_cost_per_million_tokens, "output token price")):
+        if _decimal(value, label) <= 0:
+            raise ValueError(f"L3 live {label} must be positive; zero placeholders are not prices")
 
 
 def _decimal(value: Decimal | str | int | float, label: str) -> Decimal:
