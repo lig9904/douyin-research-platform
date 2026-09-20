@@ -1,5 +1,13 @@
 # 评论 → L2 → 候选批次执行契约
 
+## Worker 接入准备（尚未部署）
+
+入口 `f/content_research/collectors/process_comment_batch` 仅接受 `source_run_id`。固定读取 `research_db`、`automation_worker_identity`、`tikhub_api_key` 和 `comment_batch_settings`（均在 `f/content_research/` 下）。settings 示例为 `{"top_n":3,"min_score":70,"quota_key":"l3","comment_count":20,"max_pages":1,"max_items":20,"sample_reason":"top"}`；不接受调用方身份、数据库、预算日期或密钥路径。
+
+固定服务端变量 `comment_daily_policy` 必须明确提供 `max_requests`、`max_cost_usd`、`max_l3_items` 三个字段。前两项可为 null，表示不设相应上限；不自行猜测金额限制。入口在来源批次有效后，按策略创建当天缺失的 tikhub / scheduled_comment_batch / USD 记账行及晋级配额行；冲突时不覆盖，保留管理员当日额度和已用数量。策略缺失或非法在读取 TikHub Key 前失败。真实跨日连续调度仍须服务器验收。
+
+依赖固定到含失败收尾修复的已合并提交 c56376a646038f264c552576f1f43d18d66d6026。真实调用使用零重试，返回仅批次与数量；不完整批次使 Windmill 任务失败，详情从持久化运行记录查看。当前完成入口单元验证，真实服务端批次、跨日配置准备与连续周期仍待验收。
+
 ## 输入和输出
 
 服务 `CommentPipeline` 接受已成功的 `l0l1_discovery` 批次 UUID；只处理该批次 `L1/scored` 的视频，不修改原始批次。最多 20 条，超过时明确拒绝，不静默截断。
