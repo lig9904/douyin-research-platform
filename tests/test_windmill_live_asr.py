@@ -17,7 +17,7 @@ SPEC.loader.exec_module(worker)
 
 
 def test_public_inputs_cannot_supply_url_key_or_actor():
-    assert list(inspect.signature(worker.main).parameters) == ["video_id", "asset_id", "review_version"]
+    assert list(inspect.signature(worker.main).parameters) == ["video_id", "asset_id", "review_version", "resume_job_id"]
 
 
 def test_invalid_id_stops_before_configuration(monkeypatch):
@@ -26,7 +26,7 @@ def test_invalid_id_stops_before_configuration(monkeypatch):
         worker.main("invalid", str(uuid4()), "v1")
 
 
-@pytest.mark.parametrize("status", ["submitted", "running", "completed", "failed", "reconciliation_required"])
+@pytest.mark.parametrize("status", ["submitted", "running", "completed", "failed", "reconciliation_required", "poll_failed"])
 @pytest.mark.parametrize("existing", [True, False])
 def test_worker_preserves_prior_date_and_reports_failure(monkeypatch, status, existing):
     video, asset = uuid4(), uuid4()
@@ -49,7 +49,7 @@ def test_worker_preserves_prior_date_and_reports_failure(monkeypatch, status, ex
     monkeypatch.setattr(worker.psycopg, "connect", lambda _: Conn())
     def run(req):
         assert req.budget_date == (prior_day if existing else date.today())
-        return {"status": status}
+        return {"status": "running", "error_code": "poll_failed"} if status == "poll_failed" else {"status": status}
     monkeypatch.setattr(worker, "LiveASRService", lambda _: SimpleNamespace(run=run))
     if status in {"submitted", "running", "completed"}:
         assert worker.main(str(video), str(asset), "v1") == {"status": status}

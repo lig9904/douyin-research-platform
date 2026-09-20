@@ -34,3 +34,40 @@
 入口先校验审核与资产绑定，再 HEAD 校验对象摘要、大小和类型，并签发一小时投递链接。恢复沿用稳定任务键和原账期，不重置已有日账；已有任务但原账本缺失时停止，要求核对而非补零。只有新任务可按固定策略初始化当天账本，已有当天配置不覆盖。
 
 `submitted` / `running` 表示仍需后续调度轮询，不能视为转写完成；失败或需核对状态使 Windmill 任务失败。轮询恢复继续调用同一入口和同一资产，不创建新的付费提交。上线须配置实际调度并验证两个周期，不能只部署脚本。对外错误固定脱敏，不返回签名 URL 或凭据。
+
+## 待完成任务自动轮询
+
+`analysis/poll_pending_asr` 无公开输入，固定读取已提交一次、具有供应商任务引用、状态 submitted/running 的 live ASR 任务；不会选择 submitting、终态或人工任务。每轮最多串行处理 5 条，按更新时间从旧到新；这是吞吐批次，不是金额上限。单条失败后继续本批其他任务，最终以脱敏汇总错误标记调度失败。
+
+调度模板每 5 分钟执行，默认 disabled。须先发布更新后的 `run_reviewed_asr`，配置 `max_polls` 为 1–3，确认至少两个普通 Worker 可用，再部署并启用轮询计划。父任务同步等待子任务，因此不能仅给这一队列一个 Worker。不得把模板文件存在当作计划已启用。
+
+轮询传入服务端持久化的 `resume_job_id`；Worker 会核对该 ID 的任务键和可恢复状态。模型/内容身份变化、旧任务不存在或原账本缺失时停止，不转为新的付费提交。缺失审核或损坏元数据保留待人工检查，不以删除旧任务或重置状态来恢复。旧日配额若已耗尽，轮询也会明确失败，不挪到新账期绕过。
+
+仍须真实验证两次计划执行、子任务正确路由、供应商轮询、结果入库及页面展示。
+
+供应商轮询失败时，即便持久化任务仍为 submitted/running，Worker 和轮询入口也将非空 `error_code` 视为本次运行失败，避免 Windmill 误显示成功。任务本身保留可恢复状态，后续调度仍使用原供应商任务引用，不重提转写；成功轮询后由协调器清除旧错误。
+
+### 累计运行边界
+
+自动任务提交时将累计最多 72 次轮询、创建后最长 24 小时写入任务 metadata。没有旧版本策略字段的任务采用同样边界。此处限制异常任务空转，不是金额上限；不会重建任何日费用上限，也不会把未知费用当作零。
+
+协调器在每次轮询前锁定任务行并检查持久化策略，再在同一事务预留请求数和增加 poll_count，两个并发请求不能越过剩余次数。超限不发供应商请求、不增加日请求账，保留任务状态和供应商引用，标记 `poll_limit_reached` 等待人工核对。
+
+调度选择器排除已达次数或年龄边界的任务，避免占满每轮 5 条的名额；用 `limited` 汇总明确报错，其他合格任务仍继续处理。不得删除任务、归零次数或换任务键来重新提交。运营人员核对供应商状态后再决定处理方式；当前没有自动提升边界或自动重提功能。
+
+### 独立发布调度
+
+`windmill/wmill.yaml` 保持 `includeSchedules: false`，常规 source sync 不发布计划，避免意外覆盖已有计划。以下命令只能在经 JumpServer 进入的服务器、使用已配置的 Windmill CLI 身份执行；本机文档记录不代表已执行。
+
+```sh
+cd /srv/douyin-research-test/app/windmill
+wmill schedule get f/content_research/analysis/poll_pending_asr --workspace test-research
+# 确认无同名计划，或已核对既有计划并保存其配置之后，再发布默认关闭的模板：
+wmill schedule push f/content_research/analysis/poll_pending_asr.schedule.yaml f/content_research/analysis/poll_pending_asr --workspace test-research
+wmill schedule get f/content_research/analysis/poll_pending_asr --workspace test-research
+# 确认脚本版本、双 Worker、固定配置与一次手动恢复通过后才启用：
+wmill schedule enable f/content_research/analysis/poll_pending_asr --workspace test-research
+wmill schedule get f/content_research/analysis/poll_pending_asr --workspace test-research
+```
+
+`schedule push` 会覆盖同名远端计划，不得盲目重跑覆盖正在工作的配置。部署应记录推送前后 cron、时区、script_path、enabled 和运行身份，随后观察两个真实计划任务完成。CLI 参数已由本地 1.815.0 帮助核验；真实发布仍待现场执行。
