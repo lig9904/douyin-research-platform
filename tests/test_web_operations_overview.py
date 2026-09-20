@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -130,3 +132,65 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
             cur.execute("delete from source_video where id=%s", (video_id,))
             cur.execute("delete from pipeline_run where id=%s", (run_id,))
             conn.commit()
+
+
+def test_operations_returns_account_daily_spend_without_platform_filtering() -> None:
+    """A US supplier day remains a US supplier day, not a Beijing dashboard day."""
+    assert DSN
+    scope = f"ops-daily-{uuid4()}"
+    billing_date = datetime.now(timezone.utc).astimezone(ZoneInfo("America/Los_Angeles")).date()
+    try:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into supplier_daily_spend(
+                  provider, account_scope, billing_date, cost_currency, billing_timezone,
+                  total_cost, balance_cost, free_credit_cost, total_requests, paid_requests, fetched_at
+                ) values ('tikhub', %s, %s, 'USD', 'America/Los_Angeles',
+                  0.052, 0.052, 0, 3, 2, now())
+                """,
+                (scope, billing_date),
+            )
+            conn.commit()
+
+        result = _backend().main(_resource(), platform="kuaishou", days=1)
+        spend = result["supplier_daily_spend"]
+        row = next(item for item in spend["records"] if item["account_scope"] == scope)
+        assert spend["status"] == "available"
+        assert row["billing_date"] == billing_date.isoformat()
+        assert row["billing_timezone"] == "America/Los_Angeles"
+        assert row["period_status"] == "current_accumulating"
+        assert row["freshness_status"] == "fresh"
+        assert row["total_cost"] == pytest.approx(0.052)
+        assert row["total_requests"] == 3 and row["paid_requests"] == 2
+    finally:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute("delete from supplier_daily_spend where account_scope=%s", (scope,))
+            conn.commit()
+
+
+def test_operations_daily_spend_does_not_turn_missing_sync_data_into_zero() -> None:
+    class Cursor:
+        def __init__(self, table_exists: bool):
+            self.table_exists = table_exists
+            self.calls = 0
+
+        def execute(self, *_args):
+            self.calls += 1
+
+        def fetchone(self):
+            return {"table_name": "supplier_daily_spend" if self.table_exists else None}
+
+        def fetchall(self):
+            return []
+
+    backend = _backend()
+    absent = backend._daily_supplier_spend(Cursor(table_exists=False), 7)
+    empty = backend._daily_supplier_spend(Cursor(table_exists=True), 7)
+    assert absent == {
+        "status": "not_synced", "records": [], "today": [],
+        "message": "供应商日费用尚未同步。",
+    }
+    assert empty["status"] == "not_synced"
+    assert empty["records"] == [] and empty["today"] == []
+    assert "0" not in empty["message"]
