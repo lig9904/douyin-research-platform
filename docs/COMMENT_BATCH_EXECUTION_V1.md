@@ -1,6 +1,14 @@
 # 评论 → L2 → 候选批次执行契约
 
-## Worker 接入准备（尚未部署）
+## 最新现场验收（2026-09-21）
+
+PR #88 合并为 `30f4c85f191e97b8c87bf293ed514e31efe8b9d0` 后，评论 Worker 已发布到测试服务器；依赖锁、15 项定向测试、两项 CI 与独立复核通过。
+原有三条视频的发现批次 `f779e998-632b-4d7f-9fd5-41d60e16ffe6` 实际完成评论/L2，结果批次 `b43efde3-80e6-41d5-a5e8-90515e65f302`：输入/输出 3/3，逐项 L2 success，候选 1 条。
+同批重跑返回同一结果批次；评论请求累计仍 3，内部计价 USD 0.003，缓存评论响应共 3 条。供应商账期 2026-09-20 的日账从 USD 0.052/3 次付费增至 USD 0.055/6 次付费，与本批增量一致。
+研究台刷新后显示三条视频均为 L2，首条详情展示 5 条真实热门评论，待审摘要入口可用。没有执行 ASR/L3；真实失败恢复和连续自动调度尚未完成。
+采样为每视频一页、最多20条；金额与请求总次数上限均为 null；候选 top_n=3、min_score=70、当日晋级配额3，后者不是金额限制。
+
+## Worker 接入配置
 
 入口 `f/content_research/collectors/process_comment_batch` 仅接受 `source_run_id`。固定读取 `research_db`、`automation_worker_identity`、`tikhub_api_key` 和 `comment_batch_settings`（均在 `f/content_research/` 下）。settings 示例为 `{"top_n":3,"min_score":70,"quota_key":"l3","comment_count":20,"max_pages":1,"max_items":20,"sample_reason":"top"}`；不接受调用方身份、数据库、预算日期或密钥路径。
 

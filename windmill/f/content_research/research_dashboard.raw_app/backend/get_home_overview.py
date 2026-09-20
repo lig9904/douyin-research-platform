@@ -443,6 +443,6 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
         "history": history,
         "ip_adaptation": {
             "status": "pending",
-            "message": "L2/L3 尚未启用。首页不生成未经研究支持的 IP 适配结论。"
+            "message": "首页暂未汇总 IP 适配建议。请在视频详情查看实际研究进度与结果；此处不生成未经证据支持的结论。"
         },
     }
