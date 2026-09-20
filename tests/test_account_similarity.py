@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from douyin_research.l2 import AccountSimilarityProfile, rank_similar_accounts
 
 
@@ -22,6 +24,14 @@ def _profile(
         follower_count=followers,
         video_count=videos,
     )
+
+
+def test_windmill_helper_is_exactly_the_versioned_core() -> None:
+    source = Path("src/douyin_research/l2/similarity.py")
+    windmill = Path(
+        "windmill/f/content_research/research_tool_lib/account_similarity.py"
+    )
+    assert windmill.read_bytes() == source.read_bytes()
 
 
 def test_ranking_is_deterministic_explainable_and_excludes_self() -> None:

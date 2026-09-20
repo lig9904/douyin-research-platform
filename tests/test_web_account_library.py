@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import sys
 from urllib.parse import urlparse
 
 import psycopg
@@ -14,6 +15,9 @@ pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configure
 
 
 def load_backend():
+    windmill_root = str(Path("windmill").resolve())
+    if windmill_root not in sys.path:
+        sys.path.insert(0, windmill_root)
     path = Path(
         "windmill/f/content_research/research_dashboard.raw_app/"
         "backend/get_account_library.py"

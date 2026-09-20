@@ -7,7 +7,10 @@ from typing import Any, TypedDict
 import psycopg
 from psycopg.rows import dict_row
 
-from douyin_research.l2 import AccountSimilarityProfile, rank_similar_accounts
+from f.content_research.research_tool_lib.account_similarity import (
+    AccountSimilarityProfile,
+    rank_similar_accounts,
+)
 
 
 class postgresql(TypedDict):

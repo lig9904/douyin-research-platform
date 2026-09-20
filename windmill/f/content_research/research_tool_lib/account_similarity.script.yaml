@@ -1,0 +1,10 @@
+summary: Shared deterministic account similarity core
+description: Pure local scoring helper used by the research dashboard; no main
+  or provider call.
+lock: '!inline f/content_research/research_tool_lib/account_similarity.script.lock'
+kind: script
+schema:
+  $schema: https://json-schema.org/draft/2020-12/schema
+  type: object
+  properties: {}
+  required: []
