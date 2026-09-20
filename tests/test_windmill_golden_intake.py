@@ -24,7 +24,7 @@ def request(**overrides):
         "confirmation": "",
         "max_items": 5,
         "max_external_calls": 2,
-        "max_cost_usd": 0.01,
+        "max_cost_usd": None,
         "date_window_hours": 24,
         "enrich_details": True,
         "force_refresh": False,
@@ -82,7 +82,7 @@ def test_execution_checks_database_and_actor_before_secret() -> None:
     assert calls == ["preflight", "authorize", "secret", "collect"]
     assert result["status"] == "completed"
     assert result["uncached_call_count"] == 2
-    assert result["maximum_cost_usd"] == 0.01
+    assert result["maximum_cost_usd"] is None
     assert "run_id" not in result
     assert "private-key" not in repr(result)
     assert "writer@example.org" not in repr(result)
@@ -93,7 +93,7 @@ def test_execution_checks_database_and_actor_before_secret() -> None:
     [
         ({"max_items": 6}, "max_items"),
         ({"max_external_calls": 3}, "max_external_calls"),
-        ({"max_cost_usd": 0.011}, "max_cost_usd"),
+        ({"max_cost_usd": -0.001}, "max_cost_usd"),
         ({"date_window_hours": 25}, "date_window_hours"),
         ({"max_external_calls": 1, "enrich_details": True}, "at least 2"),
     ],
@@ -115,7 +115,8 @@ def test_windmill_metadata_keeps_golden_flow_manual_serial_and_server_secret_onl
     assert "\nschedule:" not in flow.lower()
     assert "default: false" in flow
     assert "concurrent_limit: 1" in flow
-    assert "maximum: 0.01" in flow
+    assert "default: null" in flow
+    assert "maximum: 0.01" not in flow
     assert "maximum: 5" in flow
     assert "maximum: 2" in flow
     assert "$var:" not in flow

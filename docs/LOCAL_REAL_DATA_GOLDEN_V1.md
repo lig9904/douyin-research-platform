@@ -32,7 +32,8 @@ uv run python scripts/tikhub/real_data_golden.py --live
 ```
 
 需要生成“本轮确有外呼”的可复核证据时，显式增加 `--force-refresh`。它只绕过发现页缓存，
-仍受最多 2 次未缓存调用、零重试与 0.01 USD 上限约束；聚合输出会分别记录本轮
+仍受单次最多 2 次未缓存调用与零重试约束；按测试服当前授权不设固定金额上限，
+但每次调用都会记录接口、缓存状态、成功/失败、已核验单价版本、币种和费用；聚合输出会分别记录本轮
 `cached_call_count` 与 `uncached_call_count`，不输出正文、请求 ID 或 Secret。
 
 命令仅输出 run ID、条数、评分数和上限。运行后可在 Windmill 研究台的视频库、运行/成本页查询该数据；页面通过既有 `source_video`、`metric_snapshot`、`pipeline_run` 和 `external_api_call` 查询，不需要改 TSX。

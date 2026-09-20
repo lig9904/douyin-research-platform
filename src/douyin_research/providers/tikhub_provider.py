@@ -385,7 +385,12 @@ class TikHubDouyinProvider:
                         finished_at=finished,
                         actual_cost=0.0,
                         provider_request_id=cached.provider_request_id,
-                        metadata={"cache": "persistent"},
+                        metadata={
+                            "cache": "persistent",
+                            "cost_basis": "cache_zero",
+                            "price_source": spec.price_source,
+                            "pricing_version": spec.pricing_version,
+                        },
                     )
                 )
                 validate_tikhub_envelope(cached.payload)
@@ -427,7 +432,12 @@ class TikHubDouyinProvider:
                     actual_cost=spec.unit_cost_usd if spec.paid and spec.unit_cost_usd else None,
                     provider_request_id=result.provider_request_id,
                     retry_count=result.retry_count,
-                    metadata={"transport_mode": result.mode},
+                    metadata={
+                        "transport_mode": result.mode,
+                        "cost_basis": "verified_unit_price",
+                        "price_source": spec.price_source,
+                        "pricing_version": spec.pricing_version,
+                    },
                 )
             )
             return payload, fp, False, raw_ref
@@ -444,7 +454,13 @@ class TikHubDouyinProvider:
                     started_at=started,
                     finished_at=finished,
                     estimated_cost=spec.unit_cost_usd,
-                    metadata={"error_type": type(exc).__name__, "error": str(exc)[:500]},
+                    metadata={
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:500],
+                        "cost_basis": "estimated_unit_price",
+                        "price_source": spec.price_source,
+                        "pricing_version": spec.pricing_version,
+                    },
                 )
             )
             raise

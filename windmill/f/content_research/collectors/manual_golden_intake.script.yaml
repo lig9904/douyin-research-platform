@@ -1,7 +1,8 @@
 summary: Manual bounded TikHub golden intake
 description: |
   Preview by default. Paid execution is limited to one low-fan page, at most
-  five items, two uncached calls, zero retries, and USD 0.01. It requires the
+  five items, two uncached calls, and zero retries. There is no fixed dollar
+  cap; actual calls and estimated costs remain ledgered. It requires the
   authenticated writer allowlist and an exact confirmation string.
 lock: '!inline f/content_research/collectors/manual_golden_intake.script.lock'
 concurrency_time_window_s: 0
@@ -13,11 +14,12 @@ schema:
       type: string
       description: Use RUN_TIKHUB_GOLDEN_PAID only for an intentional paid run.
       default: ''
+      originalType: string
     date_window_hours:
       type: integer
       default: 24
-      minimum: 1
       maximum: 24
+      minimum: 1
     db:
       type: object
       default: null
@@ -35,19 +37,18 @@ schema:
       default: false
     max_cost_usd:
       type: number
-      default: 0.01
+      default: null
       minimum: 0
-      maximum: 0.01
     max_external_calls:
       type: integer
       default: 2
-      minimum: 1
       maximum: 2
+      minimum: 1
     max_items:
       type: integer
       default: 5
-      minimum: 1
       maximum: 5
+      minimum: 1
   required:
     - db
 timeout: 180

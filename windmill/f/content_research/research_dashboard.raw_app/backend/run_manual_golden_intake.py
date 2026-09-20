@@ -11,7 +11,6 @@ from urllib import parse, request
 
 
 CONFIRMATION = "RUN_TIKHUB_GOLDEN_PAID"
-MAX_COST_USD = 0.01
 SCRIPT_PATH = "f/content_research/collectors/manual_golden_intake"
 DB_RESOURCE = "$res:f/content_research/research_db"
 WRITER_ALLOWLIST_PATH = "f/content_research/research_action_writers"
@@ -115,7 +114,7 @@ def _plan(
     confirmation: str,
     max_items: int,
     max_external_calls: int,
-    max_cost_usd: float,
+    max_cost_usd: float | None,
     date_window_hours: int,
     enrich_details: bool,
     force_refresh: bool,
@@ -124,8 +123,8 @@ def _plan(
         raise ValueError("max_items must be between 1 and 5")
     if not 1 <= int(max_external_calls) <= 2:
         raise ValueError("max_external_calls must be between 1 and 2")
-    if float(max_cost_usd) < 0 or float(max_cost_usd) > MAX_COST_USD:
-        raise ValueError(f"max_cost_usd cannot exceed {MAX_COST_USD}")
+    if max_cost_usd is not None and float(max_cost_usd) < 0:
+        raise ValueError("max_cost_usd must be non-negative or None")
     if not 1 <= int(date_window_hours) <= 24:
         raise ValueError("date_window_hours must be between 1 and 24")
     if int(max_external_calls) < 1 + int(bool(enrich_details)):
@@ -137,7 +136,7 @@ def _plan(
         "confirmation": confirmation,
         "max_items": int(max_items),
         "max_external_calls": int(max_external_calls),
-        "max_cost_usd": float(max_cost_usd),
+        "max_cost_usd": None if max_cost_usd is None else float(max_cost_usd),
         "date_window_hours": int(date_window_hours),
         "enrich_details": bool(enrich_details),
         "force_refresh": bool(force_refresh),
@@ -147,11 +146,11 @@ def _plan(
 def main(
     execute: bool = False,
     confirmation: str = "",
-    max_items: int = 1,
-    max_external_calls: int = 1,
-    max_cost_usd: float = MAX_COST_USD,
+    max_items: int = 5,
+    max_external_calls: int = 2,
+    max_cost_usd: float | None = None,
     date_window_hours: int = 24,
-    enrich_details: bool = False,
+    enrich_details: bool = True,
     force_refresh: bool = True,
 ):
     request = _plan(
@@ -174,7 +173,10 @@ def main(
     # The child script owns the database resource, Secret read, advisory lock,
     # budget gate, provider call and sanitized result. Windmill links this child
     # to the app job so its authenticated end-user context is preserved.
-    result = _run_child({"db": DB_RESOURCE, **request})
+    child_request = {"db": DB_RESOURCE, **request}
+    if child_request["max_cost_usd"] is None:
+        child_request.pop("max_cost_usd")
+    result = _run_child(child_request)
     if not isinstance(result, dict) or result.get("status") != "completed":
         raise RuntimeError("TikHub golden intake failed")
     return result
