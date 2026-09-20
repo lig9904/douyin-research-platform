@@ -4,6 +4,9 @@
 生产生效、真实 IdP 多账号 ACL、正式证书或异机灾备。Secret、响应正文、媒体 URL、供应商
 任务 ID、真实账号邮箱和浏览器截图均不进入仓库。
 
+本轮最终集成回归绑定 GitHub `main` 提交
+`f4e298b814aef28d24625f01883c2c1235c72ca1`（PR #43、#44 均已合并）。
+
 ## 1. TikHub → PostgreSQL → L0/L1 → Windmill
 
 - 使用低粉榜与批量详情的受限黄金入口，零重试、最多 5 条、最多 2 次未缓存调用、上限
@@ -30,6 +33,15 @@
 团队监测是共享工作流；专题、收藏与筛选按 actor 隔离。仅有 Viewer 权限的用户不得获得写后端
 执行权限，测试服务器需用真实 admin/reviewer/viewer 账号现场验证 Folder ACL。
 
+账号库的确定性相似度已在同一套本机 PostgreSQL / Windmill 运行时验收：临时插入同平台候选后，
+页面显示 100 分、100% 证据覆盖和匹配领域，随后精确删除临时候选。回归测试同时覆盖空白字段
+归一、失效及非法 UUID 安全降级，以及最优候选位于第 200 个排序 ID 之后仍可被发现。
+
+Windmill HTTP MCP Gateway 已用 15 分钟、workspace-bound、仅含
+`mcp:scripts:f/content_research/research_tools/*` 的临时 token 验证：七项业务工具逐项调用成功，
+`limit=51` 固定拒绝，`runScriptByPath` 跨目录运行 `analysis/manual_l3_preview` 被 scope 拒绝；
+无 Provider/LLM/付费调用，临时 token 和凭据文件均已撤销或删除。
+
 ## 3. Volcengine Ark 与录音文件 ASR
 
 - Ark：固定官方 origin、禁止重定向、零重试；1 次真实结构化调用成功，响应绑定与 schema
@@ -55,11 +67,19 @@
 使用该次备份运行 `LOCAL_RESEARCH_RESTORE_DRILL=YES scripts/local-l3-env.sh restore-drill <backup-dir>`
 后，SHA-256、关键表行数、owner 与临时库清理均通过；该演练从未覆盖 `douyin_research`。
 
+当前 `main` 又在独立 `l3-security-local` Docker context 执行一次一次性测试服务器 Overlay 烟测：
+PostgreSQL、Windmill server、普通 worker、native worker、TLS proxy 五个服务全部健康；仅代理发布
+loopback 临时端口，明文 HTTP 被拒绝，PostgreSQL/Windmill 无直接宿主端口，proxy 只读根文件系统、
+最小 capability 与日志 Authorization/query sentinel 脱敏均成立。脚本退出后精确 Compose project、
+volume 和临时目录已清理；此项仍只是本机拓扑证据。
+
 ## 5. 自动化检查
 
-- Python 单元与 PostgreSQL 集成测试：322 passed、3 skipped，真实付费测试默认跳过；
+- GitHub `main` 对应代码树的 Python 单元与 PostgreSQL 集成测试：404 passed、5 skipped，
+  真实付费测试默认跳过；
 - Windmill React App：`npm ci` 与 esbuild bundle 通过；Python inline backends 编译通过；
-- 安全 Compose overlay：配置解析通过；shell syntax 与 `git diff --check` 通过；
+- Windmill metadata：账号相似度 helper、MCP helper/七工具与 Raw App 均为 up-to-date；
+- 安全 Compose overlay：五服务一次性启动与清理实测通过；shell syntax 与 `git diff --check` 通过；
 - Ark/ASR/TikHub live smoke 需要显式环境双门禁，GitHub CI 不携带 Secret、不会付费外呼。
 
 ## 6. 测试服务器仍需完成
