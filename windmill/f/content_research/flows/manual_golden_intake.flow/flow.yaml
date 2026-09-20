@@ -1,0 +1,78 @@
+summary: Manual TikHub golden intake
+description: |
+  Manual-only, writer-authorized L0/L1 golden path. It has no schedule and
+  defaults to a zero-call preview. Paid execution requires an exact confirmation.
+value:
+  modules:
+    - id: golden_intake
+      summary: Guard, collect, normalize, score, and persist a bounded sample
+      value:
+        type: script
+        input_transforms:
+          confirmation:
+            type: javascript
+            expr: flow_input.confirmation
+          date_window_hours:
+            type: javascript
+            expr: flow_input.date_window_hours
+          db:
+            type: static
+            value: $res:f/content_research/research_db
+          enrich_details:
+            type: javascript
+            expr: flow_input.enrich_details
+          execute:
+            type: javascript
+            expr: flow_input.execute
+          force_refresh:
+            type: javascript
+            expr: flow_input.force_refresh
+          max_cost_usd:
+            type: javascript
+            expr: flow_input.max_cost_usd
+          max_external_calls:
+            type: javascript
+            expr: flow_input.max_external_calls
+          max_items:
+            type: javascript
+            expr: flow_input.max_items
+        path: f/content_research/collectors/manual_golden_intake
+  concurrency_time_window_s: 0
+  concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    confirmation:
+      type: string
+      description: Use RUN_TIKHUB_GOLDEN_PAID only for an intentional paid run.
+      default: ''
+    date_window_hours:
+      type: integer
+      default: 24
+      minimum: 1
+      maximum: 24
+    enrich_details:
+      type: boolean
+      default: true
+    execute:
+      type: boolean
+      description: False performs a zero-call preview.
+      default: false
+    force_refresh:
+      type: boolean
+      default: false
+    max_cost_usd:
+      type: number
+      default: 0.01
+      minimum: 0
+      maximum: 0.01
+    max_external_calls:
+      type: integer
+      default: 2
+      minimum: 1
+      maximum: 2
+    max_items:
+      type: integer
+      default: 5
+      minimum: 1
+      maximum: 5
