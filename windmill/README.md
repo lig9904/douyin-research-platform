@@ -11,7 +11,7 @@ V1 使用 Windmill 作为任务编排、脚本执行、内部 App 与 MCP Gatewa
 - `f/content_research/research_tools/`：供 Windmill MCP Gateway 暴露的七项受限只读
   工具（案例、热点视频、黑马候选、账号、账号视频与指标历史）。
 
-首个采集入口是 `manual_comment_collection`。它只允许人工运行，默认预览，正式执行需要精确确认、当天预算和数据库前置检查。`manual_golden_intake` 为测试环境提供同样人工触发的极小 TikHub → L0/L1 黄金路径，固定为最多 5 条、2 次未缓存调用、0.01 USD、零重试，并额外要求真实登录身份命中服务端 writer allowlist。详见 `docs/WINDMILL_COMMENT_COLLECTION_V1.md` 与 `docs/LOCAL_REAL_DATA_GOLDEN_V1.md`。
+首个采集入口是 `manual_comment_collection`。它只允许人工运行，默认预览，正式执行需要精确确认、当天预算和数据库前置检查。`manual_golden_intake` 为测试环境提供同样人工触发的 TikHub → L0/L1 黄金路径，固定为单次最多 5 条、2 次未缓存调用、零重试，不设固定金额上限，实际调用和估算费用仍写入账本，并额外要求真实登录身份命中服务端 writer allowlist。详见 `docs/WINDMILL_COMMENT_COLLECTION_V1.md` 与 `docs/LOCAL_REAL_DATA_GOLDEN_V1.md`。
 
 `manual_asr_preview` 与 `manual_l3_preview` 是零调用准备度预览。它们不接收真实视频/媒体/证据标识，也不挂数据库或 Secret；在供应商契约核验前，`execute=true` 始终失败关闭。详见 `docs/WINDMILL_RESEARCH_PREVIEWS_V1.md`。
 

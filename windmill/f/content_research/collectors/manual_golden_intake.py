@@ -1,5 +1,5 @@
 #requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@370c09880ae1ae6332143834e165a45a0dfe8284
+#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b7341ed0f4d86c6959a9045cad50ea6c1bb3b74
 #psycopg[binary]==3.3.6
 #wmill==1.815.0
 
@@ -20,7 +20,6 @@ from douyin_research.l3 import authorize_reviewer
 
 
 CONFIRMATION = "RUN_TIKHUB_GOLDEN_PAID"
-MAX_COST_USD = 0.01
 LOCK_NAME = "douyin_research:manual_golden_intake"
 API_KEY_PATH = "f/content_research/tikhub_api_key"
 WRITER_ALLOWLIST_PATH = "f/content_research/research_action_writers"
@@ -41,15 +40,13 @@ class ManualGoldenRequest:
     confirmation: str = ""
     max_items: int = 5
     max_external_calls: int = 2
-    max_cost_usd: float = MAX_COST_USD
+    max_cost_usd: float | None = None
     date_window_hours: int = 24
     enrich_details: bool = True
     force_refresh: bool = False
 
 
 def _plan(request: ManualGoldenRequest) -> GoldenIntakePlan:
-    if request.max_cost_usd > MAX_COST_USD:
-        raise ValueError(f"max_cost_usd cannot exceed {MAX_COST_USD}")
     return make_plan(
         dry_run=not request.execute,
         max_items=request.max_items,
@@ -166,7 +163,7 @@ def main(
     confirmation: str = "",
     max_items: int = 5,
     max_external_calls: int = 2,
-    max_cost_usd: float = MAX_COST_USD,
+    max_cost_usd: float | None = None,
     date_window_hours: int = 24,
     enrich_details: bool = True,
     force_refresh: bool = False,

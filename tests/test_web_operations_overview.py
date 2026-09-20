@@ -61,6 +61,11 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
         assert result["days"] == 90
         assert result["page_size"] == 10
         assert result["api_summary"]["failed_calls"] >= 1
+        call = next(row for row in result["api_calls"] if row["endpoint_key"] == "ops-fixture")
+        assert call["actual_cost"] == pytest.approx(0.5)
+        assert call["cost_currency"] == "USD"
+        assert call["cost_basis"] == "unpriced"
+        assert "request_fingerprint" not in call and "metadata" not in call
         assert any(row["known_total"] == pytest.approx(6) for row in result["task_costs"])
         task = next(row for row in result["tasks"] if row["task_type"] == "ops-task")
         assert task["total_cost"] == pytest.approx(6)

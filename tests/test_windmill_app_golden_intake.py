@@ -24,13 +24,14 @@ def load_module():
 def test_preview_is_zero_call_and_does_not_require_database() -> None:
     module = load_module()
     result = module.main(
-        execute=False, max_items=1, max_external_calls=1,
-        enrich_details=False, force_refresh=True,
+        execute=False, force_refresh=True,
     )
 
     assert result["status"] == "preview"
     assert result["external_calls"] == 0
-    assert result["max_items"] == 1
+    assert result["max_items"] == 5
+    assert result["max_external_calls"] == 2
+    assert result["max_cost_usd"] is None
     assert result["retry_count"] == 0
 
 
@@ -64,7 +65,7 @@ def test_authenticated_app_dispatches_only_to_the_bounded_collector(monkeypatch)
         confirmation=module.CONFIRMATION,
         max_items=1,
         max_external_calls=1,
-        max_cost_usd=0.01,
+        max_cost_usd=None,
         enrich_details=False,
     )
 
@@ -90,9 +91,10 @@ def test_app_surface_keeps_paid_envelope_fixed_and_server_owned() -> None:
     assert "API_KEY" not in source
     assert "API_KEY" not in ui
     assert "RUN_TIKHUB_GOLDEN_PAID" in ui
-    assert "max_external_calls: 1" in ui
-    assert "max_cost_usd: 0.01" in ui
-    assert "enrich_details: false" in ui
+    assert "max_external_calls: 2" in ui
+    assert "max_cost_usd: null" in ui
+    assert "enrich_details: true" in ui
+    assert "无固定金额上限" in ui
     assert lock.strip() == "# py: 3.12"
     assert "workspace-dependencies-mode: manual" not in lock
     assert (

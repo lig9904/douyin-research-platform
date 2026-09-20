@@ -19,6 +19,8 @@ class EndpointSpec:
     cache_ttl_seconds: int
     paid: bool = True
     unit_cost_usd: float | None = None
+    price_source: str | None = None
+    pricing_version: str | None = None
 
 
 ENDPOINTS: dict[str, EndpointSpec] = {
@@ -33,6 +35,8 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         # Verified with TikHub calculate_price on 2026-09-20; public docs
         # identify USD 0.001 as the base price for most successful requests.
         unit_cost_usd=0.001,
+        price_source="tikhub.calculate_price",
+        pricing_version="verified-2026-09-20",
     ),
     "douyin.creator.material": EndpointSpec(
         key="douyin.creator.material",
@@ -61,6 +65,8 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         request_style="json",
         cache_ttl_seconds=60 * 60,
         unit_cost_usd=0.001,
+        price_source="tikhub.calculate_price",
+        pricing_version="verified-2026-09-20",
     ),
     "douyin.app.user_posts": EndpointSpec(
         key="douyin.app.user_posts",
@@ -80,6 +86,8 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         request_style="query",
         cache_ttl_seconds=30 * 60,
         unit_cost_usd=0.001,
+        price_source="tikhub.calculate_price",
+        pricing_version="verified-2026-09-20",
     ),
     "douyin.app.comment_replies": EndpointSpec(
         key="douyin.app.comment_replies",

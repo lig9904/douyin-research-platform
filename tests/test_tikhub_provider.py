@@ -71,6 +71,10 @@ def test_persistent_cache_avoids_second_external_call() -> None:
     assert len(store.calls) == 2
     assert store.calls[1].cached is True
     assert store.calls[1].actual_cost == 0.0
+    assert store.calls[0].actual_cost == pytest.approx(0.001)
+    assert store.calls[0].metadata["cost_basis"] == "verified_unit_price"
+    assert store.calls[0].metadata["pricing_version"] == "verified-2026-09-20"
+    assert store.calls[1].metadata["cost_basis"] == "cache_zero"
 
 
 def test_low_fan_compact_billboard_schema_is_normalized() -> None:

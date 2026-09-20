@@ -87,6 +87,34 @@ def main(
             """,
             (days, platform, platform),
         )
+        api_calls = _rows(
+            cur,
+            f"""
+            select
+              id::text as id,
+              provider,
+              platform,
+              endpoint_key,
+              status,
+              http_status,
+              cached,
+              estimated_cost,
+              actual_cost,
+              cost_currency,
+              started_at,
+              finished_at,
+              coalesce(metadata->>'cost_basis', 'unpriced') as cost_basis,
+              metadata->>'price_source' as price_source,
+              metadata->>'pricing_version' as pricing_version,
+              coalesce((metadata->>'retry_count')::int, 0) as retry_count
+            from external_api_call
+            where started_at >= now() - (%s || ' days')::interval
+              and {scope}
+            order by started_at desc, id desc
+            limit 50
+            """,
+            (days, platform, platform),
+        )
         run_summary = _rows(
             cur,
             f"""
@@ -187,6 +215,7 @@ def main(
         "task_total": task_total,
         "api_summary": api_summary,
         "api_costs": api_costs,
+        "api_calls": api_calls,
         "run_summary": run_summary,
         "task_costs": task_costs,
         "tasks": tasks,

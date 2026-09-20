@@ -35,7 +35,7 @@ class GoldenIntakePlan:
     dry_run: bool
     max_items: int
     max_external_calls: int
-    max_cost_usd: float
+    max_cost_usd: float | None
     source: str
     page: int
     date_window_hours: int
@@ -61,7 +61,7 @@ def make_plan(
     dry_run: bool = True,
     max_items: int = GOLDEN_MAX_ITEMS,
     max_external_calls: int = GOLDEN_MAX_EXTERNAL_CALLS,
-    max_cost_usd: float = 0.01,
+    max_cost_usd: float | None = None,
     page: int = 1,
     date_window_hours: int = 24,
     enrich_details: bool = True,
@@ -80,8 +80,10 @@ def make_plan(
             f"max_external_calls must be at least {needed_calls} when "
             f"enrich_details={enrich_details}"
         )
-    if not math.isfinite(max_cost_usd) or max_cost_usd < 0:
-        raise ValueError("max_cost_usd must be finite and non-negative")
+    if max_cost_usd is not None and (
+        not math.isfinite(max_cost_usd) or max_cost_usd < 0
+    ):
+        raise ValueError("max_cost_usd must be finite and non-negative or None")
     if page != 1:
         # The low-fan billboard has page numbering rather than a reliable
         # continuation cursor.  A golden run is intentionally one page; this

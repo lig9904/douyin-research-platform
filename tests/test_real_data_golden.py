@@ -22,6 +22,7 @@ def test_default_golden_plan_is_dry_run_and_hard_bounded() -> None:
     assert plan.dry_run is True
     assert plan.max_items == GOLDEN_MAX_ITEMS
     assert plan.max_external_calls == GOLDEN_MAX_EXTERNAL_CALLS
+    assert plan.max_cost_usd is None
     assert plan.page == 1
     assert plan.retry_count == 0
     assert plan.force_refresh is False
@@ -50,7 +51,7 @@ def test_force_refresh_is_explicit_in_golden_plan() -> None:
         ({"max_cost_usd": float("-inf")}, "max_cost_usd"),
     ],
 )
-def test_golden_plan_rejects_spend_or_pagination_expansion(kwargs, message: str) -> None:
+def test_golden_plan_rejects_invalid_optional_cost_or_pagination_expansion(kwargs, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         make_plan(**kwargs)
 
