@@ -3,7 +3,6 @@ import {
   Alert,
   Button,
   Input,
-  Progress,
   Select,
   Spin,
   Tag,
@@ -55,7 +54,6 @@ type Overview = {
     blackhorse_candidates?: number
     entered_l1?: number
     api_call_records?: number
-    budget_usage_pct?: number
   }
   api_costs: {
     currency: string
@@ -394,18 +392,6 @@ function App() {
                   </div>
                 </div>
               ))}
-              <div className="kpi-card card">
-                <div className="kpi-icon">◔</div>
-                <div className="budget-kpi">
-                  <span>预算使用率</span>
-                  <strong>{Math.round(Number(data?.kpis.budget_usage_pct || 0))}%</strong>
-                  <Progress
-                    percent={Math.round(Number(data?.kpis.budget_usage_pct || 0))}
-                    showInfo={false}
-                    size="small"
-                  />
-                </div>
-              </div>
             </section>
 
             <section className="dashboard-grid">
@@ -553,7 +539,7 @@ function App() {
               </article>
 
               <article className="panel card runtime-panel">
-                <div className="panel-head"><h2><span>⌁</span> 运行状态与预算</h2></div>
+                <div className="panel-head"><h2><span>⌁</span> 运行状态与调用</h2></div>
                 <div className="status-list">
                   {[
                     ['采集任务', Number(data?.runtime.running_jobs || 0) > 0 ? '运行中' : '空闲', true],

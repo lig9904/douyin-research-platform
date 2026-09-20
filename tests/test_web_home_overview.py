@@ -56,7 +56,6 @@ def clear_and_seed() -> None:
             "pipeline_run",
             "source_video",
             "source_account",
-            "daily_budget",
         ):
             cur.execute(f"delete from {table}")
 
@@ -163,16 +162,6 @@ def clear_and_seed() -> None:
 
         cur.execute(
             """
-            insert into daily_budget(
-              budget_date, provider, budget_key, max_cost, max_requests,
-              spent_cost, used_requests
-            )
-            values (current_date,'tikhub','l0l1',1,1000,0.1,10)
-            """
-        )
-
-        cur.execute(
-            """
             insert into pipeline_run(
               run_type, run_version, platform, status, started_at, finished_at,
               input_count, output_count, promoted_l1_count, summary
@@ -199,6 +188,7 @@ def test_home_backend_returns_real_multiplatform_dashboard_shape() -> None:
     assert result["kpis"]["blackhorse_candidates"] == 1
     assert result["kpis"]["entered_l1"] == 1
     assert result["kpis"]["api_call_records"] == 2
+    assert "budget_usage_pct" not in result["kpis"]
     assert result["api_costs"] == [{
         "currency": "USD",
         "estimated_cost": pytest.approx(0.001),

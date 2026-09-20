@@ -33,7 +33,7 @@ const navItems: NavItem[] = [
   { icon: '▤', label: '历史研究', view: 'history', enabled: false },
   { icon: '★', label: '收藏专题', view: 'collections', enabled: false },
   { icon: '▥', label: '跨平台对比', view: 'compare', enabled: false },
-  { icon: '◔', label: '成本与预算', view: 'cost', enabled: true },
+  { icon: '◔', label: '运行与成本', view: 'cost', enabled: true },
   { icon: '⚙', label: '系统设置', view: 'settings', enabled: false },
 ]
 

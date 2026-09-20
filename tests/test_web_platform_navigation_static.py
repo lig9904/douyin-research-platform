@@ -57,8 +57,25 @@ def test_navigation_only_exposes_working_pages_and_survives_mobile() -> None:
 
     assert "navItems.filter((item) => item.enabled)" in shell
     assert 'aria-label="研究台主导航"' in shell
-    assert "label: '成本与预算', view: 'cost', enabled: true" in shell
+    assert "label: '运行与成本', view: 'cost', enabled: true" in shell
+    assert "成本与预算" not in shell
+    assert "运行状态与调用" in app
+    assert "运行状态与预算" not in app
+    assert "预算使用率" not in app
+    assert "budget_usage_pct" not in app
+    assert "Progress," not in app
     assert 'activeView="search"' in app
     assert "@media (max-width: 900px)" in shell_css
     assert ".nav { width: 100%" in shell_css
     assert ".sidebar { display: none; }" not in index_css
+
+
+def test_home_does_not_convert_request_guards_into_budget_percentages() -> None:
+    app = read("App.tsx")
+    backend = read("backend/get_home_overview.py")
+
+    assert "预算使用率" not in app
+    assert "budget_usage_pct" not in app
+    assert "Progress," not in app
+    assert "budget_usage_pct" not in backend
+    assert "from daily_budget" not in backend

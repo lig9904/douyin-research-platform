@@ -157,25 +157,12 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
               from external_api_call
               where started_at >= now() - (%s || ' hours')::interval
                 and (%s='all' or platform=%s)
-            ),
-            budget as (
-              select
-                case
-                  when coalesce(sum(max_cost),0) > 0
-                    then least(100, 100 * coalesce(sum(spent_cost),0) / sum(max_cost))
-                  when coalesce(sum(max_requests),0) > 0
-                    then least(100, 100.0 * coalesce(sum(used_requests),0) / sum(max_requests))
-                  else 0
-                end::numeric as usage
-              from daily_budget
-              where budget_date=current_date
             )
             select
               (select value from hot) as new_hotspots,
               (select value from blackhorse) as blackhorse_candidates,
               (select value from l1) as entered_l1,
-              (select call_records from api) as api_call_records,
-              (select usage from budget) as budget_usage_pct
+              (select call_records from api) as api_call_records
             """,
             (
                 selected, selected2, hours, selected, selected2,
