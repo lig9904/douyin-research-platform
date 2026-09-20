@@ -109,7 +109,8 @@ def _install_fake_sdk(monkeypatch) -> None:
 def test_batch4_fixed_ten_call_plan_has_zero_retries_and_redacted_stdout(tmp_path, monkeypatch, capsys) -> None:
     probe = _load_batch4()
     _install_fake_sdk(monkeypatch)
-    monkeypatch.setattr(probe, "OUT_DIR", tmp_path)
+    raw_dir = tmp_path / "raw"
+    monkeypatch.setattr(probe, "OUT_DIR", raw_dir)
     monkeypatch.setenv(probe.GATE_ENV, probe.GATE_VALUE)
     monkeypatch.setenv(probe.API_KEY_ENV, "private-api-key")
 
@@ -135,6 +136,7 @@ def test_batch4_fixed_ten_call_plan_has_zero_retries_and_redacted_stdout(tmp_pat
     assert "private-search-token" not in rendered
     assert "private-backtrace-token" not in rendered
     assert "987654" not in rendered
+    assert not raw_dir.exists()
 
 
 def test_batch4_stops_before_second_billboard_page_only_when_has_more_is_false(tmp_path, monkeypatch) -> None:
@@ -161,6 +163,40 @@ def test_raw_evidence_files_are_private(tmp_path, monkeypatch) -> None:
 
     assert path.stat().st_mode & 0o777 == 0o600
     assert tmp_path.stat().st_mode & 0o777 == 0o700
+
+
+def test_cleanup_raw_removes_only_direct_json_files_and_empty_directory(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "previous.json").write_text("{}", encoding="utf-8")
+    (raw_dir / "keep.txt").write_text("keep", encoding="utf-8")
+    monkeypatch.setattr(probe, "OUT_DIR", raw_dir)
+
+    probe.cleanup_raw()
+
+    assert not (raw_dir / "previous.json").exists()
+    assert (raw_dir / "keep.txt").read_text(encoding="utf-8") == "keep"
+    (raw_dir / "keep.txt").unlink()
+    probe.cleanup_raw()
+    assert not raw_dir.exists()
+
+
+def test_cleanup_raw_rejects_output_directory_symlink_without_touching_target(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    target = tmp_path / "target"
+    target.mkdir()
+    protected = target / "protected.json"
+    protected.write_text("{}", encoding="utf-8")
+    link = tmp_path / "raw-link"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setattr(probe, "OUT_DIR", link)
+
+    with pytest.raises(probe.ProbeFailure, match="must not be a symlink"):
+        probe.cleanup_raw()
+    with pytest.raises(probe.ProbeFailure, match="must not be a symlink"):
+        probe.save_raw("must-not-write", {"code": 200})
+    assert protected.exists()
 
 
 def test_page_relation_and_selected_detail_ids_do_not_need_public_identifiers() -> None:

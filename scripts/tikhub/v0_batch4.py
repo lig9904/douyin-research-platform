@@ -47,7 +47,11 @@ SENSITIVE_PRICE_TOKENS = ("id", "uid", "token", "cursor", "key", "secret")
 
 def save_raw(label: str, payload: dict[str, Any]) -> Path:
     """Persist evidence locally without making it readable by other users."""
+    if OUT_DIR.is_symlink():
+        raise ProbeFailure("raw output directory must not be a symlink")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    if OUT_DIR.is_symlink() or not OUT_DIR.is_dir():
+        raise ProbeFailure("raw output path must be a non-symlink directory")
     try:
         OUT_DIR.chmod(0o700)
     except OSError:
@@ -65,6 +69,25 @@ def save_raw(label: str, payload: dict[str, Any]) -> Path:
         except OSError:
             pass
     return path
+
+
+def cleanup_raw() -> None:
+    """Delete only direct JSON evidence files without traversing symlinks."""
+    if OUT_DIR.is_symlink():
+        raise ProbeFailure("raw output directory must not be a symlink")
+    if not OUT_DIR.exists():
+        return
+    if not OUT_DIR.is_dir():
+        raise ProbeFailure("raw output path must be a directory")
+    for entry in OUT_DIR.iterdir():
+        if entry.is_symlink():
+            continue
+        if entry.is_file() and entry.suffix == ".json":
+            entry.unlink()
+    try:
+        OUT_DIR.rmdir()
+    except OSError:
+        pass
 
 
 class Batch4Budget(CallBudget):
@@ -246,8 +269,7 @@ def _summary(label: str, payload: dict[str, Any]) -> dict[str, Any]:
     return safe_shape(label, payload)
 
 
-def run() -> int:
-    api_key = require_environment()
+def _run(api_key: str) -> int:
     from tikhub import TikHub, __version__
 
     require_sdk_version(__version__)
@@ -390,6 +412,15 @@ def run() -> int:
         "summaries": summaries,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
+
+
+def run() -> int:
+    api_key = require_environment()
+    cleanup_raw()
+    try:
+        return _run(api_key)
+    finally:
+        cleanup_raw()
 
 
 def main() -> int:
