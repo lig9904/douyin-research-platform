@@ -1,6 +1,10 @@
-#requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b7341ed0f4d86c6959a9045cad50ea6c1bb3b74
-#psycopg[binary]==3.3.6
+# /// script
+# requires-python = "==3.12.*"
+# dependencies = [
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b7341ed0f4d86c6959a9045cad50ea6c1bb3b74",
+#   "psycopg[binary]==3.3.6",
+# ]
+# ///
 
 """Run the bounded intake in the authenticated app job itself."""
 
