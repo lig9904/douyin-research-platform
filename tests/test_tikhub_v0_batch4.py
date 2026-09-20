@@ -192,9 +192,9 @@ def test_cleanup_raw_rejects_output_directory_symlink_without_touching_target(tm
     link.symlink_to(target, target_is_directory=True)
     monkeypatch.setattr(probe, "OUT_DIR", link)
 
-    with pytest.raises(probe.ProbeFailure, match="must not be a symlink"):
+    with pytest.raises(probe.ProbeFailure, match="could not be opened safely"):
         probe.cleanup_raw()
-    with pytest.raises(probe.ProbeFailure, match="must not be a symlink"):
+    with pytest.raises(probe.ProbeFailure, match="could not be opened safely"):
         probe.save_raw("must-not-write", {"code": 200})
     assert protected.exists()
 
@@ -208,8 +208,57 @@ def test_save_raw_rejects_existing_file_symlink_without_touching_target(tmp_path
     (raw_dir / "private.json").symlink_to(protected)
     monkeypatch.setattr(probe, "OUT_DIR", raw_dir)
 
-    with pytest.raises(probe.ProbeFailure, match="evidence path must not be a symlink"):
+    with pytest.raises(probe.ProbeFailure, match="evidence path could not be opened safely"):
         probe.save_raw("private", {"code": 200})
+    assert protected.read_text(encoding="utf-8") == "protected"
+
+
+def test_save_raw_keeps_using_open_directory_when_path_is_replaced(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    held_dir = tmp_path / "held"
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    monkeypatch.setattr(probe, "OUT_DIR", raw_dir)
+    real_open = probe._open_raw_dir
+
+    def open_then_replace(*, create: bool):
+        descriptor = real_open(create=create)
+        raw_dir.rename(held_dir)
+        raw_dir.symlink_to(external_dir, target_is_directory=True)
+        return descriptor
+
+    monkeypatch.setattr(probe, "_open_raw_dir", open_then_replace)
+    probe.save_raw("private", {"code": 200})
+
+    assert (held_dir / "private.json").is_file()
+    assert not (external_dir / "private.json").exists()
+
+
+def test_cleanup_raw_keeps_using_open_directory_when_path_is_replaced(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    (raw_dir / "evidence.json").write_text("{}", encoding="utf-8")
+    held_dir = tmp_path / "held"
+    external_dir = tmp_path / "external"
+    external_dir.mkdir()
+    protected = external_dir / "protected.json"
+    protected.write_text("protected", encoding="utf-8")
+    monkeypatch.setattr(probe, "OUT_DIR", raw_dir)
+    real_open = probe._open_raw_dir
+
+    def open_then_replace(*, create: bool):
+        descriptor = real_open(create=create)
+        raw_dir.rename(held_dir)
+        raw_dir.symlink_to(external_dir, target_is_directory=True)
+        return descriptor
+
+    monkeypatch.setattr(probe, "_open_raw_dir", open_then_replace)
+    probe.cleanup_raw()
+
+    assert not (held_dir / "evidence.json").exists()
     assert protected.read_text(encoding="utf-8") == "protected"
 
 

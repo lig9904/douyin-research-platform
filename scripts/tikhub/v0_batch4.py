@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -45,52 +46,78 @@ PRICE_TOKENS = ("price", "cost", "discount", "request")
 SENSITIVE_PRICE_TOKENS = ("id", "uid", "token", "cursor", "key", "secret")
 
 
+def _open_raw_dir(*, create: bool) -> int | None:
+    """Open the exact output directory without following a replacement symlink."""
+    directory_flag = getattr(os, "O_DIRECTORY", 0)
+    nofollow_flag = getattr(os, "O_NOFOLLOW", 0)
+    if not directory_flag or not nofollow_flag:
+        raise ProbeFailure("platform cannot enforce safe raw directory access")
+    if create:
+        OUT_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        descriptor = os.open(OUT_DIR, os.O_RDONLY | directory_flag | nofollow_flag)
+    except FileNotFoundError:
+        if not create:
+            return None
+        raise ProbeFailure("raw output directory disappeared before opening")
+    except OSError as exc:
+        raise ProbeFailure("raw output directory could not be opened safely") from exc
+    if not stat.S_ISDIR(os.fstat(descriptor).st_mode):
+        os.close(descriptor)
+        raise ProbeFailure("raw output path is not a directory")
+    try:
+        os.fchmod(descriptor, 0o700)
+    except OSError as exc:
+        os.close(descriptor)
+        raise ProbeFailure("raw output directory permissions could not be secured") from exc
+    return descriptor
+
+
 def save_raw(label: str, payload: dict[str, Any]) -> Path:
     """Persist evidence locally without making it readable by other users."""
-    if OUT_DIR.is_symlink():
-        raise ProbeFailure("raw output directory must not be a symlink")
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    if OUT_DIR.is_symlink() or not OUT_DIR.is_dir():
-        raise ProbeFailure("raw output path must be a non-symlink directory")
+    if not label or Path(label).name != label:
+        raise ProbeFailure("raw evidence label must be a plain file name")
+    directory_descriptor = _open_raw_dir(create=True)
+    assert directory_descriptor is not None
+    file_name = f"{label}.json"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW
     try:
-        OUT_DIR.chmod(0o700)
-    except OSError:
-        pass
-    path = OUT_DIR / f"{label}.json"
-    if path.is_symlink():
-        raise ProbeFailure("raw evidence path must not be a symlink")
-    # os.open prevents a permissive process umask from broadening the file mode.
-    # O_NOFOLLOW closes the race between the explicit check and the open on POSIX.
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags, 0o600)
-    except OSError as exc:
-        raise ProbeFailure("raw evidence path could not be opened safely") from exc
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-    finally:
-        # fdopen owns descriptor on success; only close when opening/wrapping failed.
         try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
-    return path
+            descriptor = os.open(file_name, flags, 0o600, dir_fd=directory_descriptor)
+        except OSError as exc:
+            raise ProbeFailure("raw evidence path could not be opened safely") from exc
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+            os.chmod(file_name, 0o600, dir_fd=directory_descriptor, follow_symlinks=False)
+        except OSError as exc:
+            raise ProbeFailure("raw evidence could not be written safely") from exc
+    finally:
+        os.close(directory_descriptor)
+    return OUT_DIR / file_name
 
 
 def cleanup_raw() -> None:
-    """Delete only direct JSON evidence files without traversing symlinks."""
-    if OUT_DIR.is_symlink():
-        raise ProbeFailure("raw output directory must not be a symlink")
-    if not OUT_DIR.exists():
+    """Delete direct regular JSON evidence via a non-following directory handle."""
+    directory_descriptor = _open_raw_dir(create=False)
+    if directory_descriptor is None:
         return
-    if not OUT_DIR.is_dir():
-        raise ProbeFailure("raw output path must be a directory")
-    for entry in OUT_DIR.iterdir():
-        if entry.is_symlink():
-            continue
-        if entry.is_file() and entry.suffix == ".json":
-            entry.unlink()
+    try:
+        for name in os.listdir(directory_descriptor):
+            if not name.endswith(".json") or Path(name).name != name:
+                continue
+            try:
+                metadata = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(metadata.st_mode):
+                os.unlink(name, dir_fd=directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
     try:
         OUT_DIR.rmdir()
     except OSError:
