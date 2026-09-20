@@ -13,7 +13,8 @@ BACKUP_VERIFY="$ROOT_DIR/scripts/test-server-backup-verify.py"
 usage() {
   cat <<'EOF'
 Usage: scripts/test-server-release.sh <backup|migrate|verify|restore-drill> \
-  --env-file <path> --project <compose-project> --backup-root <absolute-path> [backup-directory]
+  --env-file <path> --project <compose-project> --backup-root <absolute-path> \
+  [--compose-overlay <docker-compose.test-server.yml|docker-compose.test-server-external-proxy.yml>] [backup-directory]
 
 Every invocation requires an explicit ignored env file, Compose project, and
 backup root.  migrate requires TEST_SERVER_RESEARCH_MIGRATE=YES; restore-drill
@@ -30,11 +31,13 @@ env_file=""
 project=""
 backup_root=""
 backup_argument=""
+compose_overlay="docker-compose.test-server.yml"
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --env-file) env_file="${2:-}"; shift 2 ;;
     --project) project="${2:-}"; shift 2 ;;
     --backup-root) backup_root="${2:-}"; shift 2 ;;
+    --compose-overlay) compose_overlay="${2:-}"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *)
       if [[ -z "$backup_argument" && "$command_name" == "restore-drill" ]]; then
@@ -45,6 +48,19 @@ while [[ "$#" -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$compose_overlay" in
+  docker-compose.test-server.yml)
+    SERVER_COMPOSE="$ROOT_DIR/docker-compose.test-server.yml"
+    ;;
+  docker-compose.test-server-external-proxy.yml)
+    SERVER_COMPOSE="$ROOT_DIR/docker-compose.test-server-external-proxy.yml"
+    ;;
+  *)
+    echo 'ERROR: --compose-overlay must be a reviewed test-server overlay filename.' >&2
+    exit 2
+    ;;
+esac
 
 [[ -f "$env_file" ]] || { echo 'ERROR: --env-file must name an existing file.' >&2; exit 2; }
 [[ -n "$project" && "$project" =~ ^[a-z0-9][a-z0-9_-]{0,62}$ ]] || {
@@ -94,6 +110,11 @@ done
 [[ "$research_database" != "$windmill_database" && "$RESTORE_DATABASE" != "$research_database" && "$RESTORE_DATABASE" != "$windmill_database" && "$RESTORE_WINDMILL_DATABASE" != "$research_database" && "$RESTORE_WINDMILL_DATABASE" != "$windmill_database" ]] || {
   echo 'ERROR: database names collide with the fixed restore-drill database.' >&2; exit 2;
 }
+
+if [[ "$compose_overlay" == docker-compose.test-server-external-proxy.yml ]]; then
+  "$ROOT_DIR/scripts/test-server-external-proxy-validate.sh" \
+    --env-file "$env_file" --project "$project" >/dev/null
+fi
 
 compose() {
   docker compose --project-name "$project" --env-file "$env_file" \

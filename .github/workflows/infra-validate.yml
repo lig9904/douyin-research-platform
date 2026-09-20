@@ -8,10 +8,12 @@ on:
       - "docker-compose.l3-local.yml"
       - "docker-compose.local-security.yml"
       - "docker-compose.test-server.yml"
+      - "docker-compose.test-server-external-proxy.yml"
       - ".env.example"
       - ".env.l3-local.example"
       - ".env.local-security.example"
       - ".env.test-server.example"
+      - ".env.test-server-external-proxy.example"
       - "config/l3-local-*"
       - "config/l3-security-local-*"
       - "db/**"
@@ -32,10 +34,12 @@ on:
       - "docker-compose.l3-local.yml"
       - "docker-compose.local-security.yml"
       - "docker-compose.test-server.yml"
+      - "docker-compose.test-server-external-proxy.yml"
       - ".env.example"
       - ".env.l3-local.example"
       - ".env.local-security.example"
       - ".env.test-server.example"
+      - ".env.test-server-external-proxy.example"
       - "config/l3-local-*"
       - "config/l3-security-local-*"
       - "db/**"
@@ -69,6 +73,7 @@ jobs:
           cp .env.l3-local.example .env.l3-local
           cp .env.local-security.example .env.local-security
           cp .env.test-server.example .env.test-server
+          cp .env.test-server-external-proxy.example .env.test-server-external-proxy
 
       - name: Validate shell syntax
         run: |
@@ -82,6 +87,8 @@ jobs:
           bash -n scripts/test-server-globals-restore-drill.sh
           bash -n scripts/test-server-release.sh
           bash -n scripts/test-server-stack-smoke.sh
+          bash -n scripts/test-server-external-proxy-validate.sh
+          bash -n scripts/test-server-external-proxy-stack-smoke.sh
           bash -n scripts/test-server-windmill-preflight.sh
           bash -n scripts/verify-stack.sh
           bash -n scripts/tikhub/v0_smoke.py 2>/dev/null || true
@@ -112,6 +119,24 @@ jobs:
             -f docker-compose.yml \
             -f docker-compose.test-server.yml \
             config >/dev/null
+          docker compose -p research-test-external-proxy-ci \
+            --env-file .env.test-server-external-proxy \
+            -f docker-compose.yml \
+            -f docker-compose.test-server-external-proxy.yml \
+            config >/dev/null
+          docker compose -p research-test-external-proxy-ci \
+            --env-file .env.test-server-external-proxy \
+            -f docker-compose.yml \
+            -f docker-compose.test-server-external-proxy.yml \
+            config --format json \
+            | jq -e '
+                (.services | has("proxy") | not)
+                and (.services.postgres.ports == null)
+                and ((.services.windmill_server.ports | length) == 1)
+                and (.services.windmill_server.ports[0].host_ip == "10.255.255.10")
+                and (.services.windmill_server.ports[0].target == 8000)
+                and (.services.windmill_server.ports[0].published == "8000" or .services.windmill_server.ports[0].published == 8000)
+              ' >/dev/null
 
       - name: Validate test-server proxy
         run: |
@@ -128,6 +153,9 @@ jobs:
 
       - name: Exercise disposable test-server full stack
         run: TEST_SERVER_STACK_SMOKE=YES scripts/test-server-stack-smoke.sh
+
+      - name: Exercise disposable external-proxy test-server stack
+        run: TEST_SERVER_EXTERNAL_PROXY_STACK_SMOKE=YES scripts/test-server-external-proxy-stack-smoke.sh
 
       - name: Start PostgreSQL only
         run: docker compose up -d postgres
