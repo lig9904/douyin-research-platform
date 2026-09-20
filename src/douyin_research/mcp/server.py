@@ -19,7 +19,7 @@ from .readonly import CanonicalResearchQueries, MCPInputError, json_text
 
 _PROTOCOL_VERSION = "2024-11-05"
 _SERVER_NAME = "douyin-research-readonly-local"
-_SERVER_VERSION = "0.1.0rc1"
+_SERVER_VERSION = "0.1.0rc2"
 
 
 class ResearchQueries(Protocol):
