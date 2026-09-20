@@ -3,6 +3,7 @@
 核验日期：2026-09-20。适用于当前抖音 V1 研究业务及已有火山 ASR/L3 方案。
 
 用户补充的阿里云语音/模型对照见 [阿里与火山价格及调用方式](ALIBABA_VOLCENGINE_COST_COMPARISON_V1.md)。
+后续代码实现、尚未切换的默认路由及账单边界见 [费用事实与省费采集](COST_AWARE_COLLECTION_V1.md)。
 
 ## 结论与证据范围
 

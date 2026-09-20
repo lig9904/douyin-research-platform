@@ -5,7 +5,7 @@ No generic endpoint passthrough is exposed to callers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +121,37 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         paid=False,
     ),
 }
+
+
+# Reviewed public tariff snapshot. This is an estimate, not a reconciled bill.
+# Only implemented read endpoints are added; the research inventory is not an allowlist.
+for _key, _method, _name, _style, _ttl, _cost in (
+    ("douyin.app.one_video", "GET", "fetch_one_video", "query", 3600, 0.001),
+    ("douyin.app.multi_video", "POST", "fetch_multi_video", "json", 3600, 0.010),
+    ("douyin.app.video_statistics", "GET", "fetch_video_statistics", "query", 900, 0.001),
+    ("douyin.app.multi_video_statistics", "GET", "fetch_multi_video_statistics", "query", 900, 0.025),
+):
+    ENDPOINTS[_key] = EndpointSpec(
+        key=_key, http_method=_method, path=f"/api/v1/douyin/app/v3/{_name}",
+        sdk_resource="douyin_app_v3", sdk_method=_name,
+        request_style=_style, cache_ttl_seconds=_ttl, unit_cost_usd=_cost,
+    )
+
+_VERIFIED_PRICES = {
+    "douyin.billboard.low_fan": 0.001, "douyin.creator.material": 0.001,
+    "douyin.search.video_v2": 0.010, "douyin.app.multi_video_v2": 0.050,
+    "douyin.app.user_posts": 0.001, "douyin.app.comments": 0.001,
+    "douyin.app.comment_replies": 0.001, "douyin.app.one_video": 0.001,
+    "douyin.app.multi_video": 0.010, "douyin.app.video_statistics": 0.001,
+    "douyin.app.multi_video_statistics": 0.025,
+    "tikhub.user.daily_usage": 0.0, "tikhub.user.calculate_price": 0.0,
+}
+for _key, _cost in _VERIFIED_PRICES.items():
+    ENDPOINTS[_key] = replace(
+        ENDPOINTS[_key], unit_cost_usd=_cost,
+        price_source="tikhub.get_all_endpoints_info",
+        pricing_version="public-tariff-2026-09-20",
+    )
 
 
 WRITE_DENY_SUBSTRINGS = (

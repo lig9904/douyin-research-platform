@@ -54,10 +54,16 @@ type Overview = {
     new_hotspots?: number
     blackhorse_candidates?: number
     entered_l1?: number
-    api_cost_usd?: number
-    api_requests?: number
+    api_call_records?: number
     budget_usage_pct?: number
   }
+  api_costs: {
+    currency: string
+    estimated_cost: number
+    reconciled_cost: number
+    known_zero_calls: number
+    unknown_cost_calls: number
+  }[]
   blackhorse: BlackhorseItem[]
   trend: { day: string; value: number }[]
   keywords: { keyword: string; hits: number }[]
@@ -108,8 +114,14 @@ function formatCount(v?: number | null) {
   return v.toLocaleString('zh-CN')
 }
 
-function money(v?: number | null) {
-  return `$${Number(v || 0).toFixed(3)}`
+function apiCostSummary(costs?: Overview['api_costs']) {
+  if (!costs?.length) return '—'
+  return costs.map((cost) => `${cost.currency} 估算 ${Number(cost.estimated_cost || 0).toFixed(3)} / 已对账 ${Number(cost.reconciled_cost || 0).toFixed(3)}`).join('；')
+}
+
+function apiCostFootnote(costs?: Overview['api_costs'], records?: number) {
+  const unknown = (costs || []).reduce((sum, cost) => sum + Number(cost.unknown_cost_calls || 0), 0)
+  return `${records ?? 0} 条调用记录${unknown ? ` · ${unknown} 条来源未核验` : ''}`
 }
 
 function priorityTone(score: number) {
@@ -332,7 +344,7 @@ function App() {
                 ['🔥', '新增热点', data?.kpis.new_hotspots || 0, '过去所选时间窗'],
                 ['🚀', '黑马候选', data?.kpis.blackhorse_candidates || 0, '优先级 ≥ 60'],
                 ['◎', '进入 L1', data?.kpis.entered_l1 || 0, '纯代码粗筛'],
-                ['◉', 'API 成本', money(data?.kpis.api_cost_usd), `${data?.kpis.api_requests || 0} 次外部请求`],
+                ['◉', 'API 费用事实', apiCostSummary(data?.api_costs), apiCostFootnote(data?.api_costs, data?.kpis.api_call_records)],
               ].map(([icon, label, value, foot]) => (
                 <div className="kpi-card card" key={String(label)}>
                   <div className="kpi-icon">{icon}</div>

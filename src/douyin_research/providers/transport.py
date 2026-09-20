@@ -1,4 +1,4 @@
-"""TikHub SDK transport with controlled REST fallback."""
+"""Auditable TikHub REST transport; explicit opt-in legacy SDK compatibility."""
 
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ class TransportResult:
     provider_request_id: str | None
     retry_count: int = 0
     mode: str = "sdk"
+    # None means opaque transport (including SDK-internal retries), not zero attempts.
+    attempts: tuple[dict[str, Any], ...] | None = None
 
 
 class ProviderTransport(Protocol):
@@ -33,7 +35,7 @@ class ProviderTransport(Protocol):
 
 
 class TikHubTransport:
-    """Use official SDK when the method exists, else a read-only REST fallback."""
+    """REST exposes every attempt. Legacy SDK attempts remain explicitly unknown."""
 
     def __init__(
         self,
@@ -43,11 +45,15 @@ class TikHubTransport:
         timeout: float = 30.0,
         max_retries: int = 3,
         http_client: httpx.Client | None = None,
+        prefer_sdk: bool = False,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        self.prefer_sdk = prefer_sdk
         self._http_client = http_client
         self._sdk_client: Any = None
 
@@ -72,7 +78,7 @@ class TikHubTransport:
             self._http_client.close()
 
     def call(self, spec: EndpointSpec, kwargs: dict[str, Any]) -> TransportResult:
-        if spec.sdk_resource and spec.sdk_method:
+        if self.prefer_sdk and spec.sdk_resource and spec.sdk_method:
             client = self._get_sdk_client()
             resource = getattr(client, spec.sdk_resource, None)
             method = getattr(resource, spec.sdk_method, None) if resource is not None else None
@@ -101,6 +107,7 @@ class TikHubTransport:
             headers={"Authorization": f"Bearer {self.api_key}", "Accept": "application/json"},
         )
         retry_count = 0
+        attempts: list[dict[str, Any]] = []
         try:
             while True:
                 try:
@@ -109,8 +116,11 @@ class TikHubTransport:
                         request_kwargs["params"] = kwargs
                     elif spec.request_style == "json":
                         request_kwargs["json"] = kwargs.get("body", kwargs)
+                    attempts.append({"http_status": None})
                     response = client.request(spec.http_method, spec.path, **request_kwargs)
+                    attempts[-1]["http_status"] = response.status_code
                 except httpx.RequestError as exc:
+                    attempts[-1]["error_type"] = type(exc).__name__
                     if retry_count >= self.max_retries - 1:
                         raise ProviderTemporaryError(str(exc)) from exc
                     retry_count += 1
@@ -165,7 +175,12 @@ class TikHubTransport:
                     provider_request_id=response.headers.get("x-request-id") or _request_id(payload),
                     retry_count=retry_count,
                     mode="rest",
+                    attempts=tuple(attempts),
                 )
+        except Exception as exc:
+            # Include the final failed attempt. Never include URLs, keys or response bodies.
+            exc.provider_attempts = tuple(attempts)
+            raise
         finally:
             if owned_client:
                 client.close()

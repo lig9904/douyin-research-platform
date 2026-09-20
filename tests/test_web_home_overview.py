@@ -140,7 +140,20 @@ def clear_and_seed() -> None:
             )
             values (
               'tikhub','douyin','fixture','web-call','success',
-              false,0.001,'USD',now(),now(),'{}'::jsonb
+              false,0.001,'USD',now(),now(),'{"cost_basis":"verified_unit_price"}'::jsonb
+            )
+            """
+        )
+
+        cur.execute(
+            """
+            insert into external_api_call(
+              provider, platform, endpoint_key, request_fingerprint, status,
+              cached, estimated_cost, actual_cost, cost_currency, started_at, finished_at, metadata
+            )
+            values (
+              'tikhub','douyin','fixture-missing-price','web-call-missing','success',
+              false,null,null,'USD',now(),now(),'{"cost_basis":"estimated_unit_price","billing_status":"estimated"}'::jsonb
             )
             """
         )
@@ -182,7 +195,14 @@ def test_home_backend_returns_real_multiplatform_dashboard_shape() -> None:
     assert result["kpis"]["new_hotspots"] == 1
     assert result["kpis"]["blackhorse_candidates"] == 1
     assert result["kpis"]["entered_l1"] == 1
-    assert float(result["kpis"]["api_cost_usd"]) == pytest.approx(0.001)
+    assert result["kpis"]["api_call_records"] == 2
+    assert result["api_costs"] == [{
+        "currency": "USD",
+        "estimated_cost": pytest.approx(0.001),
+        "reconciled_cost": pytest.approx(0),
+        "known_zero_calls": 0,
+        "unknown_cost_calls": 1,
+    }]
     assert result["blackhorse"][0]["title"] == "测试黑马视频"
     assert float(result["blackhorse"][0]["priority"]) == pytest.approx(88)
     assert result["keywords"][0]["keyword"] == "海边传说"

@@ -15,6 +15,7 @@ from douyin_research.providers.store import PostgresProviderStore
 from douyin_research.providers.types import ProviderCallMeta
 from douyin_research.providers.tikhub_provider import TikHubDouyinProvider
 from douyin_research.providers.transport import TikHubTransport
+from douyin_research.providers.video_fetch_plan import plan_video_fetches
 
 from .budget import DailyBudgetGuard
 from .ingest import L0L1Store
@@ -42,6 +43,7 @@ class GoldenIntakePlan:
     enrich_details: bool
     retry_count: int
     force_refresh: bool
+    detail_strategy: str = "batch50"
 
 
 class _RecordingPostgresProviderStore(PostgresProviderStore):
@@ -60,21 +62,28 @@ def make_plan(
     *,
     dry_run: bool = True,
     max_items: int = GOLDEN_MAX_ITEMS,
-    max_external_calls: int = GOLDEN_MAX_EXTERNAL_CALLS,
+    max_external_calls: int | None = None,
     max_cost_usd: float | None = None,
     page: int = 1,
     date_window_hours: int = 24,
     enrich_details: bool = True,
     force_refresh: bool = False,
+    detail_strategy: str = "batch50",
 ) -> GoldenIntakePlan:
     """Validate a conservative one-page collection plan before touching a secret."""
     if not 1 <= max_items <= GOLDEN_MAX_ITEMS:
         raise ValueError(f"max_items must be between 1 and {GOLDEN_MAX_ITEMS}")
-    if not 1 <= max_external_calls <= GOLDEN_MAX_EXTERNAL_CALLS:
+    detail_requests = plan_video_fetches(
+        [str(i) for i in range(max_items)], strategy=detail_strategy,
+    )
+    needed_calls = 1 + (len(detail_requests) if enrich_details else 0)
+    if max_external_calls is None:
+        max_external_calls = needed_calls
+    call_limit = GOLDEN_MAX_EXTERNAL_CALLS if detail_strategy == "batch50" else GOLDEN_MAX_ITEMS + 1
+    if not 1 <= max_external_calls <= call_limit:
         raise ValueError(
-            f"max_external_calls must be between 1 and {GOLDEN_MAX_EXTERNAL_CALLS}"
+            f"max_external_calls must be between 1 and {call_limit}"
         )
-    needed_calls = 1 + int(enrich_details)
     if max_external_calls < needed_calls:
         raise ValueError(
             f"max_external_calls must be at least {needed_calls} when "
@@ -89,8 +98,8 @@ def make_plan(
         # continuation cursor.  A golden run is intentionally one page; this
         # rejects accidental pagination expansion before it can spend money.
         raise ValueError("golden intake only permits page=1")
-    if not 1 <= date_window_hours <= 24:
-        raise ValueError("date_window_hours must be between 1 and 24")
+    if date_window_hours not in {1, 24, 72, 168}:
+        raise ValueError("date_window_hours must be one of 1, 24, 72, 168")
     return GoldenIntakePlan(
         dry_run=dry_run,
         max_items=max_items,
@@ -102,6 +111,7 @@ def make_plan(
         enrich_details=enrich_details,
         retry_count=0,
         force_refresh=force_refresh,
+        detail_strategy=detail_strategy,
     )
 
 
@@ -142,6 +152,7 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         before_external_call=budget.make_before_external_call(
             provider="tikhub", budget_key=GOLDEN_BUDGET_KEY
         ),
+        detail_strategy=plan.detail_strategy,
     )
     runner = L0L1Runner(
         provider=provider,
@@ -177,11 +188,24 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
     # Do not return raw provider payloads, video text, request IDs or secrets.
     cached_calls = sum(1 for call in provider_store.recorded_calls if call.cached)
     uncached_calls = sum(1 for call in provider_store.recorded_calls if not call.cached)
-    # The business run and provider ledger must use the same amount/currency.
+    # Preserve the known quote subtotal without relabeling it supplier spend.
+    calls = provider_store.recorded_calls
+    estimated_cost = sum(float(call.estimated_cost or 0) for call in calls)
+    unknown_cost_calls = sum(call.metadata.get("billing_status") == "unknown" for call in calls)
+    http_attempts = [call.metadata.get("http_attempt_count") for call in calls]
+    cost_summary = {
+        "estimated_api_cost_usd": estimated_cost,
+        "reconciled_api_cost_usd": None,
+        "unknown_cost_calls": unknown_cost_calls,
+        "observed_http_attempts": sum(n for n in http_attempts if n is not None),
+        "opaque_attempt_calls": sum(n is None for n in http_attempts),
+        "api_cost_basis": "unknown" if unknown_cost_calls else "estimated",
+    }
     runner.store.finish_run(
         summary.run_id,
-        api_cost=sum(float(call.actual_cost or 0) for call in provider_store.recorded_calls),
+        api_cost=estimated_cost,
         cost_currency="USD",
+        summary=cost_summary,
     )
     return {
         "run_id": str(summary.run_id),
@@ -196,4 +220,6 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         "provider_call_count": len(provider_store.recorded_calls),
         "cached_call_count": cached_calls,
         "uncached_call_count": uncached_calls,
+        "detail_strategy": plan.detail_strategy,
+        "cost_summary": cost_summary,
     }

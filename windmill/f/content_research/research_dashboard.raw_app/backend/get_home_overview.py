@@ -97,9 +97,7 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
                 and (%s='all' or platform=%s)
             ),
             api as (
-              select
-                coalesce(sum(actual_cost) filter (where cached=false), 0)::numeric as cost,
-                count(*) filter (where cached=false)::int as requests
+              select count(*)::int as call_records
               from external_api_call
               where started_at >= now() - (%s || ' hours')::interval
                 and (%s='all' or platform=%s)
@@ -120,8 +118,7 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
               (select value from hot) as new_hotspots,
               (select value from blackhorse) as blackhorse_candidates,
               (select value from l1) as entered_l1,
-              (select cost from api) as api_cost_usd,
-              (select requests from api) as api_requests,
+              (select call_records from api) as api_call_records,
               (select usage from budget) as budget_usage_pct
             """,
             (
@@ -130,6 +127,50 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
                 hours, selected, selected2,
                 hours, selected, selected2,
             ),
+        )
+
+        api_costs = _fetch_all(
+            conn,
+            """
+            with calls as (
+              select
+                coalesce(cost_currency, 'UNKNOWN') as currency,
+                estimated_cost,
+                actual_cost,
+                coalesce(metadata->>'cost_basis', '') as cost_basis,
+                coalesce(metadata->>'billing_status', '') as billing_status
+              from external_api_call
+              where started_at >= now() - (%s || ' hours')::interval
+                and (%s='all' or platform=%s)
+            )
+            select
+              currency,
+              coalesce(sum(case
+                when cost_basis in ('estimated_unit_price', 'verified_unit_price')
+                  and coalesce(estimated_cost, actual_cost) is not null
+                  then coalesce(estimated_cost, actual_cost)
+                else 0
+              end), 0)::numeric as estimated_cost,
+              coalesce(sum(case
+                when cost_basis = 'supplier_bill' and actual_cost is not null then actual_cost
+                else 0
+              end), 0)::numeric as reconciled_cost,
+              count(*) filter (where cost_basis in (
+                'cache_zero', 'free_endpoint', 'nonbillable_http'
+              ))::int as known_zero_calls,
+              count(*) filter (where billing_status = 'unknown'
+                or cost_basis not in (
+                  'estimated_unit_price', 'verified_unit_price', 'supplier_bill',
+                  'cache_zero', 'free_endpoint', 'nonbillable_http'
+                ) or (cost_basis = 'supplier_bill' and actual_cost is null)
+                or (cost_basis in ('estimated_unit_price', 'verified_unit_price')
+                    and estimated_cost is null and actual_cost is null)
+              )::int as unknown_cost_calls
+            from calls
+            group by currency
+            order by currency
+            """,
+            (hours, selected, selected2),
         )
 
         blackhorse = _fetch_all(
@@ -344,6 +385,7 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
         "hours": hours,
         "platforms": platforms,
         "kpis": kpis,
+        "api_costs": api_costs,
         "blackhorse": blackhorse[:5],
         "trend": trend,
         "keywords": keywords,

@@ -182,6 +182,8 @@ class CanonicalResearchQueries:
                   max_cost,
                   max_requests,
                   spent_cost,
+                  'known_estimated_reservation_not_supplier_bill'::text as spent_cost_basis,
+                  unknown_price_requests,
                   used_requests,
                   cost_currency
                 from daily_budget

@@ -151,6 +151,8 @@ def _normalize_aweme(
 
     author = obj.get("author") if isinstance(obj.get("author"), dict) else {}
     statistics = obj.get("statistics") if isinstance(obj.get("statistics"), dict) else {}
+    if endpoint_key in {"douyin.app.video_statistics", "douyin.app.multi_video_statistics"}:
+        statistics = statistics or obj
     video_obj = obj.get("video") if isinstance(obj.get("video"), dict) else {}
 
     sec_uid = _first_str(author, "sec_uid", "sec_user_id")

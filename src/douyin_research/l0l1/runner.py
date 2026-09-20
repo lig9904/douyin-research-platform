@@ -100,10 +100,13 @@ class L0L1Runner:
             if enrich_details and unique_platform_ids:
                 ids = [item.video.platform_video_id for item in unique_platform_ids.values()]
                 if not self.provider_reserves_budget:
+                    planner = getattr(self.provider, "plan_videos", None)
+                    request_count = (len(planner(ids)) if planner is not None else
+                                     math.ceil(len(ids) / self.provider.video_batch_size))
                     self.budget.acquire(
                         provider=self.provider.provider_name,
                         budget_key=self.budget_key,
-                        requests=math.ceil(len(ids) / self.provider.video_batch_size),
+                        requests=request_count,
                     )
                 details = self.provider.fetch_videos(ids)
                 self._validate_platform(details)
