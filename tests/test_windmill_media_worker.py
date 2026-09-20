@@ -16,6 +16,18 @@ sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 
 
+def test_media_worker_release_has_pinned_dependency_lock():
+    import re
+    lock = SCRIPT.with_suffix(".script.lock").read_text()
+    metadata = SCRIPT.with_suffix(".script.yaml").read_text()
+    commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", SCRIPT.read_text()).group(1)
+    assert f"douyin-research-platform@{commit}" in lock
+    assert lock.startswith("# workspace-dependencies-mode: manual\n# py: 3.13\n")
+    assert "lock: '!inline f/content_research/collectors/ingest_video_media.script.lock'" in metadata
+    assert "psycopg==3.3.6" in lock
+    assert "wmill==1.815.0" in lock
+
+
 def _configuration(tmp_path):
     return dict(endpoint="http://minio.internal:9000", public_endpoint="https://media.example.test",
         bucket="test-media", region="us-east-1", access_key_id="synthetic-access",
