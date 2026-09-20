@@ -3,6 +3,7 @@ import inspect
 import json
 import sys
 import os
+from datetime import date, timedelta
 from types import SimpleNamespace
 from pathlib import Path
 from uuid import uuid4
@@ -29,7 +30,7 @@ def test_invalid_uuid_cannot_load_configuration(monkeypatch):
 
 
 def test_preflight_rejection_precedes_key_lookup(monkeypatch):
-    monkeypatch.setattr(worker, "_configuration", lambda: ("unused", "worker", object()))
+    monkeypatch.setattr(worker, "_configuration", lambda: ("unused", "worker", worker.CommentPipelineSettings(top_n=2)))
     def reject(*args):
         raise ValueError("batch unavailable")
     monkeypatch.setattr(worker, "_preflight", reject)
@@ -60,7 +61,7 @@ def test_server_settings_reject_unknown_or_invalid_fields(monkeypatch, extra):
 @pytest.mark.parametrize("outcome", ["success", "failed"])
 def test_execution_uses_server_identity_and_closes_transport(monkeypatch, outcome):
     seen = {}
-    monkeypatch.setattr(worker, "_configuration", lambda: ("unused", "fixed/comments", object()))
+    monkeypatch.setattr(worker, "_configuration", lambda: ("unused", "fixed/comments", worker.CommentPipelineSettings(top_n=2)))
     monkeypatch.setattr(worker, "_preflight", lambda *args: None)
     monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(get_variable=lambda path: "private-key"))
     class Transport:
@@ -101,7 +102,7 @@ def test_daily_policy_must_be_explicit_and_valid(monkeypatch, policy):
 def test_daily_preparation_preserves_existing_limits_and_usage(monkeypatch):
     key = "worker-test-" + str(uuid4())
     monkeypatch.setattr(worker, "BUDGET_KEY", key)
-    settings = SimpleNamespace(quota_key=key)
+    settings = SimpleNamespace(quota_key=key, quota_date=date.today())
     with psycopg.connect(os.environ["TEST_DATABASE_URL"]) as conn:
         try:
             worker._prepare_day(conn, settings, dict(max_requests=None, max_cost_usd=None, max_l3_items=5))
@@ -119,7 +120,7 @@ def test_preflight_creates_daily_records_only_for_valid_source(monkeypatch):
     dsn = os.environ["TEST_DATABASE_URL"]
     source, video = uuid4(), uuid4()
     key = "preflight-" + str(source)
-    settings = SimpleNamespace(quota_key=key)
+    settings = SimpleNamespace(quota_key=key, quota_date=date.today())
     monkeypatch.setattr(worker, "BUDGET_KEY", key)
     calls = []
     monkeypatch.setattr(worker, "_daily_policy", lambda: calls.append("policy") or
@@ -134,8 +135,15 @@ def test_preflight_creates_daily_records_only_for_valid_source(monkeypatch):
             conn.execute("insert into pipeline_run_item(run_id,entity_type,entity_id,stage,outcome) values (%s,'video',%s,'L1','scored')", (source, video))
         worker._preflight(dsn, source, settings)
         worker._preflight(dsn, source, settings)
+        class NextDay(date):
+            @classmethod
+            def today(cls):
+                return settings.quota_date + timedelta(days=1)
+        monkeypatch.setattr("douyin_research.l0l1.budget.date", NextDay)
+        monkeypatch.setattr(worker, "date", NextDay)
+        worker._budget_hook(dsn, settings.quota_date)(SimpleNamespace(paid=True, unit_cost_usd=0.001))
         with psycopg.connect(dsn) as conn:
-            assert conn.execute("select max_cost,max_requests,used_requests from daily_budget where budget_key=%s", (key,)).fetchall() == [(None, None, 0)]
+            assert conn.execute("select budget_date,max_cost,max_requests,used_requests from daily_budget where budget_key=%s", (key,)).fetchall() == [(settings.quota_date, None, None, 1)]
             assert conn.execute("select max_items,used_items from daily_research_quota where quota_key=%s", (key,)).fetchall() == [(3, 0)]
     finally:
         with psycopg.connect(dsn) as conn:

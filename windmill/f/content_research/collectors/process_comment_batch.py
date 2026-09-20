@@ -10,6 +10,7 @@
 import json
 import math
 from datetime import date
+from dataclasses import replace
 from uuid import UUID
 
 import psycopg
@@ -50,13 +51,14 @@ def _daily_policy():
 
 
 def _prepare_day(conn, settings, policy):
+    run_date = settings.quota_date
     # Never reset consumption or overwrite an operator's existing daily limits.
     conn.execute("""insert into daily_budget(budget_date,provider,budget_key,max_requests,max_cost,cost_currency)
         values (%s,'tikhub',%s,%s,%s,'USD') on conflict do nothing""",
-        (date.today(), BUDGET_KEY, policy["max_requests"], policy["max_cost_usd"]))
+        (run_date, BUDGET_KEY, policy["max_requests"], policy["max_cost_usd"]))
     conn.execute("""insert into daily_research_quota(quota_date,platform,quota_key,max_items)
         values (%s,'douyin',%s,%s) on conflict do nothing""",
-        (date.today(), settings.quota_key, policy["max_l3_items"]))
+        (run_date, settings.quota_key, policy["max_l3_items"]))
 
 
 def _configuration():
@@ -89,13 +91,22 @@ def _preflight(dsn, source, settings):
             raise ValueError("discovery batch must contain 1 to 20 scored videos")
         _prepare_day(conn, settings, _daily_policy())
         budget = conn.execute("select cost_currency from daily_budget where budget_date=%s and provider='tikhub' and budget_key=%s",
-                              (date.today(), BUDGET_KEY)).fetchone()
+                              (settings.quota_date, BUDGET_KEY)).fetchone()
         if budget != ("USD",):
             raise RuntimeError("daily comment request accounting must be configured in USD")
         quota = conn.execute("select 1 from daily_research_quota where quota_date=%s and platform='douyin' and quota_key=%s",
-                             (date.today(), settings.quota_key)).fetchone()
+                             (settings.quota_date, settings.quota_key)).fetchone()
         if quota is None:
             raise RuntimeError("daily promotion quota must be configured")
+
+
+def _budget_hook(dsn, run_date):
+    guard = DailyBudgetGuard(dsn)
+    def reserve(spec):
+        guard.acquire(provider="tikhub", budget_key=BUDGET_KEY, requests=1,
+                      estimated_cost=spec.unit_cost_usd if spec.paid else 0.0,
+                      budget_date=run_date)
+    return reserve
 
 
 class _SafeTransport:
@@ -112,6 +123,7 @@ class _SafeTransport:
 def main(source_run_id: str) -> dict:
     source = UUID(source_run_id)
     dsn, actor, settings = _configuration()
+    settings = replace(settings, quota_date=date.today())
     _preflight(dsn, source, settings)
     import wmill
     transport = None
@@ -121,8 +133,7 @@ def main(source_run_id: str) -> dict:
             raise ValueError
         transport = TikHubTransport(key.strip(), max_retries=0)
         provider = TikHubProvider(transport=_SafeTransport(transport), store=PostgresProviderStore(dsn),
-            before_external_call=DailyBudgetGuard(dsn).make_before_external_call(
-                provider="tikhub", budget_key=BUDGET_KEY))
+            before_external_call=_budget_hook(dsn, settings.quota_date))
         collector = CommentCollector(provider=provider, evidence_store=CommentEvidenceStore(dsn), run_store=L0L1Store(dsn))
         result = CommentPipeline(dsn, collector=collector, worker_identity=actor).run(source, settings=settings)
         if any(item.outcome != "success" for item in result.videos):
