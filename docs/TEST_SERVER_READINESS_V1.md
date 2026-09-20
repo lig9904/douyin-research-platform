@@ -154,6 +154,12 @@ IPv4 地址 `:8000`。它没有 `0.0.0.0` 或公网地址默认值，配置文�
 `<测试服务器私网IP>:8000`。测试服务器防火墙只允许该反代源 IP 访问 TCP 8000；
 不开放 80、443、5432，Docker 也不得映射 PostgreSQL。
 
+该 Overlay 固定启动两个相互隔离的 default worker 容器。研究台的受控黄金采集由
+App runnable 同步等待一个子任务，单 worker 会让子任务排在父任务后直至超时；
+Windmill CE v1.815.0 又会把普通（非 native）worker 的 `NUM_WORKERS>1` 自动回退为
+1，因此这里使用两个 Compose replica，而不是同容器并发。该副本数只解决父子任务
+饥饿，不放宽业务侧最多 1 次 TikHub 请求、0.01 USD 和零重试闸门。
+
 在复制受 Git 忽略的环境文件并替换所有占位值后，先以 `0600` 权限验证，再渲染和
 启动。以下命令不读取或显示 Secret 值：
 
@@ -206,7 +212,8 @@ Windmill 的 `私网IP:8000` 绑定、PostgreSQL 无宿主机绑定。`WINDMILL_
 必须保持最终公开 `https://<FQDN>`，以保证浏览器跳转和回调 URL 正确；它不是
 测试服务器监听地址。现有含 Nginx 的 Overlay 仍保留给需要同机 TLS 终止的环境。
 仓库 CI 还会在 Linux runner 选择实际 RFC1918 地址、生成随机数据库密码并启动
-PostgreSQL、Windmill server/default/native worker；它以 Docker inspect 验证无 proxy、
+PostgreSQL、Windmill server、两个 default worker 和一个 native worker；它以 Docker
+inspect 验证 default worker 精确为两个、无 proxy、
 PostgreSQL 无宿主机端口以及 Windmill 唯一准确的 `私网IP:8000` 绑定，退出时删除
 该一次性 project 与卷。该烟测不配置 Provider，也不能替代反代源 IP 防火墙和真实
 HTTPS 路径验收。
