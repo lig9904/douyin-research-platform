@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,16 @@ def load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_app_dependencies_are_declared_in_runtime_supported_pep723():
+    source = SCRIPT.read_text()
+    block = source.split("# /// script\n", 1)[1].split("# ///", 1)[0]
+    metadata = tomllib.loads("\n".join(line.removeprefix("# ") for line in block.splitlines()))
+    assert metadata["requires-python"] == "==3.12.*"
+    assert "psycopg[binary]==3.3.6" in metadata["dependencies"]
+    assert any(dep.startswith("douyin-research-platform @ git+https://github.com/lig9904/")
+               for dep in metadata["dependencies"])
 
 
 def test_preview_is_zero_call_and_does_not_require_database() -> None:

@@ -161,6 +161,9 @@ Windmill CE v1.815.0 会把普通（非 native）worker 的 `NUM_WORKERS>1` 自�
 `WM_END_USER_EMAIL`。手动按钮使用 App viewer 检查权限及记录操作者；TikHub 调用本身
 仅使用服务器 API Key，采集核心不依赖网页登录。定时任务应使用任务执行身份记录来源；
 当前黄金验收入口仍为手动入口，不因本次修复自动启用定时任务。
+App 后端同时使用 PEP 723 的 `# /// script` 声明 Python 版本及依赖。
+在 CE v1.815.0 的无 app-script ID 执行路径中，传入的 inline lock 会被忽略；
+仅保存旁路 `.lock` 或旧式 `#requirements:` 注释不能证明运行时已加载依赖。
 测试服人工黄金采集单次最多 5 条、2 次 TikHub 请求且零重试；按当前授权不设
 固定金额上限，实际调用和费用仍进入只读账本。
 
