@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import httpx
 import pytest
 
@@ -10,6 +12,8 @@ from douyin_research.providers.volcengine_asr import (
     VOLCENGINE_ASR_MODEL_REVISION,
     VolcengineASRReadinessFacts,
     VolcengineDoubaoASRProvider,
+    ReviewedASRMediaDelivery,
+    VerifiedLiveVolcengineDoubaoASRProvider,
     _map_poll_state,
     _map_submit_state,
     _poll_wire_request,
@@ -24,7 +28,7 @@ SYNTHETIC_SECRET = "synthetic-secret-never-log"
 def _request(**overrides) -> ASRProviderRequest:
     values = {
         "task_key": "synthetic-task",
-        "media_ref": "https://media.example.test/audio.mp3?signature=redacted",
+        "media_ref": "https://media.example.test/audio.mp3",
         "source_fingerprint": "source-fingerprint",
         "model_id": VOLCENGINE_ASR_MODEL_ID,
         "model_revision": VOLCENGINE_ASR_MODEL_REVISION,
@@ -159,7 +163,7 @@ def test_submit_wire_shape_excludes_secret_and_preserves_contract_mapping() -> N
         "user": {"uid": "douyin-research-platform"},
         "audio": {
             "format": "mp3",
-            "url": "https://media.example.test/audio.mp3?signature=redacted",
+            "url": "https://media.example.test/audio.mp3",
             "language": "zh-CN",
         },
         "request": {
@@ -261,11 +265,12 @@ def test_poll_wire_and_status_mapping_are_pure_and_preserve_evidence() -> None:
         "http://media.example.test/audio.mp3",
         "https://user:password@media.example.test/audio.mp3",
         "https://media.example.test/audio.mp3#fragment",
+        "https://media.example.test/audio.mp3?signature=redacted",
         "not-a-url",
     ],
 )
 def test_submit_wire_rejects_unsafe_media_references(media_ref) -> None:
-    with pytest.raises(ValueError, match="credential-free HTTPS"):
+    with pytest.raises(ValueError, match="(credential-free HTTPS|ReviewedASRMediaDelivery)"):
         _submit_wire_request(
             _request(media_ref=media_ref),
             audio_format="mp3",
@@ -295,3 +300,94 @@ def test_secret_is_absent_from_adapter_and_readiness_report_representations() ->
     assert SYNTHETIC_SECRET not in repr(provider)
     assert SYNTHETIC_SECRET not in repr(report)
     assert SYNTHETIC_SECRET not in str(report.to_dict())
+
+
+def _live_provider(client: httpx.Client, **overrides) -> VerifiedLiveVolcengineDoubaoASRProvider:
+    values = {
+        "api_key": SYNTHETIC_SECRET,
+        "audio_format": "m4a",
+        "source_fingerprint": "source-fingerprint",
+        "reviewed_media_delivery": ReviewedASRMediaDelivery(
+            url="https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a",
+            review_version="official-demo-url-v1",
+        ),
+        "client": client,
+    }
+    values.update(overrides)
+    return VerifiedLiveVolcengineDoubaoASRProvider(**values)
+
+
+def test_verified_live_submit_then_poll_uses_fixed_contract_once_per_operation() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(wire: httpx.Request) -> httpx.Response:
+        calls.append(wire)
+        if wire.url.path.endswith("/submit"):
+            return httpx.Response(200, headers={"X-Api-Status-Code": "20000000"})
+        return httpx.Response(200, headers={"X-Api-Status-Code": "20000000"}, json={
+            "audio_info": {"duration": 1200},
+            "result": {"text": "测试转写。", "utterances": [
+                {"start_time": 0, "end_time": 1200, "text": "测试转写。"}
+            ]},
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False) as client:
+        p = _live_provider(client)
+        submitted = p.submit(_request(media_ref="https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a"))
+        completed = p.poll(submitted.provider_task_ref)
+    assert submitted.status == "submitted"
+    assert completed.status == "completed"
+    assert completed.evidence is not None and completed.evidence.text == "测试转写。"
+    assert len(calls) == 2
+    assert str(calls[0].url).startswith("https://openspeech.bytedance.com/api/v3/auc/bigmodel/")
+    assert calls[0].headers["x-api-key"] == SYNTHETIC_SECRET
+    assert calls[0].headers["x-api-resource-id"] == VOLCENGINE_ASR_ENGINE_VERSION
+    assert calls[0].headers["x-api-sequence"] == "-1"
+
+
+def test_live_query_url_requires_exact_reviewed_record_and_does_not_leak_it() -> None:
+    signed = "https://media.example.test/audio.mp3?signature=synthetic-url-secret"
+    digest = hashlib.sha256(b"signature=synthetic-url-secret").hexdigest()
+    reviewed = ReviewedASRMediaDelivery(
+        url=signed, review_version="signed-url-review-v1", query_sha256=digest,
+    )
+    assert "synthetic-url-secret" not in repr(reviewed)
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200)), follow_redirects=False) as client:
+        p = _live_provider(client, reviewed_media_delivery=reviewed)
+        with pytest.raises(ValueError, match="does not match reviewed delivery") as captured:
+            p.submit(_request(media_ref="https://media.example.test/audio.mp3?signature=other"))
+    assert "synthetic-url-secret" not in str(captured.value)
+
+
+def test_live_transport_sanitizes_http_failure_and_maps_provider_error() -> None:
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(
+        401, text="provider echoed synthetic-secret-never-log",
+    )), follow_redirects=False) as client:
+        p = _live_provider(client)
+        with pytest.raises(RuntimeError, match="HTTP request failed") as captured:
+            p.submit(_request(media_ref="https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a"))
+    assert SYNTHETIC_SECRET not in str(captured.value)
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(
+        200, headers={"X-Api-Status-Code": "45000001"},
+    )), follow_redirects=False) as client:
+        failed = _live_provider(client).submit(_request(
+            media_ref="https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a"
+        ))
+    assert failed.status == "failed"
+    assert failed.error_code == "volcengine_45000001"
+
+
+def test_live_provider_has_no_runtime_production_switch_or_secret_in_repr() -> None:
+    with httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200)), follow_redirects=False) as client:
+        p = _live_provider(client)
+        assert p.contract.production_ready is True
+        assert SYNTHETIC_SECRET not in repr(p)
+        with pytest.raises(TypeError, match="production_ready"):
+            VerifiedLiveVolcengineDoubaoASRProvider(
+                api_key="x", audio_format="m4a", source_fingerprint="f",
+                reviewed_media_delivery=ReviewedASRMediaDelivery(
+                    url="https://vod-ai-test.tos-cn-beijing.volces.com/demo/speech.m4a",
+                    review_version="v1",
+                ),
+                production_ready=False,
+            )

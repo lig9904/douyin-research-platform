@@ -1,0 +1,26 @@
+# Only invoked by scripts/local-security-env.sh with isolated project/context.
+services:
+  postgres:
+    ports:
+      - "${LOCAL_SECURITY_POSTGRES_BIND_HOST:-127.0.0.1}:${LOCAL_SECURITY_POSTGRES_PORT:-25432}:5432"
+  windmill_server:
+    environment:
+      BASE_URL: ${LOCAL_SECURITY_BASE_URL:-https://localhost:28443}
+    # Compose !reset is required: an empty sequence otherwise merges with the
+    # base loopback port mapping and would leave plaintext HTTP reachable.
+    ports: !reset []
+  proxy:
+    image: nginx:1.27.5-alpine
+    restart: unless-stopped
+    depends_on:
+      windmill_server:
+        condition: service_healthy
+    ports:
+      - "${LOCAL_SECURITY_BIND_HOST:-127.0.0.1}:${LOCAL_SECURITY_HTTPS_PORT:-28443}:8443"
+    volumes:
+      - ./ops/local-security/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${LOCAL_SECURITY_RUNTIME_DIR:?LOCAL_SECURITY_RUNTIME_DIR is required}/certs:/etc/nginx/certs:ro
+    networks: [research]
+    logging:
+      driver: json-file
+      options: {max-size: "2m", max-file: "2"}

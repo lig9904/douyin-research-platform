@@ -110,6 +110,9 @@ Git 中只保存 Resource 模板：
 - 真实 L3 模型执行
 - 多平台 Provider 采集
 
+视频、账号和热点的监测/专题，以及视频收藏和保存筛选已使用 actor 绑定、幂等、零外呼的
+PostgreSQL 后端启用；边界和验收见 `docs/WINDMILL_RESEARCH_ACTIONS_V1.md`。
+
 这些入口会在对应页面真正完成后启用。
 
 ## 前端栈

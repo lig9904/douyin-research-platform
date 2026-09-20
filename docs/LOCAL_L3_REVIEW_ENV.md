@@ -54,6 +54,32 @@ scripts/local-l3-env.sh stop
 
 Docker 初始化钩子只会在新 PostgreSQL volume 时自动运行。已有本环境 volume 必须执行 `scripts/local-l3-env.sh provision`，而不是删除 volume；基础 schema 的新环境由 `db/schema.sql` 创建，已有数据库的 schema 演进仍须按 `db/migrations/*.sql` 显式执行。
 
+已有本机业务库在同步新版 Windmill App 前，使用受限迁移入口：
+
+```bash
+LOCAL_RESEARCH_MIGRATE=YES scripts/local-l3-env.sh migrate
+```
+
+该命令只允许固定的 `colima-l3-review-local` / `l3-review-local` / `douyin_research`，
+先检查同一 owner 的大小写不敏感重名专题与非法 collection target，再把业务库备份到 ignored 的
+`work/local-db-migrations/<UTC>` 并写 SHA-256。全部版本化 migration 在同一事务中执行；最后校验
+研究台写操作所需表、列、约束和索引。任何预检、备份、迁移或验证失败都会以非零状态退出，
+不得继续同步 App。此本机入口不能用于测试或生产服务器；服务器部署必须使用目标环境自己的
+备份、迁移身份和变更审批。
+
+迁移完成后，使用该次命令输出的**绝对备份目录**执行恢复演练；不会默认选择“最新”备份：
+
+```bash
+LOCAL_RESEARCH_RESTORE_DRILL=YES \
+  scripts/local-l3-env.sh restore-drill /绝对路径/work/local-db-migrations/<UTC>
+```
+
+恢复演练只接受上述 ignored 目录内、`SHA256SUMS` 覆盖的 research dump。它只创建固定临时库
+`local_research_restore`，拒绝与 `douyin_research` 同名；恢复后比较视频、专题和专题项的行数，
+校验关键表及其 owner，最后删除临时库并再次确认不存在。任何校验失败也会在退出路径尝试清理。
+该命令不读取或打印密码，不会覆盖当前业务库；测试和生产服务器仍应使用各自的恢复身份、目标库
+和审批流程。
+
 ## 正文审核页
 
 此 Compose 环境不把正文审核页发布为 Windmill App，也不把正文写入 Windmill Job 输出。正文审核页必须由宿主机的 reviewer-only CLI 单独运行，并只监听回环地址；它使用 `l3_local_reviewer` 读取受限表，不能写审批、预算或执行记录。

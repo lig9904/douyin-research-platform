@@ -36,12 +36,18 @@ class RunSummary:
 class L0L1Runner:
     def __init__(self, *, provider: PlatformResearchProvider, store: L0L1Store,
                  scorer: L1Scorer, budget: DailyBudgetGuard,
-                 budget_key: str = "l0l1") -> None:
+                 budget_key: str = "l0l1",
+                 provider_reserves_budget: bool = False) -> None:
         self.provider = provider
         self.store = store
         self.scorer = scorer
         self.budget = budget
         self.budget_key = budget_key
+        # Legacy callers reserve a source-sized request before each fetch.
+        # Real providers can instead reserve exactly once per uncached HTTP
+        # call through their before_external_call hook.  Do not use both: that
+        # would double-count a paid request and makes cache accounting wrong.
+        self.provider_reserves_budget = provider_reserves_budget
 
     def run(self, sources: list[DiscoverySource], *, enrich_details: bool = True,
             triggered_by: str = "system") -> RunSummary:
@@ -55,13 +61,14 @@ class L0L1Runner:
         unique_platform_ids: dict[str, VideoObservation] = {}
         try:
             for source in sources:
-                self.budget.acquire(
-                    provider=self.provider.provider_name,
-                    budget_key=self.budget_key,
-                    requests=1,
-                )
+                if not self.provider_reserves_budget:
+                    self.budget.acquire(
+                        provider=self.provider.provider_name,
+                        budget_key=self.budget_key,
+                        requests=1,
+                    )
                 page = self._fetch(source)
-                if page.cached:
+                if page.cached and not self.provider_reserves_budget:
                     self.budget.refund(
                         provider=self.provider.provider_name,
                         budget_key=self.budget_key,
@@ -92,11 +99,12 @@ class L0L1Runner:
 
             if enrich_details and unique_platform_ids:
                 ids = [item.video.platform_video_id for item in unique_platform_ids.values()]
-                self.budget.acquire(
-                    provider=self.provider.provider_name,
-                    budget_key=self.budget_key,
-                    requests=math.ceil(len(ids) / self.provider.video_batch_size),
-                )
+                if not self.provider_reserves_budget:
+                    self.budget.acquire(
+                        provider=self.provider.provider_name,
+                        budget_key=self.budget_key,
+                        requests=math.ceil(len(ids) / self.provider.video_batch_size),
+                    )
                 details = self.provider.fetch_videos(ids)
                 self._validate_platform(details)
                 self.store.ingest(

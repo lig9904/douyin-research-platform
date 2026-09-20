@@ -4,6 +4,7 @@ import {
   Button,
   Checkbox,
   Input,
+  Modal,
   Pagination,
   Select,
   Spin,
@@ -13,6 +14,7 @@ import {
 import { backend } from './wmill'
 import AppShell, { type ResearchView } from './AppShell'
 import PlatformIcon from './src/components/PlatformIcon'
+import { mutateResearchState } from './src/components/ResearchActions'
 import './hotspot-library.css'
 
 type Platform = {
@@ -278,6 +280,12 @@ export default function HotspotLibrary({
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [writeBusy, setWriteBusy] = useState(false)
+  const [writeNotice, setWriteNotice] = useState('')
+  const [writeError, setWriteError] = useState('')
+  const [collectionModalOpen, setCollectionModalOpen] = useState(false)
+  const [collectionName, setCollectionName] = useState('')
+  const [collectionTargetIds, setCollectionTargetIds] = useState<string[]>([])
   const requestSeq = useRef(0)
 
   const load = async (next: Filters, selected = selectedSignalId) => {
@@ -369,6 +377,55 @@ export default function HotspotLibrary({
     setSelectedRows(next)
   }
 
+  const runWrite = async (
+    input: Parameters<typeof mutateResearchState>[0],
+    success: string,
+  ) => {
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      await mutateResearchState(input)
+      setWriteNotice(success)
+      await load(filters, selectedSignalId)
+    } catch (e) {
+      setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWriteBusy(false)
+    }
+  }
+
+  const monitorSignals = (ids: string[]) => runWrite(
+    {
+      action: 'set_monitoring',
+      asset_type: 'signal',
+      asset_ids: ids,
+      monitoring_status: 'monitoring',
+    },
+    `已将 ${ids.length} 个热点加入监测。`,
+  )
+
+  const openCollection = (ids: string[]) => {
+    setCollectionTargetIds(ids)
+    setCollectionName('')
+    setCollectionModalOpen(true)
+  }
+
+  const saveCollection = async () => {
+    const name = collectionName.trim()
+    if (!name || !collectionTargetIds.length) return
+    await runWrite(
+      {
+        action: 'add_to_collection',
+        asset_type: 'signal',
+        asset_ids: collectionTargetIds,
+        collection_name: name,
+      },
+      `热点已加入专题「${name}」。`,
+    )
+    setCollectionModalOpen(false)
+  }
+
   return (
     <AppShell
       activeView="hotspots"
@@ -401,6 +458,12 @@ export default function HotspotLibrary({
         </>
       }
     >
+      {writeNotice && (
+        <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
+      )}
+      {writeError && (
+        <Alert type="error" showIcon message="写操作失败" description={writeError} closable onClose={() => setWriteError('')} />
+      )}
       <section className="platform-strip card">
         <div className="platform-title">平台筛选</div>
         <div className="platform-tabs">
@@ -629,8 +692,21 @@ export default function HotspotLibrary({
             <div className="hotspot-list-footer">
               <div className="bulk-actions">
                 <span>已选择 {selectedRows.size} 项</span>
-                <Button type="primary" disabled>加入专题</Button>
-                <Button disabled>加入监测</Button>
+                <Button
+                  type="primary"
+                  loading={writeBusy}
+                  disabled={!selectedRows.size}
+                  onClick={() => openCollection([...selectedRows])}
+                >
+                  加入专题
+                </Button>
+                <Button
+                  loading={writeBusy}
+                  disabled={!selectedRows.size}
+                  onClick={() => monitorSignals([...selectedRows])}
+                >
+                  加入监测
+                </Button>
                 <Button
                   onClick={() => setSelectedRows(new Set())}
                   disabled={!selectedRows.size}
@@ -672,7 +748,9 @@ export default function HotspotLibrary({
                     <small>{signalTypeName(detail.signal_type)} · {detail.signal_key}</small>
                     <p>{detail.description || '暂无结构化热点说明'}</p>
                   </div>
-                  <Button type="primary" disabled>加入监测</Button>
+                  <Button type="primary" loading={writeBusy} onClick={() => monitorSignals([detail.id])}>
+                    加入监测
+                  </Button>
                 </div>
 
                 <div className="hotspot-meta-row">
@@ -742,8 +820,12 @@ export default function HotspotLibrary({
                 </section>
 
                 <div className="hotspot-detail-actions">
-                  <Button type="primary" disabled>加入专题</Button>
-                  <Button disabled>加入监测</Button>
+                  <Button type="primary" loading={writeBusy} onClick={() => openCollection([detail.id])}>
+                    加入专题
+                  </Button>
+                  <Button loading={writeBusy} onClick={() => monitorSignals([detail.id])}>
+                    加入监测
+                  </Button>
                   <Button disabled>标记重点</Button>
                 </div>
               </>
@@ -753,8 +835,26 @@ export default function HotspotLibrary({
       </Spin>
 
       <div className="hotspot-library-page-note">
-        第 {filters.page} / {totalPages} 页 · 涨幅仅在存在至少2个热度快照时显示
+        第 {filters.page} / {totalPages} 页 · 监测与专题写入绑定实际登录用户
       </div>
+      <Modal
+        title="热点加入专题"
+        open={collectionModalOpen}
+        confirmLoading={writeBusy}
+        okButtonProps={{ disabled: !collectionName.trim() }}
+        onOk={saveCollection}
+        onCancel={() => setCollectionModalOpen(false)}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Input
+          aria-label="热点专题名称"
+          value={collectionName}
+          maxLength={80}
+          placeholder="输入专题名称"
+          onChange={(event) => setCollectionName(event.target.value)}
+        />
+      </Modal>
     </AppShell>
   )
 }

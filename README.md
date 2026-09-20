@@ -93,5 +93,8 @@ Canonical ID 始终使用：
 - L0/L1 纯代码粗筛：完成
 - 多平台基础抽象：完成
 - TikHub 真实付费接口 V0：已用本机登录账号的现有 Secret 完成 1 次低粉爆款榜 smoke；SDK 2.1.1、零重试、业务成功并返回 4 项，Secret 未写入仓库或日志
+- 本机真实数据黄金链路：已提供默认 dry-run、最多 5 条 / 2 次未缓存调用 / 零重试的 TikHub → 规范化 → PostgreSQL → L0/L1 入口；详情见 `docs/LOCAL_REAL_DATA_GOLDEN_V1.md`
 - Web 研究台：已在本机 Windmill CE 部署，已验收首页、视频库、账号库、热点库、全局搜索、运行/成本只读页，以及 L3 待审摘要→一次性正文页→审核保存→零调用预算预览全链路
+- 研究台内部写操作：团队共享监测使用 actor 审计；专题、视频收藏和保存筛选按登录身份隔离；全部使用幂等事务与零外呼边界
+- 本机 V1 全链路验收：真实 TikHub、Ark、ASR、浏览器写操作、HTTPS/ACL/备份恢复的脱敏结果见 `docs/LOCAL_V1_ACCEPTANCE_2026-09-20.md`；不等同于测试服务器或生产生效
 - 本机只读 MCP：stdio 三项工具已使用受限 reviewer 角色完成真实业务库集成冒烟；写入尝试由 PostgreSQL 拒绝
