@@ -96,6 +96,27 @@ def _request(video_id: UUID, **overrides) -> ASRExecutionRequest:
     return ASRExecutionRequest(**values)
 
 
+@pytest.mark.parametrize("status", ["completed", "failed", "cancelled"])
+def test_orphan_cost_stops_resubmission_before_provider_and_budget(status):
+    _clear()
+    video = _video()
+    _budget()
+    request = _request(video, execute=True, confirmation=ASR_CONFIRMATION)
+    with psycopg.connect(DSN) as conn:
+        conn.execute("""insert into research_task_cost(task_key,task_type,task_version,video_id,
+            status,input_fingerprint,cost_currency,cost_basis)
+            values (%s,'asr','isolated',%s,%s,'isolated','CNY','unknown')""",
+            (request.task_key, video, status))
+    result = ASRExecutionCoordinator(DSN).run(request,
+        provider_factory=lambda: pytest.fail("orphan cost must not construct provider"))
+    assert result["status"] == "reconciliation_required"
+    assert result["reason"] == "orphan_cost_record" and result["external_calls"] == 0
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from asr_execution_job where task_key=%s", (request.task_key,)).fetchone() == (0,)
+        assert conn.execute("select used_requests from daily_budget where budget_key=%s and provider=%s and budget_date=%s",
+            (ASR_BUDGET_KEY, PROVIDER, BUDGET_DATE)).fetchone() == (0,)
+
+
 def _evidence() -> TranscriptEvidence:
     return TranscriptEvidence(
         asr_provider=PROVIDER,
