@@ -127,7 +127,13 @@ def test_schema_and_windmill_contract_keep_one_daily_snapshot_not_per_call_alloc
         assert "primary key (provider, account_scope, billing_date, cost_currency)" in source
         assert "paid_requests <= total_requests" in source
     assert 'API_KEY_PATH = "f/content_research/tikhub_api_key"' in script
-    assert "REPLACE_WITH_DEPLOYED_COMMIT_SHA" in script
+    import re
+
+    assert re.search(
+        r'git\+https://github\.com/lig9904/douyin-research-platform@[0-9a-f]{40}"',
+        script,
+    )
+    assert "REPLACE_WITH_DEPLOYED_COMMIT_SHA" not in script
     assert "concurrent_limit: 1" in metadata
 
 
