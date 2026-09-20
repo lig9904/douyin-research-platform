@@ -72,7 +72,15 @@ services:
       MODE: worker
       WORKER_GROUP: default
     volumes:
-      - windmill_worker_cache:/tmp/windmill/cache
+      # The external-proxy profile runs two replicas.  Docker's default named
+      # volume initialization copies this image directory into a new volume;
+      # two replicas can race during that copy.  This is an expendable worker
+      # cache, not business data, so start the shared volume empty instead.
+      - type: volume
+        source: windmill_worker_cache
+        target: /tmp/windmill/cache
+        volume:
+          nocopy: true
       - windmill_worker_logs:/tmp/windmill/logs
 
   windmill_worker_native:
