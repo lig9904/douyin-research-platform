@@ -14,6 +14,7 @@ import {
 import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
+import ASRMediaReviewPanel from './src/components/ASRMediaReviewPanel'
 import MetricTimeline from './src/components/MetricTimeline'
 import PlatformIcon from './src/components/PlatformIcon'
 import {
@@ -914,6 +915,8 @@ export default function VideoLibrary({
                       videoId={detail.id}
                       researchLevel={detail.research_level}
                     />
+
+                    <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />
 
                     <section className="detail-section">
                       <div className="detail-section-head">

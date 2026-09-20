@@ -45,6 +45,34 @@ def asset_fingerprint(asset: MediaAssetReference, origin: str) -> str:
                                     separators=(",", ":")).encode()).hexdigest()
 
 
+def prepare_asr_media(dsn: str, *, video_id: UUID | str, asset_id: UUID | str,
+                      review_version: str) -> dict:
+    """Read-only, authenticated preview; never approves or exposes object URLs."""
+    from douyin_research.l3.review import authorize_reviewer
+
+    authorize_reviewer(os.environ.get("WM_END_USER_EMAIL"), _variable(REVIEWERS_PATH))
+    try:
+        origin = _origin(json.loads(_variable(DELIVERY_CONFIG_PATH))["public_endpoint"])
+    except Exception:
+        raise RuntimeError("media delivery configuration unavailable") from None
+    if not isinstance(review_version, str) or not 1 <= len(review_version.strip()) <= 128:
+        raise ValueError("media review version required")
+    asset = MediaAssetStore(dsn).get(video_id, asset_id)
+    if asset is None:
+        raise ValueError("audio asset does not belong to video")
+    fingerprint = asset_fingerprint(asset, origin)
+    with psycopg.connect(dsn) as conn:
+        row = conn.execute("select asset_fingerprint,active from asr_media_review where asset_id=%s and review_version=%s",
+                           (asset.id, review_version)).fetchone()
+    status = "not_reviewed" if row is None else (
+        "revoked" if not row[1] else "approved" if row[0] == fingerprint else "stale")
+    return {"video_id": str(asset.video_id), "asset_id": str(asset.id),
+            "review_version": review_version, "asset_fingerprint": fingerprint,
+            "content_sha256": asset.content_sha256, "size_bytes": asset.size_bytes,
+            "content_type": asset.content_type, "delivery_origin": origin,
+            "review_status": status, "db_writes": 0, "external_calls": 0}
+
+
 def approve_asr_media(dsn: str, *, video_id: UUID | str, asset_id: UUID | str,
                       review_version: str, expected_asset_fingerprint: str) -> dict:
     """Human-only operation. Neither actor nor allowlist comes from a form."""
