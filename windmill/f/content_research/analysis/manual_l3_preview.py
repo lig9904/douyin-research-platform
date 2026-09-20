@@ -62,6 +62,7 @@ def _execute(
         {
             "schema_version": L3_SCHEMA_VERSION,
             "adapter_status": ADAPTER_STATUS,
+            "execution_ready": False,
             "paid_execution_available": False,
         }
     )

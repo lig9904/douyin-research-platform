@@ -59,6 +59,10 @@ class L3ExecutionRequest:
     execute: bool = False
     confirmation: str = ""
     budget_date: date | None = None
+    # Human/manual callers remain supported.  Scheduled callers must supply a
+    # trusted service identity assembled outside this generic coordinator.
+    actor: str | None = None
+    trigger_source: str = "manual"
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,9 +110,6 @@ class L3ExecutionCoordinator:
             return preview
         if request.confirmation != L3_CONFIRMATION:
             raise PermissionError("exact paid-operation confirmation is required")
-        if request.estimated_llm_cost is None:
-            raise ValueError("known LLM cost estimate is required for paid execution")
-
         with self._single_paid_job():
             existing = self._load_job(request.task_key)
             if existing is not None:
@@ -194,6 +195,7 @@ class L3ExecutionCoordinator:
                     result=response.result,
                     cost=response.cost,
                 )
+                self._reconcile_completed_budget(request, response.cost)
                 self._mark_completed(
                     UUID(str(job["id"])),
                     record.task_cost_id,
@@ -298,10 +300,14 @@ class L3ExecutionCoordinator:
                 (budget_date, request.provider, L3_BUDGET_KEY),
             )
             budget = cur.fetchone()
-            if budget is None or (budget[0] is None and budget[1] is None):
+            if budget is None:
                 raise RuntimeError("daily L3 budget must be configured")
             if budget[2] != request.cost_currency:
                 raise RuntimeError("daily L3 budget currency does not match request")
+            if budget[1] is not None and request.estimated_llm_cost is None:
+                raise RuntimeError(
+                    "unknown L3 price cannot satisfy a configured cost ceiling"
+                )
 
     def _reserve_and_create(
         self,
@@ -313,7 +319,6 @@ class L3ExecutionCoordinator:
     ) -> dict[str, object]:
         budget_date = request.budget_date or date.today()
         estimated_llm = _decimal(request.estimated_llm_cost)
-        assert estimated_llm is not None
         review = evidence["privacy_review"]
         assert isinstance(review, Mapping)
         review_version = review["version"]
@@ -355,7 +360,9 @@ class L3ExecutionCoordinator:
                     L3_BUDGET_KEY,
                     Jsonb(
                         {
-                            "manual_only": True,
+                            "manual_only": request.trigger_source == "manual",
+                            "trigger_source": request.trigger_source,
+                            "actor": request.actor,
                             "sdk_retries": 0,
                             "maximum_external_calls": 1,
                             "evidence_bundle_stored": False,
@@ -510,6 +517,49 @@ class L3ExecutionCoordinator:
                 """,
                 (task_cost_id, job_id),
             )
+            conn.commit()
+
+    def _reconcile_completed_budget(
+        self,
+        request: L3ExecutionRequest,
+        cost: TaskCost,
+    ) -> None:
+        """Replace a pre-call reservation with the response's known cost.
+
+        If a task began without a quote, it remains explicitly counted as an
+        unknown-price request until the provider returns a finite LLM cost. No
+        path treats an unknown price as zero.
+        """
+        actual = None if cost.llm_cost is None else Decimal(str(cost.llm_cost))
+        if actual is not None and (not actual.is_finite() or actual < 0):
+            raise ValueError("L3 provider actual cost is invalid")
+        estimated = _decimal(request.estimated_llm_cost)
+        if actual is None:
+            return
+        budget_date = request.budget_date or date.today()
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            if estimated is None:
+                cur.execute(
+                    """
+                    update daily_budget
+                    set spent_cost=spent_cost+%s,
+                        unknown_price_requests=greatest(0, unknown_price_requests-1),
+                        updated_at=now()
+                    where budget_date=%s and provider=%s and budget_key=%s
+                    """,
+                    (actual, budget_date, request.provider, L3_BUDGET_KEY),
+                )
+            else:
+                cur.execute(
+                    """
+                    update daily_budget
+                    set spent_cost=greatest(0, spent_cost+%s), updated_at=now()
+                    where budget_date=%s and provider=%s and budget_key=%s
+                    """,
+                    (actual - estimated, budget_date, request.provider, L3_BUDGET_KEY),
+                )
+            if cur.rowcount != 1:
+                raise RuntimeError("daily L3 budget disappeared during reconciliation")
             conn.commit()
 
     def _mark_completed(self, job_id: UUID, task_cost_id: UUID) -> None:
@@ -699,8 +749,7 @@ class L3ExecutionCoordinator:
         if cost.basis not in COST_BASES:
             raise ValueError("unsupported L3 provider cost basis")
         estimated = _decimal(request.estimated_llm_cost)
-        assert estimated is not None
-        if values[2] is not None and values[2] > estimated:
+        if estimated is not None and values[2] is not None and values[2] > estimated:
             raise _ProviderCostExceedsReservation(values[2], cost.basis)
 
     @contextmanager
@@ -749,7 +798,8 @@ def _preview(request: L3ExecutionRequest) -> dict[str, object]:
         "maximum_llm_calls": 1,
         "estimated_total_cost": float(estimated) if estimated is not None else None,
         "cost_currency": request.cost_currency,
-        "execution_ready": estimated is not None,
+        "execution_ready": True,
+        "price_known": estimated is not None,
         "sdk_retries": 0,
         "llm_calls": 0,
     }
@@ -771,6 +821,21 @@ def _validate_request(request: L3ExecutionRequest) -> None:
         raise ValueError(f"required L3 execution fields are missing: {missing}")
     if request.schema_version != L3_SCHEMA_VERSION:
         raise ValueError("unsupported L3 schema version")
+    if request.trigger_source not in {"manual", "schedule"}:
+        raise ValueError("unsupported L3 execution trigger source")
+    if request.actor is not None:
+        if (
+            not isinstance(request.actor, str)
+            or not request.actor.strip()
+            or len(request.actor.strip()) > 200
+            or any(
+                ord(character) < 32 or 127 <= ord(character) <= 159
+                for character in request.actor
+            )
+        ):
+            raise ValueError("L3 execution actor is invalid")
+    if request.trigger_source == "schedule" and request.actor is None:
+        raise ValueError("scheduled L3 execution requires a trusted actor")
     estimated = _decimal(request.estimated_llm_cost)
     if estimated is not None and estimated < 0:
         raise ValueError("estimated LLM cost cannot be negative")
@@ -797,7 +862,7 @@ def _reserve_budget(
     budget_date: date,
     provider: str,
     currency: str,
-    estimated_cost: Decimal,
+    estimated_cost: Decimal | None,
 ) -> None:
     cur.execute(
         """
@@ -815,7 +880,9 @@ def _reserve_budget(
     if configured_currency != currency:
         raise RuntimeError("daily L3 budget currency does not match request")
     next_requests = used_requests + 1
-    next_cost = Decimal(spent_cost) + estimated_cost
+    if max_cost is not None and estimated_cost is None:
+        raise RuntimeError("unknown L3 price cannot satisfy a configured cost ceiling")
+    next_cost = Decimal(spent_cost) + (estimated_cost or Decimal("0"))
     if max_requests is not None and next_requests > max_requests:
         raise RuntimeError("daily L3 request budget exceeded")
     if max_cost is not None and next_cost > Decimal(max_cost):
@@ -823,10 +890,14 @@ def _reserve_budget(
     cur.execute(
         """
         update daily_budget
-        set used_requests=%s, spent_cost=%s, updated_at=now()
+        set used_requests=%s, spent_cost=%s,
+            unknown_price_requests=unknown_price_requests+%s, updated_at=now()
         where budget_date=%s and provider=%s and budget_key=%s
         """,
-        (next_requests, next_cost, budget_date, provider, L3_BUDGET_KEY),
+        (
+            next_requests, next_cost, 1 if estimated_cost is None else 0,
+            budget_date, provider, L3_BUDGET_KEY,
+        ),
     )
 
 
