@@ -279,6 +279,21 @@
 .account-content-analysis strong { color: #183252; font-size: 14px; }
 .account-content-analysis b { color: #9aa7b7; font-size: 9px; font-weight: 400; }
 
+.account-similar-list { display: grid; gap: 7px; }
+.account-similar-list > div {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  padding: 9px;
+  border: 1px solid #edf1f6;
+  border-radius: 8px;
+}
+.account-similar-list strong { display: block; color: #183252; font-size: 11px; }
+.account-similar-list span,
+.account-similar-list small { color: #8390a2; font-size: 9px; }
+.account-similar-list b { color: #1677ff; font-size: 14px; grid-row: span 2; align-self: center; }
+.account-similar-note { color: #8390a2; font-size: 9px; line-height: 1.55; }
+
 .account-profile-link {
   display: block;
   margin-top: 12px;

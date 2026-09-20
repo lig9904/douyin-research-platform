@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import sys
 from urllib.parse import urlparse
 
 import psycopg
@@ -14,6 +15,9 @@ pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configure
 
 
 def load_backend():
+    windmill_root = str(Path("windmill").resolve())
+    if windmill_root not in sys.path:
+        sys.path.insert(0, windmill_root)
     path = Path(
         "windmill/f/content_research/research_dashboard.raw_app/"
         "backend/get_account_library.py"
@@ -209,6 +213,75 @@ def test_account_library_filters_trend_and_hot_videos() -> None:
     assert detail["hot_videos"][0]["title"] == "秦皇岛海边惊现龙王祭坛？"
     assert detail["fan_profile_available"] is False
     assert detail["similar_accounts_available"] is False
+    assert detail["similar_accounts"] == []
+
+
+def test_account_detail_exposes_explainable_same_platform_similarity() -> None:
+    assert DSN
+    account_id = clear_and_seed()
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into source_account(
+              platform, platform_account_id, nickname, account_type,
+              certification_type, research_level, monitoring_status
+            )
+            values ('douyin','similar-account','相似海边账号','个人','个人认证',1,'observe')
+            returning id
+            """
+        )
+        similar_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into account_tag(account_id, tag_type, tag_value, source)
+            values
+              (%s,'content_domain','旅行风景','fixture'),
+              (%s,'content_domain','海洋文化','fixture')
+            """,
+            (similar_id, similar_id),
+        )
+        cur.execute(
+            """
+            insert into account_metric_snapshot(
+              account_id, provider, source_endpoint, observation_key,
+              follower_count, video_count
+            )
+            values (%s,'fixture','fixture','similar-account-snapshot',120000,44)
+            """,
+            (similar_id,),
+        )
+        conn.commit()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN), platform="douyin", days=30, selected_account_id=account_id
+    )
+
+    similar = result["detail"]["similar_accounts"]
+    assert result["detail"]["similar_accounts_available"] is True
+    assert similar == [
+        {
+            "id": str(similar_id),
+            "nickname": "相似海边账号",
+            "similarity_score": 100,
+            "evidence_coverage": 100,
+            "raw_score": 100,
+            "matched_domains": ["旅行风景", "海洋文化"],
+            "matched_fields": [
+                "content_domains",
+                "account_type",
+                "certification_type",
+                "follower_count",
+                "video_count",
+            ],
+            "components": {
+                "content_domains": 45,
+                "account_type": 15,
+                "certification_type": 10,
+                "follower_count": 20,
+                "video_count": 10,
+            },
+        }
+    ]
 
 
 def test_account_growth_is_null_with_only_one_snapshot() -> None:
@@ -252,3 +325,86 @@ def test_account_library_empty_search() -> None:
     assert result["total"] == 0
     assert result["items"] == []
     assert result["detail"] == {}
+
+
+def test_stale_selected_account_returns_list_without_detail() -> None:
+    assert DSN
+    clear_and_seed()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN),
+        platform="douyin",
+        days=30,
+        selected_account_id="00000000-0000-0000-0000-000000000001",
+    )
+
+    assert result["total"] == 1
+    assert len(result["items"]) == 1
+    assert result["detail"] == {}
+
+
+def test_invalid_selected_account_returns_list_without_detail() -> None:
+    assert DSN
+    clear_and_seed()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN),
+        platform="douyin",
+        days=30,
+        selected_account_id="not-a-uuid",
+    )
+
+    assert result["total"] == 1
+    assert len(result["items"]) == 1
+    assert result["detail"] == {}
+
+
+def test_similarity_ranks_candidate_beyond_first_two_hundred_ids() -> None:
+    assert DSN
+    account_id = clear_and_seed()
+    best_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.executemany(
+            """
+            insert into source_account(
+              id, platform, platform_account_id, nickname,
+              account_type, certification_type
+            )
+            values (%s::uuid, 'douyin', %s, %s, '机构', '企业认证')
+            """,
+            [
+                (
+                    f"00000000-0000-0000-0000-{index:012d}",
+                    f"noise-{index}",
+                    f"无关账号{index}",
+                )
+                for index in range(1, 201)
+            ],
+        )
+        cur.execute(
+            """
+            insert into source_account(
+              id, platform, platform_account_id, nickname,
+              account_type, certification_type
+            )
+            values (%s::uuid, 'douyin', 'best-after-200', '最相似账号', '个人', '个人认证')
+            """,
+            (best_id,),
+        )
+        cur.executemany(
+            """
+            insert into account_tag(account_id, tag_type, tag_value, source)
+            values (%s::uuid, 'content_domain', %s, 'manual')
+            """,
+            [(best_id, "旅行风景"), (best_id, "海洋文化")],
+        )
+        conn.commit()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN),
+        platform="douyin",
+        selected_account_id=account_id,
+    )
+
+    assert result["detail"]["similar_accounts"][0]["id"] == best_id

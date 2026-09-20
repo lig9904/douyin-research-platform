@@ -6,6 +6,13 @@ from .comment_features import (
     CommentFeatureSnapshot,
 )
 
+from .similarity import (
+    ACCOUNT_SIMILARITY_VERSION,
+    AccountSimilarityMatch,
+    AccountSimilarityProfile,
+    rank_similar_accounts,
+)
+
 __all__ = [
     "COMMENT_FEATURE_VERSION",
     "CommentFeatureExtractor",
@@ -20,6 +27,13 @@ from .promotion import (
     PromotionDecision,
     PromotionResult,
 )
+
+__all__ += [
+    "ACCOUNT_SIMILARITY_VERSION",
+    "AccountSimilarityMatch",
+    "AccountSimilarityProfile",
+    "rank_similar_accounts",
+]
 
 __all__ += [
     "DEFAULT_QUOTA_KEY",
