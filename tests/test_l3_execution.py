@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
+from dataclasses import replace
 from decimal import Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -143,8 +144,8 @@ def _video(*, selected: bool, key: str = "main") -> UUID:
 
 def _budget(
     *,
-    max_requests: int = 2,
-    max_cost: Decimal = Decimal("1"),
+    max_requests: int | None = 2,
+    max_cost: Decimal | None = Decimal("1"),
     currency: str = "CNY",
 ) -> None:
     assert DSN
@@ -152,7 +153,7 @@ def _budget(
         provider=PROVIDER,
         budget_key=L3_BUDGET_KEY,
         max_requests=max_requests,
-        max_cost=float(max_cost),
+        max_cost=float(max_cost) if max_cost is not None else None,
         budget_date=BUDGET_DATE,
         cost_currency=currency,
     )
@@ -176,6 +177,28 @@ def _request(video_id: UUID, **overrides) -> L3ExecutionRequest:
     }
     values.update(overrides)
     return L3ExecutionRequest(**values)
+
+
+def test_scheduled_execution_requires_a_trusted_actor_before_any_database_call() -> None:
+    request = _request(uuid4(), trigger_source="schedule")
+    with pytest.raises(ValueError, match="requires a trusted actor"):
+        L3ExecutionCoordinator("postgresql://not-used").run(
+            request,
+            evidence_factory=lambda: pytest.fail("evidence must not be assembled"),
+            provider_factory=lambda: pytest.fail("provider must not be built"),
+        )
+
+
+def test_schedule_actor_metadata_validation_accepts_a_bounded_service_identity() -> None:
+    request = _request(
+        uuid4(), execute=False, trigger_source="schedule", actor="windmill-worker/l3"
+    )
+    preview = L3ExecutionCoordinator("postgresql://not-used").run(
+        request,
+        evidence_factory=lambda: pytest.fail("preview must not assemble evidence"),
+        provider_factory=lambda: pytest.fail("preview must not build provider"),
+    )
+    assert preview["status"] == "preview"
 
 
 def _result(**overrides) -> L3ResearchResult:
@@ -323,6 +346,7 @@ def test_preview_and_wrong_confirmation_load_nothing() -> None:
         "estimated_total_cost": 0.3,
         "cost_currency": "CNY",
         "execution_ready": True,
+        "price_known": True,
         "sdk_retries": 0,
         "llm_calls": 0,
     }
@@ -372,7 +396,7 @@ def test_gate_and_budget_fail_before_evidence_or_provider() -> None:
     assert calls == []
 
 
-def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
+def test_complete_is_bounded_costed_redacted_and_replay_safe(monkeypatch) -> None:
     assert DSN
     _clear()
     video_id = _video(selected=True)
@@ -403,11 +427,20 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
         provider_factory=lambda: provider,
     )
     replay_calls = []
+    class NextDay(date):
+        @classmethod
+        def today(cls):
+            return BUDGET_DATE + timedelta(days=1)
+    monkeypatch.setattr("douyin_research.l3.execution.date", NextDay)
     replay = coordinator.run(
-        request,
+        replace(request, budget_date=None),
         evidence_factory=lambda: replay_calls.append("evidence") or {},
         provider_factory=lambda: replay_calls.append("provider") or provider,
     )
+    with pytest.raises(ValueError, match="different L3 execution inputs"):
+        coordinator.run(replace(request, budget_date=NextDay.today()),
+            evidence_factory=lambda: pytest.fail("unexpected evidence read"),
+            provider_factory=lambda: pytest.fail("unexpected paid call"))
 
     assert result["status"] == "completed"
     assert result["external_calls"] == 1
@@ -432,7 +465,7 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
             """,
             (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
         )
-        assert cur.fetchone() == (1, Decimal("0.3"))
+        assert cur.fetchone() == (1, Decimal("0.21"))
         cur.execute(
             """
             select status, attempt_count, task_cost_id is not null,
@@ -639,11 +672,17 @@ def test_provider_modalities_cannot_claim_unsupplied_evidence() -> None:
         assert cur.fetchone()[0] == 0
 
 
-def test_actual_cost_over_reservation_is_recorded_and_fails_closed() -> None:
+def test_actual_cost_over_reservation_is_recorded_and_fails_closed(monkeypatch) -> None:
     assert DSN
     _clear()
     video_id = _video(selected=True, key="cost-overrun")
     _budget(max_cost=Decimal("0.4"))
+    class Clock(date):
+        current = BUDGET_DATE
+        @classmethod
+        def today(cls):
+            return cls.current
+    monkeypatch.setattr("douyin_research.l3.execution.date", Clock)
     provider = FakeProvider(
         _response(
             cost=TaskCost(
@@ -655,12 +694,18 @@ def test_actual_cost_over_reservation_is_recorded_and_fails_closed() -> None:
             )
         )
     )
+    original_generate = provider.generate
+    def across_midnight(request):
+        Clock.current = BUDGET_DATE + timedelta(days=1)
+        return original_generate(request)
+    provider.generate = across_midnight
     result = L3ExecutionCoordinator(DSN).run(
         _request(
             video_id,
             execute=True,
             confirmation=L3_CONFIRMATION,
             task_key="synthetic-l3-cost-overrun",
+            budget_date=None,
         ),
         evidence_factory=lambda: _evidence(video_id),
         provider_factory=lambda: provider,
@@ -804,3 +849,114 @@ def test_retrying_provider_and_invalid_result_are_rejected_safely() -> None:
             (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
         )
         assert cur.fetchone()[0] == 1
+
+
+def test_unknown_price_reservation_is_explicit_and_reconciles_known_usage_cost(monkeypatch) -> None:
+    assert DSN
+    _clear()
+    video_id = _video(selected=True, key="unknown-live-price")
+    _budget(max_requests=None, max_cost=None)
+    provider = FakeProvider(_response())
+    class Clock(date):
+        current = BUDGET_DATE
+        @classmethod
+        def today(cls):
+            return cls.current
+    monkeypatch.setattr("douyin_research.l3.execution.date", Clock)
+    original_generate = provider.generate
+    def across_midnight(request):
+        Clock.current = BUDGET_DATE + timedelta(days=1)
+        return original_generate(request)
+    provider.generate = across_midnight
+    request = _request(
+        video_id,
+        execute=True,
+        confirmation=L3_CONFIRMATION,
+        estimated_llm_cost=None,
+        task_key="synthetic-l3-unknown-live-price",
+        budget_date=None,
+    )
+
+    result = L3ExecutionCoordinator(DSN).run(
+        request,
+        evidence_factory=lambda: _evidence(video_id),
+        provider_factory=lambda: provider,
+    )
+
+    assert result["status"] == "completed"
+    assert len(provider.calls) == 1
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, unknown_price_requests, spent_cost
+            from daily_budget
+            where budget_date=%s and provider=%s and budget_key=%s
+            """,
+            (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (1, 0, Decimal("0.21"))
+    # Simulate a crash between atomic budget settlement and completed status.
+    with psycopg.connect(DSN) as conn:
+        conn.execute("update l3_execution_job set status='running' where task_key=%s", (request.task_key,))
+    replay = L3ExecutionCoordinator(DSN).run(request,
+        evidence_factory=lambda: pytest.fail("recovery must reuse evidence"),
+        provider_factory=lambda: pytest.fail("recovery must not call provider"))
+    assert replay["status"] == "completed"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select spent_cost from daily_budget where provider=%s and budget_key=%s", (PROVIDER, L3_BUDGET_KEY)).fetchone() == (Decimal("0.21"),)
+
+
+def test_persisted_result_waits_for_budget_reconciliation_without_regeneration(monkeypatch):
+    _clear()
+    video = _video(selected=True, key="budget-recovery")
+    _budget(max_requests=None, max_cost=None)
+    provider = FakeProvider(_response())
+    coordinator = L3ExecutionCoordinator(DSN)
+    request = _request(video, execute=True, confirmation=L3_CONFIRMATION, estimated_llm_cost=None)
+    real_reconcile = coordinator._reconcile_completed_budget
+    def unavailable(*args):
+        raise RuntimeError("synthetic ledger outage")
+    monkeypatch.setattr(coordinator, "_reconcile_completed_budget", unavailable)
+    first = coordinator.run(request, evidence_factory=lambda: _evidence(video), provider_factory=lambda: provider)
+    assert first["status"] == "reconciliation_required"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select status from l3_execution_job where task_key=%s", (request.task_key,)).fetchone()[0] != "completed"
+        assert conn.execute("select status from research_task_cost where task_key=%s", (request.task_key,)).fetchone()[0] == "completed"
+    monkeypatch.setattr(coordinator, "_reconcile_completed_budget", real_reconcile)
+    result = coordinator.run(request, evidence_factory=lambda: pytest.fail("no new evidence"),
+                             provider_factory=lambda: pytest.fail("no paid resubmit"))
+    assert result["status"] == "completed"
+    assert len(provider.calls) == 1
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select unknown_price_requests,spent_cost from daily_budget where provider=%s and budget_key=%s", (PROVIDER, L3_BUDGET_KEY)).fetchone() == (0, Decimal("0.21"))
+
+
+def test_unknown_price_is_rejected_when_the_configured_budget_has_a_cost_ceiling() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(selected=True, key="unknown-price-ceiling")
+    _budget(max_requests=None, max_cost=Decimal("1"))
+    calls = []
+    with pytest.raises(RuntimeError, match="unknown L3 price"):
+        L3ExecutionCoordinator(DSN).run(
+            _request(
+                video_id,
+                execute=True,
+                confirmation=L3_CONFIRMATION,
+                estimated_llm_cost=None,
+                task_key="synthetic-l3-unknown-price-ceiling",
+            ),
+            evidence_factory=lambda: calls.append("evidence") or _evidence(video_id),
+            provider_factory=lambda: calls.append("provider") or FakeProvider(_response()),
+        )
+    assert calls == []
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, unknown_price_requests, spent_cost
+            from daily_budget
+            where budget_date=%s and provider=%s and budget_key=%s
+            """,
+            (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (0, 0, Decimal("0"))
