@@ -1,0 +1,12 @@
+summary: Process persisted discovery batch into comments and L2 candidates
+description: Server-configured sampling and identity; only a discovery UUID is accepted. Paid TikHub calls may occur. Does not call ASR or LLM.
+timeout: 900
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    source_run_id:
+      type: string
+      description: Successful internal L0/L1 discovery batch UUID.
+  required:
+    - source_run_id
