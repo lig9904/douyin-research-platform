@@ -1,6 +1,6 @@
 #requirements:
 #douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@370c09880ae1ae6332143834e165a45a0dfe8284
-#wmill>=1.815.0
+#psycopg[binary]==3.3.6
 
 """Manual, bounded TikHub-to-L0/L1 golden intake for Windmill."""
 
