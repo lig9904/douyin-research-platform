@@ -1,0 +1,29 @@
+summary: MCP read - get video metric history
+description: |
+  Read a bounded window of normalized video metrics. Provider identifiers,
+  endpoint names, observation keys and raw metrics are excluded.
+lock: '!inline f/content_research/research_tools/get_metric_history.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    days:
+      type: integer
+      default: 30
+      maximum: 90
+      minimum: 1
+    limit:
+      type: integer
+      default: 50
+      maximum: 50
+      minimum: 1
+    video_id:
+      type: string
+      default: null
+      format: uuid
+      originalType: string
+  required:
+    - video_id
+timeout: 10

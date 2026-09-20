@@ -1,0 +1,29 @@
+summary: MCP read - get account videos
+description: |
+  Read bounded canonical videos and versioned priority scores for one account.
+  No provider call, profile URL, raw payload or unbounded pagination is exposed.
+lock: '!inline f/content_research/research_tools/get_account_videos.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    account_id:
+      type: string
+      default: null
+      format: uuid
+      originalType: string
+    days:
+      type: integer
+      default: 90
+      maximum: 366
+      minimum: 1
+    limit:
+      type: integer
+      default: 20
+      maximum: 50
+      minimum: 1
+  required:
+    - account_id
+timeout: 10
