@@ -76,6 +76,16 @@ type AccountItem = {
   }[]
   fan_profile_available?: boolean
   similar_accounts_available?: boolean
+  similar_accounts?: {
+    id: string
+    nickname?: string | null
+    similarity_score: number
+    evidence_coverage: number
+    raw_score: number
+    matched_domains: string[]
+    matched_fields: string[]
+    components: Record<string, number>
+  }[]
 }
 
 type AccountLibraryData = {
@@ -251,7 +261,7 @@ export default function AccountLibrary({
   const [collectionModalOpen, setCollectionModalOpen] = useState(false)
   const [collectionName, setCollectionName] = useState('')
   const [collectionTargetIds, setCollectionTargetIds] = useState<string[]>([])
-  const [detailTab, setDetailTab] = useState<'core' | 'content'>('core')
+  const [detailTab, setDetailTab] = useState<'core' | 'content' | 'similar'>('core')
 
   const load = async (next: Filters, selected = selectedAccountId) => {
     setLoading(true)
@@ -798,7 +808,14 @@ export default function AccountLibrary({
                     内容分析
                   </button>
                   <button disabled title="尚未接入可靠粉丝画像数据">粉丝画像</button>
-                  <button disabled title="相似账号算法尚未启用">相似账号</button>
+                  <button
+                    className={detailTab === 'similar' ? 'active' : ''}
+                    disabled={!detail.similar_accounts_available}
+                    title={detail.similar_accounts_available ? '查看已存证资料的确定性相似度' : '当前资料不足以生成相似账号候选'}
+                    onClick={() => setDetailTab('similar')}
+                  >
+                    相似账号
+                  </button>
                 </div>
 
                 {detailTab === 'core' ? (
@@ -863,7 +880,7 @@ export default function AccountLibrary({
                       </div>
                     </section>
                   </>
-                ) : (
+                ) : detailTab === 'content' ? (
                   <section className="account-detail-section">
                     <div className="account-detail-section-head">
                       <h4>内容分析</h4>
@@ -900,6 +917,30 @@ export default function AccountLibrary({
                         <strong>{detail.account_type || '—'}</strong>
                       </div>
                     </div>
+                  </section>
+                ) : (
+                  <section className="account-detail-section">
+                    <div className="account-detail-section-head">
+                      <h4>相似账号候选</h4>
+                      <span>仅比较已存证资料</span>
+                    </div>
+                    <div className="account-similar-list">
+                      {(detail.similar_accounts || []).map((account) => (
+                        <div key={account.id}>
+                          <div>
+                            <strong>{account.nickname || '未命名账号'}</strong>
+                            <span>
+                              匹配领域：{account.matched_domains.join('、') || '无'}
+                            </span>
+                          </div>
+                          <b>{account.similarity_score} 分</b>
+                          <small>证据覆盖 {account.evidence_coverage}%</small>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="account-similar-note">
+                      分数只由内容领域、账号类型、认证类型、粉丝数和作品数的已知值计算，不表示受众或内容语义相似。
+                    </p>
                   </section>
                 )}
 

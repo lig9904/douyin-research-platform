@@ -209,6 +209,75 @@ def test_account_library_filters_trend_and_hot_videos() -> None:
     assert detail["hot_videos"][0]["title"] == "秦皇岛海边惊现龙王祭坛？"
     assert detail["fan_profile_available"] is False
     assert detail["similar_accounts_available"] is False
+    assert detail["similar_accounts"] == []
+
+
+def test_account_detail_exposes_explainable_same_platform_similarity() -> None:
+    assert DSN
+    account_id = clear_and_seed()
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            insert into source_account(
+              platform, platform_account_id, nickname, account_type,
+              certification_type, research_level, monitoring_status
+            )
+            values ('douyin','similar-account','相似海边账号','个人','个人认证',1,'observe')
+            returning id
+            """
+        )
+        similar_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into account_tag(account_id, tag_type, tag_value, source)
+            values
+              (%s,'content_domain','旅行风景','fixture'),
+              (%s,'content_domain','海洋文化','fixture')
+            """,
+            (similar_id, similar_id),
+        )
+        cur.execute(
+            """
+            insert into account_metric_snapshot(
+              account_id, provider, source_endpoint, observation_key,
+              follower_count, video_count
+            )
+            values (%s,'fixture','fixture','similar-account-snapshot',120000,44)
+            """,
+            (similar_id,),
+        )
+        conn.commit()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN), platform="douyin", days=30, selected_account_id=account_id
+    )
+
+    similar = result["detail"]["similar_accounts"]
+    assert result["detail"]["similar_accounts_available"] is True
+    assert similar == [
+        {
+            "id": str(similar_id),
+            "nickname": "相似海边账号",
+            "similarity_score": 100,
+            "evidence_coverage": 100,
+            "raw_score": 100,
+            "matched_domains": ["旅行风景", "海洋文化"],
+            "matched_fields": [
+                "content_domains",
+                "account_type",
+                "certification_type",
+                "follower_count",
+                "video_count",
+            ],
+            "components": {
+                "content_domains": 45,
+                "account_type": 15,
+                "certification_type": 10,
+                "follower_count": 20,
+                "video_count": 10,
+            },
+        }
+    ]
 
 
 def test_account_growth_is_null_with_only_one_snapshot() -> None:

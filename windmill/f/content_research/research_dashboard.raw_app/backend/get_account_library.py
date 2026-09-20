@@ -7,6 +7,8 @@ from typing import Any, TypedDict
 import psycopg
 from psycopg.rows import dict_row
 
+from douyin_research.l2 import AccountSimilarityProfile, rank_similar_accounts
+
 
 class postgresql(TypedDict):
     host: str
@@ -457,7 +459,45 @@ def main(
             detail["trend"] = trend
             detail["hot_videos"] = hot_videos
             detail["fan_profile_available"] = False
-            detail["similar_accounts_available"] = False
+            similarity_rows = _fetch_all(
+                conn,
+                base_cte
+                + """
+                select
+                  a.id::text,
+                  a.platform,
+                  a.nickname,
+                  a.content_domains,
+                  a.account_type,
+                  a.certification_type,
+                  a.follower_count,
+                  a.video_count
+                from account_rows a
+                where a.platform=%s
+                  and a.id<>%s::uuid
+                order by a.id
+                limit 200
+                """,
+                (days, days, days, detail["platform"], selected_id),
+            )
+            target_profile = _similarity_profile(detail)
+            candidate_profiles = [_similarity_profile(row) for row in similarity_rows]
+            matches = rank_similar_accounts(target_profile, candidate_profiles)
+            by_id = {row["id"]: row for row in similarity_rows}
+            detail["similar_accounts"] = [
+                {
+                    "id": match.account_id,
+                    "nickname": by_id[match.account_id]["nickname"],
+                    "similarity_score": match.similarity_score,
+                    "evidence_coverage": match.evidence_coverage,
+                    "raw_score": match.raw_score,
+                    "matched_domains": list(match.matched_domains),
+                    "matched_fields": list(match.matched_fields),
+                    "components": match.components,
+                }
+                for match in matches
+            ]
+            detail["similar_accounts_available"] = bool(matches)
 
     return {
         "platforms": platforms,
@@ -471,3 +511,15 @@ def main(
         "items": items,
         "detail": detail,
     }
+
+
+def _similarity_profile(row: dict[str, Any]) -> AccountSimilarityProfile:
+    return AccountSimilarityProfile(
+        account_id=row["id"],
+        platform=row["platform"],
+        content_domains=frozenset(row.get("content_domains") or ()),
+        account_type=row.get("account_type"),
+        certification_type=row.get("certification_type"),
+        follower_count=row.get("follower_count"),
+        video_count=row.get("video_count"),
+    )
