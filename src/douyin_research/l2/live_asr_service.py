@@ -110,6 +110,8 @@ def _validate_live_request(request: LiveASRRequest) -> None:
     ]
     if missing:
         raise ValueError(f"required live ASR fields are missing: {missing}")
+    if request.audio_format != "wav":
+        raise ValueError("reviewed normalized audio requires wav format")
     if (
         not isinstance(request.max_polls, int)
         or isinstance(request.max_polls, bool)

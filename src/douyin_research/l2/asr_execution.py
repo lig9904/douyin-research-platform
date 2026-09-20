@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Callable, Iterator, Protocol
@@ -173,6 +173,9 @@ class ASRExecutionCoordinator:
         created: bool = False,
     ) -> dict[str, object]:
         external_calls = initial_external_calls
+        # A resumed job belongs to its original reservation day, including
+        # polling and final cost reconciliation after midnight.
+        request = replace(request, budget_date=job["budget_date"])
         provider_task_ref = str(job["provider_task_ref"])
         for _ in range(request.max_polls):
             self._reserve_poll(request, UUID(str(job["id"])))

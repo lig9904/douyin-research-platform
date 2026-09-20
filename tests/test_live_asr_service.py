@@ -6,6 +6,7 @@ import sys
 from types import SimpleNamespace
 from decimal import Decimal
 from dataclasses import replace
+from datetime import date, timedelta
 from uuid import UUID, uuid4
 
 import psycopg
@@ -65,7 +66,7 @@ def _request(video_id: UUID, **overrides: object) -> LiveASRRequest:
         "media_url": f"https://media.example.test/audio.mp3?{query}",
         "media_review_version": "media-review-v1",
         "media_query_sha256": hashlib.sha256(query.encode()).hexdigest(),
-        "audio_format": "mp3",
+        "audio_format": "wav",
         "source_fingerprint": "source-content-fingerprint-1",
         "api_key": "private-api-key",
         "reviewed_asset_id": uuid4(),
@@ -181,6 +182,13 @@ def test_live_service_reuses_running_task_and_persists_unknown_cost_without_url_
         assert first["cost_basis"] == "unknown"
         assert submitted.submit_calls
 
+        original_day = date.today()
+        class NextDay(date):
+            @classmethod
+            def today(cls):
+                return original_day + timedelta(days=1)
+        monkeypatch.setattr("douyin_research.l2.asr_execution.date", NextDay)
+
         evidence = TranscriptEvidence(
             asr_provider=VOLCENGINE_ASR_PROVIDER,
             model_id=VOLCENGINE_ASR_MODEL_ID,
@@ -229,6 +237,9 @@ def test_live_service_reuses_running_task_and_persists_unknown_cost_without_url_
             assert source_fingerprint == request.source_fingerprint
             assert metadata["triggered_by"] == "scheduled-research-worker/asr"
             assert metadata["trigger_source"] == "schedule"
+            cur.execute("select budget_date,used_requests from daily_budget where provider=%s and budget_key=%s",
+                        (VOLCENGINE_ASR_PROVIDER, ASR_BUDGET_KEY))
+            assert cur.fetchall() == [(original_day, 2)]
     finally:
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
             cur.execute("delete from source_video where id=%s", (video_id,))
