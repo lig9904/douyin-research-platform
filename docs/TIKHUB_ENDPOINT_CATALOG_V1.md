@@ -99,6 +99,8 @@ Creator 热门话题和热门视频素材已确认有旅行、剧情、二次元
 - get_endpoint_info
 
 多数基础服务当前基础价约 0.001 USD/request，但正式成本由 endpoint info / calculate_price 动态读取，不硬编码。
+已核验例外：`fetch_multi_video_v2` 在 2026-09-20 账户使用日志中为 0.050 USD/批次，
+每批最多 50 个去重视频 ID；不得把该接口套用 0.001 USD 的通用基础价。
 
 ## REST Fallback
 
