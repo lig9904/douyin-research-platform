@@ -21,6 +21,7 @@
           "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
           "not": {"pattern": "\\.(?:example|invalid|test|localhost|local)$"}
         },
+        "proxy_mode": {"enum": ["container", "external"]},
         "certificate_sha256": {"$ref": "#/$defs/nullableSha256"},
         "images": {
           "type": "object",
@@ -29,7 +30,7 @@
           "properties": {
             "postgres": {"$ref": "#/$defs/image"},
             "windmill": {"$ref": "#/$defs/image"},
-            "proxy": {"$ref": "#/$defs/image"}
+            "proxy": {"anyOf": [{"$ref": "#/$defs/image"}, {"type": "null"}]}
           }
         }
       }
@@ -122,6 +123,18 @@
     }
   },
   "allOf": [
+    {
+      "if": {"properties": {"deployment": {"required": ["proxy_mode"], "properties": {"proxy_mode": {"const": "container"}}}}},
+      "then": {"properties": {"deployment": {"properties": {"images": {"properties": {"proxy": {"$ref": "#/$defs/image"}}}}}}}
+    },
+    {
+      "if": {"properties": {"deployment": {"required": ["proxy_mode"], "properties": {"proxy_mode": {"const": "external"}}}}},
+      "then": {"properties": {"deployment": {"properties": {"images": {"properties": {"proxy": {"type": "null"}}}}}}}
+    },
+    {
+      "if": {"properties": {"deployment": {"not": {"required": ["proxy_mode"]}}}},
+      "then": {"properties": {"deployment": {"properties": {"images": {"properties": {"proxy": {"$ref": "#/$defs/image"}}}}}}}
+    },
     {
       "if": {"properties": {"checks": {"properties": {"gate_a_https_proxy": {"properties": {"status": {"const": "pass"}}}}}}},
       "then": {"properties": {"deployment": {"properties": {"certificate_sha256": {"$ref": "#/$defs/sha256"}}}}}

@@ -116,11 +116,13 @@ def validate_bundle(bundle: Any, *, require_complete: bool = False) -> None:
     if not _is_utc_timestamp(root["generated_at_utc"]):
         raise EvidenceError("generated_at_utc must be an RFC3339 UTC timestamp")
 
-    deployment = _exact_keys(
-        root["deployment"],
-        {"commit_sha", "compose_project", "fqdn", "images", "certificate_sha256"},
-        "deployment",
-    )
+    deployment_fields = {"commit_sha", "compose_project", "fqdn", "images", "certificate_sha256"}
+    if not isinstance(root["deployment"], dict) or set(root["deployment"]) not in {
+        frozenset(deployment_fields),
+        frozenset(deployment_fields | {"proxy_mode"}),
+    }:
+        raise EvidenceError("deployment has an invalid field set")
+    deployment = root["deployment"]
     if not isinstance(deployment["commit_sha"], str) or not COMMIT_RE.fullmatch(deployment["commit_sha"]):
         raise EvidenceError("deployment.commit_sha is invalid")
     if not isinstance(deployment["compose_project"], str) or not PROJECT_RE.fullmatch(deployment["compose_project"]):
@@ -128,9 +130,22 @@ def validate_bundle(bundle: Any, *, require_complete: bool = False) -> None:
     fqdn = deployment["fqdn"]
     if not isinstance(fqdn, str) or not FQDN_RE.fullmatch(fqdn) or fqdn.endswith((".example", ".invalid", ".test", ".localhost", ".local")):
         raise EvidenceError("deployment.fqdn must be a concrete public FQDN")
+    # Bundles created before external-proxy support omitted this field and always
+    # represented the original same-host container proxy topology.
+    proxy_mode = deployment.get("proxy_mode", "container")
+    if proxy_mode not in {"container", "external"}:
+        raise EvidenceError("deployment.proxy_mode is invalid")
     images = _exact_keys(deployment["images"], {"postgres", "windmill", "proxy"}, "deployment.images")
-    if any(not isinstance(image, str) or not IMAGE_RE.fullmatch(image) for image in images.values()):
-        raise EvidenceError("every deployment image must be pinned by SHA-256 digest")
+    for image_name in ("postgres", "windmill"):
+        image = images[image_name]
+        if not isinstance(image, str) or not IMAGE_RE.fullmatch(image):
+            raise EvidenceError("every deployed container image must be pinned by SHA-256 digest")
+    proxy_image = images["proxy"]
+    if proxy_mode == "container":
+        if not isinstance(proxy_image, str) or not IMAGE_RE.fullmatch(proxy_image):
+            raise EvidenceError("container proxy mode requires a proxy image pinned by SHA-256 digest")
+    elif proxy_image is not None:
+        raise EvidenceError("external proxy mode must not claim a local proxy image")
     _nullable_sha(deployment["certificate_sha256"], "deployment.certificate_sha256")
 
     checks = _exact_keys(root["checks"], set(CHECK_IDS), "checks")
@@ -411,6 +426,7 @@ def _initial_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "commit_sha": args.commit_sha,
             "compose_project": args.compose_project,
             "fqdn": args.fqdn,
+            "proxy_mode": args.proxy_mode,
             "images": {"postgres": args.postgres_image, "windmill": args.windmill_image, "proxy": args.proxy_image},
             "certificate_sha256": None,
         },
@@ -455,7 +471,8 @@ def _parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--fqdn", required=True)
     init_parser.add_argument("--postgres-image", required=True)
     init_parser.add_argument("--windmill-image", required=True)
-    init_parser.add_argument("--proxy-image", required=True)
+    init_parser.add_argument("--proxy-mode", choices=("container", "external"), default="container")
+    init_parser.add_argument("--proxy-image")
     verify_parser = subparsers.add_parser("verify", help="validate without printing evidence content")
     verify_parser.add_argument("--input", type=Path, required=True)
     verify_parser.add_argument("--require-complete", action="store_true")

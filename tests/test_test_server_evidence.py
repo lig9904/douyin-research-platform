@@ -104,6 +104,7 @@ def test_init_is_secret_free_mode_0600_and_never_overwrites(tmp_path: Path) -> N
     }
     assert {item["status"] for item in bundle["checks"].values()} == {"not_run"}
     assert "password" not in output.read_text(encoding="utf-8").lower()
+    assert bundle["deployment"]["proxy_mode"] == "container"
 
     second = subprocess.run(
         [str(SCRIPT), "init", "--output", str(output), "--commit-sha", "a" * 40,
@@ -304,6 +305,62 @@ def test_json_schema_executes_draft_2020_contract(tmp_path: Path) -> None:
     bundle["deployment"]["fqdn"] = "research.acme.dev"
     bundle["providers"]["ark"]["call_count"] = 1
     assert any(list(error.path)[:2] == ["providers", "ark"] for error in validator.iter_errors(bundle))
+
+
+def test_external_proxy_evidence_does_not_claim_a_local_proxy_image(tmp_path: Path) -> None:
+    output = tmp_path / "external.json"
+    result = subprocess.run(
+        [
+            str(SCRIPT), "init",
+            "--output", str(output),
+            "--commit-sha", "a" * 40,
+            "--compose-project", "douyin-research-test",
+            "--fqdn", "research.acme.dev",
+            "--postgres-image", "postgres@sha256:" + "1" * 64,
+            "--windmill-image", "windmill@sha256:" + "2" * 64,
+            "--proxy-mode", "external",
+        ],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    bundle = _load(output)
+    assert bundle["deployment"]["proxy_mode"] == "external"
+    assert bundle["deployment"]["images"]["proxy"] is None
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(bundle)
+
+    bundle["deployment"]["images"]["proxy"] = "nginx@sha256:" + "3" * 64
+    _write(output, bundle)
+    assert "must not claim" in _run_verify(output).stderr
+
+
+def test_container_proxy_requires_a_pinned_proxy_image(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            str(SCRIPT), "init",
+            "--output", str(tmp_path / "container.json"),
+            "--commit-sha", "a" * 40,
+            "--compose-project", "douyin-research-test",
+            "--fqdn", "research.acme.dev",
+            "--postgres-image", "postgres@sha256:" + "1" * 64,
+            "--windmill-image", "windmill@sha256:" + "2" * 64,
+        ],
+        text=True, capture_output=True, check=False,
+    )
+    assert result.returncode == 1
+    assert "requires a proxy image" in result.stderr
+    assert not (tmp_path / "container.json").exists()
+
+
+def test_legacy_container_bundle_without_proxy_mode_remains_valid(tmp_path: Path) -> None:
+    output = _init(tmp_path)
+    bundle = _load(output)
+    bundle["deployment"].pop("proxy_mode")
+    _write(output, bundle)
+
+    assert _run_verify(output).returncode == 0
+    schema = json.loads(SCHEMA.read_text(encoding="utf-8"))
+    jsonschema.Draft202012Validator(schema).validate(bundle)
 
 
 def test_init_rejects_reserved_domain_and_unpinned_image(tmp_path: Path) -> None:
