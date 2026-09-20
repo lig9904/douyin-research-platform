@@ -57,8 +57,15 @@ def save_raw(label: str, payload: dict[str, Any]) -> Path:
     except OSError:
         pass
     path = OUT_DIR / f"{label}.json"
+    if path.is_symlink():
+        raise ProbeFailure("raw evidence path must not be a symlink")
     # os.open prevents a permissive process umask from broadening the file mode.
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # O_NOFOLLOW closes the race between the explicit check and the open on POSIX.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise ProbeFailure("raw evidence path could not be opened safely") from exc
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)

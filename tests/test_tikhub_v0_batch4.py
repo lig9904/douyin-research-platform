@@ -199,6 +199,20 @@ def test_cleanup_raw_rejects_output_directory_symlink_without_touching_target(tm
     assert protected.exists()
 
 
+def test_save_raw_rejects_existing_file_symlink_without_touching_target(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    protected = tmp_path / "protected.json"
+    protected.write_text("protected", encoding="utf-8")
+    (raw_dir / "private.json").symlink_to(protected)
+    monkeypatch.setattr(probe, "OUT_DIR", raw_dir)
+
+    with pytest.raises(probe.ProbeFailure, match="evidence path must not be a symlink"):
+        probe.save_raw("private", {"code": 200})
+    assert protected.read_text(encoding="utf-8") == "protected"
+
+
 def test_page_relation_and_selected_detail_ids_do_not_need_public_identifiers() -> None:
     probe = _load_batch4()
     first = {"private-a", "private-b"}
