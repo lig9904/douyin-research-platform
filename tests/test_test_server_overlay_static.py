@@ -38,6 +38,15 @@ def test_external_proxy_overlay_has_no_local_tls_proxy_or_database_port() -> Non
     assert "TIKHUB_API_KEY" not in source
 
 
+def test_shared_default_worker_cache_skips_image_copy_for_two_replica_startup() -> None:
+    source = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "source: windmill_worker_cache" in source
+    assert "target: /tmp/windmill/cache" in source
+    assert "nocopy: true" in source
+    assert "- windmill_worker_cache:/tmp/windmill/cache" not in source
+
+
 def test_external_proxy_profile_is_git_safe_and_has_a_private_bind_example() -> None:
     example = EXTERNAL_PROXY_EXAMPLE.read_text(encoding="utf-8")
     ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
