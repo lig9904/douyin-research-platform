@@ -6,6 +6,7 @@ description: |
 concurrent_limit: 2
 concurrency_time_window_s: 0
 timeout: 900
+lock: '!inline f/content_research/collectors/ingest_video_media.script.lock'
 schema:
   type: object
   properties:

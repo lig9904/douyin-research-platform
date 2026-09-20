@@ -1,10 +1,14 @@
 # 媒体 Worker 部署与验收
 
-## 已实现与未部署
+## 实现与部署状态
 
 入口为 `f/content_research/collectors/ingest_video_media`，依赖固定到媒体服务已合并提交 `fd2694729c784a0f2e34b2c0a4d6746da57813fe`。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
 
-当前仅完成代码及隔离测试。测试服务器现有 Worker 未检测到 ffmpeg；必须补齐可重复部署的音频运行时并完成下面的验收，不能把脚本存在当作运行成功。
+2026-09-21 已通过浏览器 JumpServer 在测试服务器构建并部署媒体镜像 `douyin-research-media-worker:87eeac7`，两个普通 Worker 均已确认 ffmpeg/ffprobe、Python 3.13.5 及可写临时目录；server/native/postgres 未替换。镜像 ID 为 `sha256:08e0267834a4f76ef1eb33f0fe6a790fe5eddd7dff926e5b0f0712974d549da5`。无网络临时容器实际转换合成音频并验证 pcm_s16le、16000 Hz、单声道通过，不是真实视频链路验收。
+
+主机临时目录 `/srv/douyin-research-test/media-tmp` 绑定到容器 `/srv/research-media-tmp`，findmnt 确认位于 `/dev/sdb1` 的 500G 数据盘。迁移账本已验证至017；迁移前备份 `/srv/douyin-research-test/backups/20260920T190539Z`。备份校验不等于恢复演练通过。
+
+媒体脚本已创建到 test-research，但首次发布缺少本地锁元数据；本次补齐 Linux x86_64 Python3.13 依赖锁、inline引用及同步hash，需重新发布。实际工作区尚无 `media_storage_config` 与 `automation_worker_identity`，须配置后执行真实媒体任务；ASR/L3新固定配置也尚缺，不得宣称全链路已运行。
 
 ## 服务端配置
 
