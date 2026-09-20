@@ -1,0 +1,16 @@
+# Opt-in only, layered after the existing external-proxy configuration.
+# Build and verify before replacing ordinary workers; no new ports/services.
+services:
+  windmill_worker:
+    image: ${MEDIA_WORKER_IMAGE:?Set a versioned local media worker image tag}
+    build:
+      context: .
+      dockerfile: deploy/media-worker/Dockerfile
+      args:
+        WINDMILL_BASE_IMAGE: ${WINDMILL_IMAGE:-ghcr.io/windmill-labs/windmill@sha256:9f175a520477de0cc24724e32f49104ab7aa2537fc684eb1353bf541c1f1142a}
+    volumes:
+      - type: bind
+        source: ${MEDIA_TEMP_HOST_PATH:?Set an existing verified directory on the 500G disk}
+        target: /srv/research-media-tmp
+        bind:
+          create_host_path: false

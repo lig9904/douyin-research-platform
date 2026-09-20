@@ -39,6 +39,12 @@ CDN 域名来自测试服已缓存详情的实际媒体 origin，不根据任意
 
 ## 部署顺序
 
+可重复运行时草案为 `deploy/media-worker/Dockerfile` 与显式启用的 `docker-compose.media-worker.yml`。它只替换普通 Worker 镜像，不修改服务器/native Worker，不新增 Nginx 或端口。基础 Windmill 镜像固定 digest；ffmpeg 来自基础镜像官方 apt 仓库，最终构建镜像应保存镜像 ID 与包版本（不是字节级可复现构建）。本机没有 Docker daemon，此草案尚未实际构建验证，不得直接视为已可部署。
+
+上线前先确认上游容器用户与运行权限兼容，再构建验证 `ffmpeg -version`、`ffprobe -version`、Python 3.13 和实际音频转换。指定 `MEDIA_WORKER_IMAGE` 为版本化镜像标签，`MEDIA_TEMP_HOST_PATH` 为通过 `findmnt -T` 核验在 500G 盘上的现有目录；挂载不会自动创建不存在的主机目录。Secret 中 `temp_directory` 对应 `/srv/research-media-tmp`，`ffmpeg_binary` 对应 `/usr/bin/ffmpeg`。不得仅凭路径包含 `/srv` 就认定物理磁盘正确。
+
+构建并验证后才在原 Compose 文件列表末尾追加媒体 overlay，保留既有双 Worker、数据库、缓存配置及项目名。部署前确认无正在执行的任务；只更新普通 Worker。回滚到原文件列表和原固定 Windmill 镜像，保留媒体目录和数据库，不删除已有对象。
+
 1. 通过 JumpServer 只读确认镜像 OS、ffmpeg 可执行文件、容器存储映射和临时目录实际落在 500G 盘。不要在应用服务器部署 Nginx。
 2. 准备可重复部署的 Worker 音频运行时；仅手工修改一次性容器不算完成。
 3. 备份数据库并部署迁移 016；保留现有原始详情响应和视频数据。

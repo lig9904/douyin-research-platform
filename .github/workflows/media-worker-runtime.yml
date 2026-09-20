@@ -1,0 +1,41 @@
+name: media-worker-runtime
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "deploy/media-worker/**"
+      - "docker-compose.media-worker.yml"
+      - ".github/workflows/media-worker-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned Windmill media worker
+        run: docker build -f deploy/media-worker/Dockerfile -t research-media-worker:ci .
+      - name: Verify inherited runtime and real audio conversion
+        run: |
+          docker run --rm --network none --entrypoint /bin/sh research-media-worker:ci -ec '
+            python3 -c "import sys; assert sys.version_info[:2] == (3, 13), sys.version"
+            ffmpeg -hide_banner -loglevel error -f lavfi -i sine=frequency=440:duration=1 -ac 2 -ar 48000 /tmp/source.wav
+            ffmpeg -hide_banner -loglevel error -nostdin -protocol_whitelist file,pipe -i /tmp/source.wav -vn -ac 1 -ar 16000 -c:a pcm_s16le /tmp/normalized.wav
+            ffprobe -v error -show_entries stream=sample_rate,channels,codec_name -of json /tmp/normalized.wav | python3 -c "import json,sys; s=json.load(sys.stdin)[\"streams\"][0]; assert s[\"sample_rate\"] == \"16000\" and s[\"channels\"] == 1 and s[\"codec_name\"] == \"pcm_s16le\", s; print(s)"
+            dpkg-query -W ffmpeg
+          '
+          docker image inspect research-media-worker:ci --format '{{.Id}} user={{json .Config.User}}'
+      - name: Verify opt-in Compose overlay
+        env:
+          MEDIA_WORKER_IMAGE: research-media-worker:ci
+          MEDIA_TEMP_HOST_PATH: /srv/research-media-tmp
+          POSTGRES_PASSWORD: synthetic-ci-only
+          RESEARCH_DB_PASSWORD: synthetic-ci-only
+          WINDMILL_DATABASE_URL: postgresql://synthetic-ci-only
+          WINDMILL_BASE_URL: https://research.example.test
+          TEST_SERVER_WINDMILL_BIND_HOST: 192.168.50.6
+        run: docker compose -f docker-compose.yml -f docker-compose.test-server-external-proxy.yml -f docker-compose.media-worker.yml config --quiet
