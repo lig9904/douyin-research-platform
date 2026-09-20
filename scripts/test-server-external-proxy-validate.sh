@@ -69,10 +69,21 @@ internal_url="$(value_for WINDMILL_INTERNAL_URL)"
 windmill_image="$(value_for WINDMILL_IMAGE)"
 postgres_image="$(value_for POSTGRES_IMAGE)"
 
-[[ "$base_url" =~ ^https://([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] && \
-  [[ "$base_url" != *.example && "$base_url" != *.invalid && "$base_url" != *.test && "$base_url" != *.localhost && "$base_url" != *.local ]] || {
-  echo 'ERROR: WINDMILL_BASE_URL must be a concrete public HTTPS FQDN without a path.' >&2; exit 2;
+base_authority="${base_url#https://}"
+base_host="${base_authority%%:*}"
+base_port=""
+[[ "$base_authority" != *:* ]] || base_port="${base_authority##*:}"
+[[ "$base_url" == https://* && "$base_host" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$ ]] && \
+  [[ "$base_authority" != *: || -n "$base_port" ]] && \
+  [[ "$base_authority" == "$base_host" || "$base_authority" == "$base_host:$base_port" ]] && \
+  [[ "$base_host" != *.example && "$base_host" != *.invalid && "$base_host" != *.test && "$base_host" != *.localhost && "$base_host" != *.local ]] || {
+  echo 'ERROR: WINDMILL_BASE_URL must be a concrete public HTTPS FQDN, optionally with a valid port, and without a path.' >&2; exit 2;
 }
+if [[ -n "$base_port" ]]; then
+  [[ "$base_port" =~ ^[0-9]{1,5}$ ]] && (( 10#$base_port >= 1 && 10#$base_port <= 65535 )) || {
+    echo 'ERROR: WINDMILL_BASE_URL port must be between 1 and 65535.' >&2; exit 2;
+  }
+fi
 [[ "$bind_port" == 8000 ]] || { echo 'ERROR: TEST_SERVER_WINDMILL_PORT must be exactly 8000.' >&2; exit 2; }
 
 # Match the existing deployment contract: `openssl rand -hex 24` yields 48

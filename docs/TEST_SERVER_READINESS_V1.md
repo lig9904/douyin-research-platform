@@ -119,7 +119,7 @@ scripts/test-server-evidence.py seal \
      -f docker-compose.yml -f docker-compose.test-server.yml config >/dev/null
    ```
 
-   `WINDMILL_BASE_URL` 必须是最终 `https://<测试 FQDN>`；`WINDMILL_INTERNAL_URL` 保持 Docker 内部地址，不能设成浏览器域名或 localhost。
+   `WINDMILL_BASE_URL` 必须是最终 `https://<测试 FQDN>`；如果专用反代公开的是非标准 HTTPS 端口，则写成 `https://<测试 FQDN>:<端口>`。`WINDMILL_INTERNAL_URL` 保持 Docker 内部地址，不能设成浏览器域名或 localhost。
 6. 默认的 `docker-compose.test-server.yml` 用 `!reset []` 移除 PostgreSQL 和 Windmill 的直接端口，只由固定 digest 的 Nginx 暴露 80/443。证书目录只读挂载；代理 access log 仅记录无 query 的 `$uri`，不记录 Cookie、Authorization、请求体或请求头。
 7. 经人工复核渲染结果后再启动固定 digest 的 PostgreSQL、Windmill server、default worker、native worker 与 proxy，确认健康检查和两个数据库边界。
 

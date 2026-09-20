@@ -188,6 +188,58 @@ def test_external_proxy_validator_rejects_placeholder_example_and_accepts_bound_
     assert result.returncode == 0, result.stderr
     assert "PASS: external-proxy environment" in result.stdout
 
+    env_file.write_text(
+        base_valid.replace(
+            "WINDMILL_BASE_URL=https://research-ci.example.com",
+            "WINDMILL_BASE_URL=https://research-ci.example.com:6443",
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [str(EXTERNAL_PROXY_VALIDATOR), "--env-file", str(env_file), "--skip-local-bind-check"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        env={**os.environ, "CI": "true", "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "PASS: external-proxy environment" in result.stdout
+
+    env_file.write_text(
+        base_valid.replace(
+            "WINDMILL_BASE_URL=https://research-ci.example.com",
+            "WINDMILL_BASE_URL=https://research-ci.example.com:70000",
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [str(EXTERNAL_PROXY_VALIDATOR), "--env-file", str(env_file)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "port must be between 1 and 65535" in result.stderr
+
+    env_file.write_text(
+        base_valid.replace(
+            "WINDMILL_BASE_URL=https://research-ci.example.com",
+            "WINDMILL_BASE_URL=https://research-ci.example.com:",
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [str(EXTERNAL_PROXY_VALIDATOR), "--env-file", str(env_file)],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "optionally with a valid port" in result.stderr
+
     env_file.write_text(base_valid.replace("@postgres:5432/windmill", "@postgres:5432/not_windmill"), encoding="utf-8")
     result = subprocess.run(
         [str(EXTERNAL_PROXY_VALIDATOR), "--env-file", str(env_file)],
