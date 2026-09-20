@@ -92,3 +92,29 @@ def test_signature_rotation_preserves_review_but_metadata_change_invalidates_it(
         conn.execute("update media_asset set size_bytes=101 where id=%s", (media.id,))
     with pytest.raises(ValueError, match="missing or stale"):
         verify(media)
+
+
+def test_worker_request_resolves_only_approved_private_asset(media):
+    from douyin_research.l2.live_asr_service import request_from_reviewed_asset
+    calls = []
+    class Storage:
+        bucket = media.bucket
+        def verify_object(self, stored):
+            calls.append("head")
+            assert stored.sha256 == media.content_sha256
+        def presigned_read_url(self, key, expires_in):
+            calls.append("sign")
+            assert key == media.object_key and expires_in == 3600
+            return f"https://media.example.test/{self.bucket}/{key}?signature=private"
+    args = dict(video_id=media.video_id, asset_id=media.id, review_version="test-v1",
+        storage=Storage(), public_origin="https://media.example.test", storage_location=media.storage_location,
+        api_key="private-key")
+    with pytest.raises(ValueError, match="missing or stale"):
+        request_from_reviewed_asset(DSN, **args)
+    assert calls == []
+    approve(media)
+    request = request_from_reviewed_asset(DSN, **args)
+    assert calls == ["head", "sign"]
+    assert request.reviewed_asset_id == media.id and request.audio_format == "wav"
+    assert "private" not in repr(request)
+    assert request.source_fingerprint == media.content_sha256
