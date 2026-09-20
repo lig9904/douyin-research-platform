@@ -18,6 +18,16 @@ def test_review_api_has_no_caller_identity_or_database_fields():
     assert not {"db", "actor", "reviewer_allowlist", "delivery_origin"} & set(inspect.signature(backend.main).parameters)
 
 
+def test_backend_dependency_lock_matches_source_revision_and_runtime():
+    lock = PATH.with_suffix(".lock").read_text()
+    source = PATH.read_text()
+    revision = "92153f603368a3ab2cb7810924d6d3948857987a"
+    assert revision in lock and revision in source
+    assert "# py: 3.13" in lock
+    assert "wmill==1.815.0" in lock
+    assert "boto3==" in lock and "psycopg-binary==3.3.6" in lock
+
+
 def test_approve_requires_preview_before_configuration(monkeypatch):
     monkeypatch.setattr(backend, "_dsn", lambda: pytest.fail("configuration read"))
     with pytest.raises(ValueError, match="fingerprint"):
