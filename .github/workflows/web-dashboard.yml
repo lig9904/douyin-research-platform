@@ -1,6 +1,7 @@
 name: web-dashboard
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "windmill/f/content_research/research_dashboard.raw_app/**"

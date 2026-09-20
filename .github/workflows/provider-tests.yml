@@ -1,6 +1,7 @@
 name: provider-tests
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - "pyproject.toml"
