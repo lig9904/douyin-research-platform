@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal
 from typing import Callable
 from urllib.parse import urlsplit
@@ -35,6 +36,39 @@ from douyin_research.providers.volcengine_asr import (
 LIVE_ASR_TASK_VERSION = "live-volcengine-asr-v1"
 
 
+def request_from_reviewed_asset(dsn: str, *, video_id: UUID | str, asset_id: UUID | str,
+                                review_version: str, storage, public_origin: str,
+                                storage_location: str, api_key: str, max_polls: int = 1):
+    """Trusted worker composition: callers select assets, never delivery URLs.
+
+    Storage/configuration arguments are internal dependencies, not public job
+    parameters. Recheck approval before storage I/O and again in coordinator.
+    """
+    from douyin_research.media_assets import MediaAssetStore
+    from douyin_research.media_storage import StoredMediaObject
+    from .media_review import assert_reviewed_delivery, _origin
+
+    asset = MediaAssetStore(dsn).get(video_id, asset_id)
+    if asset is None:
+        raise ValueError("reviewed audio asset unavailable")
+    if asset.bucket != storage.bucket or asset.storage_location != storage_location:
+        raise ValueError("reviewed audio storage location mismatch")
+    canonical = f"{_origin(public_origin)}/{asset.bucket}/{asset.object_key}"
+    assert_reviewed_delivery(dsn, video_id=video_id, asset_id=asset_id,
+        review_version=review_version, media_url=canonical, source_fingerprint=asset.content_sha256)
+    storage.verify_object(StoredMediaObject(key=asset.object_key, sha256=asset.content_sha256,
+        size=asset.size_bytes, content_type=asset.content_type))
+    url = storage.presigned_read_url(asset.object_key, expires_in=3600)
+    assert_reviewed_delivery(dsn, video_id=video_id, asset_id=asset_id,
+        review_version=review_version, media_url=url, source_fingerprint=asset.content_sha256)
+    query = urlsplit(url).query
+    return LiveASRRequest(dsn=dsn, video_id=video_id, reviewed_asset_id=asset_id,
+        media_url=url, media_review_version=review_version,
+        media_query_sha256=hashlib.sha256(query.encode()).hexdigest() if query else None,
+        audio_format="wav", source_fingerprint=asset.content_sha256, api_key=api_key,
+        source_provider="private-object-storage", max_polls=max_polls)
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class LiveASRRequest:
     dsn: str
@@ -54,6 +88,7 @@ class LiveASRRequest:
     estimated_api_cost: Decimal | float | int | None = None
     estimated_asr_cost: Decimal | float | int | None = None
     cost_currency: str = "CNY"
+    budget_date: date | None = None
 
 
 def live_asr_task_key(
@@ -170,6 +205,7 @@ def execution_request(request: LiveASRRequest) -> ASRExecutionRequest:
         trigger_source="schedule",
         reviewed_asset_id=request.reviewed_asset_id,
         media_review_version=request.media_review_version,
+        budget_date=request.budget_date,
     )
 
 
@@ -195,10 +231,23 @@ class LiveASRService:
         factory = provider_factory or _verified_provider_factory
         # The coordinator is responsible for no-resubmit behavior for jobs in
         # submitted/running states. It returns a redacted result only.
-        result = self._coordinator.run(
-            core_request,
-            provider_factory=lambda: factory(request, delivery),
-        )
+        providers = []
+        def construct_provider():
+            provider = factory(request, delivery)
+            providers.append(provider)
+            return provider
+        try:
+            result = self._coordinator.run(core_request, provider_factory=construct_provider)
+        finally:
+            for provider in providers:
+                close = getattr(provider, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        # Cleanup cannot turn a persisted paid result into a
+                        # retryable failure or expose transport credentials.
+                        pass
         return {
             **result,
             "task_key": core_request.task_key,
