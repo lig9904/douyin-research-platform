@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@3bb9d854f19b62f7fe08a62d6bf6af25c6e86c56",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@fe801f7fd922f54bf8f4e4d36693bea8137d6024",
 #   "psycopg[binary]==3.3.6", "wmill==1.815.0",
 # ]
 # ///
@@ -18,7 +18,7 @@ from douyin_research.l3.evidence import L3_REVIEW_IDENTITY_SOURCE
 from douyin_research.l3.execution import L3_BUDGET_KEY, L3_CONFIRMATION
 from douyin_research.l3.live_service import (
     LiveArkConfiguration, ReviewedL3Selection, execute_reviewed_live_ark,
-    live_ark_task_key,
+    live_ark_task_key, validate_live_ark_configuration,
 )
 from douyin_research.l3.results import L3_SCHEMA_VERSION
 from douyin_research.providers.volcengine_ark_l3 import VOLCENGINE_ARK_L3_PROVIDER
@@ -42,6 +42,7 @@ def _configuration():
         if cost is not None and (type(cost) not in (int, float) or not math.isfinite(cost) or cost < 0):
             raise ValueError
         ark = LiveArkConfiguration(**cfg["ark"])
+        validate_live_ark_configuration(ark)
         if ark.cost_currency != "CNY":
             raise ValueError
         return dsn, cfg, ark

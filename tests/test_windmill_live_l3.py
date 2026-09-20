@@ -126,6 +126,19 @@ def test_fixed_configuration_accepts_explicit_unlimited_policy(monkeypatch):
     assert calls == ["f/content_research/research_db", "f/content_research/l3_worker_config"]
 
 
+@pytest.mark.parametrize("field", ["input_cost_per_million_tokens", "output_cost_per_million_tokens"])
+def test_zero_price_rejected_before_approval_or_budget(monkeypatch, field):
+    cfg = configuration()
+    cfg["ark"][field] = 0
+    monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
+        get_resource=lambda _: dict(host="localhost", user="test", password="secret", dbname="test"),
+        get_variable=lambda _: json.dumps(cfg)))
+    monkeypatch.setattr(worker, "_selection", lambda *args: pytest.fail("approval queried"))
+    monkeypatch.setattr(worker, "_reservation_date", lambda *args: pytest.fail("budget created"))
+    with pytest.raises(RuntimeError, match="inspect persisted"):
+        worker.main(str(uuid4()))
+
+
 @pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="isolated PostgreSQL required")
 def test_persisted_selection_rejects_superseded_and_revoked_approval():
     dsn = os.environ["TEST_DATABASE_URL"]
