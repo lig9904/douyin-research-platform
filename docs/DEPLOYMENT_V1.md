@@ -188,6 +188,8 @@ Windmill 作为 MCP Server 给 Codex。
 
 本机在进入测试服务器前的权限、localhost HTTPS、Authorization 脱敏、限流和双数据库恢复演练，使用独立 stack，见 [LOCAL_SECURITY_ACCEPTANCE_V1.md](LOCAL_SECURITY_ACCEPTANCE_V1.md)。该演练不替代测试服务器上的真实账号、IdP、域名证书或异机备份验收。
 
+测试服务器的输入、部署顺序、三账号 ACL、Provider 小流量边界、恢复和回滚验收，见 [TEST_SERVER_READINESS_V1.md](TEST_SERVER_READINESS_V1.md)。该手册不预设服务器参数，也不授权生产发布。
+
 ## 13. 更新
 
 生产固定：

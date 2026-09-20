@@ -196,8 +196,11 @@ docker compose down -v
 ## 10. 备份
 
 ```bash
+chmod 600 .env
 bash scripts/backup.sh
 ```
+
+脚本固定使用仓库内 `docker-compose.yml` 与其项目名，因此可从其他工作目录调用；`.env` 必须严格为 `0600`。如需备份另一个显式 Compose 项目或目录，使用 `--project`、`--env-file` 与 `--output-root`。完成目录在三份 dump、SHA-256 manifest 和可选异机发布都成功后才原子出现；异机发布默认不运行，必须同时提供 `--publish-executable` 与 `--publish`。
 
 默认生成：
 
