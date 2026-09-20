@@ -1,103 +1,150 @@
-#requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@370c09880ae1ae6332143834e165a45a0dfe8284
-#psycopg[binary]==3.3.6
-#wmill==1.815.0
-
-"""Authenticated app entrypoint for the bounded TikHub golden intake."""
+"""Authenticated app dispatcher for the bounded TikHub golden intake."""
 
 from __future__ import annotations
 
+import json
 import os
-from contextlib import contextmanager
-from typing import Any, Iterator, TypedDict
-
-import psycopg
-from psycopg.conninfo import make_conninfo
-
-from douyin_research.l0l1.real_data import make_plan, plan_dict, run_live
-from douyin_research.l3 import authorize_reviewer
+import re
+import time
+from typing import Any
+from urllib import parse, request
 
 
 CONFIRMATION = "RUN_TIKHUB_GOLDEN_PAID"
 MAX_COST_USD = 0.01
-LOCK_NAME = "douyin_research:manual_golden_intake"
-API_KEY_PATH = "f/content_research/tikhub_api_key"
+SCRIPT_PATH = "f/content_research/collectors/manual_golden_intake"
+DB_RESOURCE = "$res:f/content_research/research_db"
 WRITER_ALLOWLIST_PATH = "f/content_research/research_action_writers"
 
 
-class postgresql(TypedDict):
-    host: str
-    port: int
-    user: str
-    password: str
-    dbname: str
-    sslmode: str
-
-
-def _dsn(db: postgresql) -> str:
-    return make_conninfo(
-        host=db["host"],
-        port=int(db.get("port", 5432)),
-        user=db["user"],
-        password=db["password"],
-        dbname=db["dbname"],
-        sslmode=db.get("sslmode", "prefer"),
+def _api(method: str, endpoint: str, payload: dict[str, Any] | None = None) -> Any:
+    base = (os.environ.get("BASE_INTERNAL_URL") or os.environ.get("WM_BASE_URL") or "").rstrip("/")
+    token = os.environ.get("WM_TOKEN", "")
+    if not base or not token:
+        raise RuntimeError("Windmill runtime context is unavailable")
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = request.Request(
+        f"{base}/api/{endpoint.lstrip('/')}",
+        data=body,
+        method=method,
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
+    try:
+        with request.urlopen(req, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+    except Exception:
+        raise RuntimeError("Windmill internal dispatch failed") from None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
 
 
-def _preflight(dsn: str) -> None:
-    required = (
-        "source_video",
-        "metric_snapshot",
-        "pipeline_run",
-        "daily_budget",
-        "external_api_call",
+def _workspace() -> str:
+    value = os.environ.get("WM_WORKSPACE", "").strip()
+    if not value:
+        raise RuntimeError("Windmill workspace context is unavailable")
+    return parse.quote(value, safe="")
+
+
+def _get_variable(path: str) -> str:
+    encoded = parse.quote(path, safe="/")
+    value = _api("GET", f"w/{_workspace()}/variables/get_value/{encoded}")
+    return value if isinstance(value, str) else ""
+
+
+def _run_child(args: dict[str, Any]) -> dict[str, Any]:
+    params = {}
+    if os.environ.get("WM_JOB_ID"):
+        params["parent_job"] = os.environ["WM_JOB_ID"]
+    if os.environ.get("WM_ROOT_FLOW_JOB_ID"):
+        params["root_job"] = os.environ["WM_ROOT_FLOW_JOB_ID"]
+    query = f"?{parse.urlencode(params)}" if params else ""
+    path = parse.quote(SCRIPT_PATH, safe="/")
+    job_id = _api("POST", f"w/{_workspace()}/jobs/run/p/{path}{query}", args)
+    if not isinstance(job_id, str) or not job_id:
+        raise RuntimeError("Windmill internal dispatch failed")
+
+    deadline = time.monotonic() + 120
+    while time.monotonic() < deadline:
+        state = _api(
+            "GET",
+            f"w/{_workspace()}/jobs_u/completed/get_result_maybe/{parse.quote(job_id, safe='')}",
+        )
+        if isinstance(state, dict) and state.get("completed"):
+            if state.get("success") and isinstance(state.get("result"), dict):
+                return state["result"]
+            raise RuntimeError("TikHub golden intake failed")
+        time.sleep(0.5)
+    _api(
+        "POST",
+        f"w/{_workspace()}/jobs_u/queue/cancel/{parse.quote(job_id, safe='')}",
+        {"reason": "parent app timeout"},
     )
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        for table in required:
-            cur.execute("select to_regclass(%s)", (table,))
-            if cur.fetchone()[0] is None:
-                raise RuntimeError("research schema is not ready")
+    raise TimeoutError("TikHub golden intake timed out")
 
 
-def _windmill_variable(path: str) -> str:
-    import wmill
-
-    return wmill.get_variable(path)
-
-
-@contextmanager
-def _single_paid_job(dsn: str) -> Iterator[None]:
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute("select pg_try_advisory_lock(hashtext(%s))", (LOCK_NAME,))
-        if not cur.fetchone()[0]:
-            raise RuntimeError("another manual golden intake is already running")
+def _authorized_viewer(end_user_email: str | None, allowlist: str | None) -> str:
+    if not isinstance(end_user_email, str) or not end_user_email:
+        raise PermissionError("authenticated end-user email is required")
+    if end_user_email != end_user_email.strip() or end_user_email != end_user_email.lower():
+        raise PermissionError("authenticated end-user email must be lowercase")
+    if not isinstance(allowlist, str) or not allowlist.strip():
+        raise PermissionError("writer allowlist is required")
+    source = allowlist.strip()
+    if source.startswith("["):
         try:
-            yield
-        finally:
-            cur.execute("select pg_advisory_unlock(hashtext(%s))", (LOCK_NAME,))
+            values = json.loads(source)
+        except json.JSONDecodeError:
+            raise PermissionError("writer allowlist is invalid") from None
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            raise PermissionError("writer allowlist is invalid")
+    else:
+        values = re.split(r"[,\n]", source)
+    allowed = {value.strip() for value in values}
+    if not allowed or any(not value or value != value.lower() for value in allowed):
+        raise PermissionError("writer allowlist is invalid")
+    if end_user_email not in allowed:
+        raise PermissionError("authenticated end-user is not an allowed writer")
+    return end_user_email
 
 
-def _safe_result(result: dict[str, Any], max_cost_usd: float) -> dict[str, Any]:
+def _plan(
+    *,
+    execute: bool,
+    confirmation: str,
+    max_items: int,
+    max_external_calls: int,
+    max_cost_usd: float,
+    date_window_hours: int,
+    enrich_details: bool,
+    force_refresh: bool,
+) -> dict[str, Any]:
+    if not 1 <= int(max_items) <= 5:
+        raise ValueError("max_items must be between 1 and 5")
+    if not 1 <= int(max_external_calls) <= 2:
+        raise ValueError("max_external_calls must be between 1 and 2")
+    if float(max_cost_usd) < 0 or float(max_cost_usd) > MAX_COST_USD:
+        raise ValueError(f"max_cost_usd cannot exceed {MAX_COST_USD}")
+    if not 1 <= int(date_window_hours) <= 24:
+        raise ValueError("date_window_hours must be between 1 and 24")
+    if int(max_external_calls) < 1 + int(bool(enrich_details)):
+        raise ValueError("max_external_calls is too small for detail enrichment")
+    if execute and confirmation != CONFIRMATION:
+        raise PermissionError("exact paid-operation confirmation is required")
     return {
-        "status": "completed",
-        "execute": True,
-        "source_count": int(result["source_count"]),
-        "observations": int(result["observations"]),
-        "unique_platform_videos": int(result["unique_platform_videos"]),
-        "scored_videos": int(result["scored_videos"]),
-        "max_external_calls": int(result["max_external_calls"]),
-        "provider_call_count": int(result["provider_call_count"]),
-        "cached_call_count": int(result["cached_call_count"]),
-        "uncached_call_count": int(result["uncached_call_count"]),
-        "retry_count": int(result["retry_count"]),
-        "maximum_cost_usd": max_cost_usd,
-        "raw_provider_payload_included": False,
+        "execute": bool(execute),
+        "confirmation": confirmation,
+        "max_items": int(max_items),
+        "max_external_calls": int(max_external_calls),
+        "max_cost_usd": float(max_cost_usd),
+        "date_window_hours": int(date_window_hours),
+        "enrich_details": bool(enrich_details),
+        "force_refresh": bool(force_refresh),
     }
 
 
 def main(
-    db: postgresql,
     execute: bool = False,
     confirmation: str = "",
     max_items: int = 1,
@@ -107,10 +154,9 @@ def main(
     enrich_details: bool = False,
     force_refresh: bool = True,
 ):
-    if max_cost_usd > MAX_COST_USD:
-        raise ValueError(f"max_cost_usd cannot exceed {MAX_COST_USD}")
-    plan = make_plan(
-        dry_run=not execute,
+    request = _plan(
+        execute=execute,
+        confirmation=confirmation,
         max_items=max_items,
         max_external_calls=max_external_calls,
         max_cost_usd=max_cost_usd,
@@ -119,28 +165,16 @@ def main(
         force_refresh=force_refresh,
     )
     if not execute:
-        return {**plan_dict(plan), "status": "preview", "external_calls": 0}
-    if confirmation != CONFIRMATION:
-        raise PermissionError("exact paid-operation confirmation is required")
+        return {**request, "status": "preview", "external_calls": 0, "retry_count": 0}
 
-    dsn = _dsn(db)
-    with _single_paid_job(dsn):
-        _preflight(dsn)
-        actor = authorize_reviewer(
-            os.environ.get("WM_END_USER_EMAIL"),
-            _windmill_variable(WRITER_ALLOWLIST_PATH),
-        )
-        api_key = (_windmill_variable(API_KEY_PATH) or "").strip()
-        if not api_key:
-            raise RuntimeError("TikHub secret is not configured")
-        try:
-            result = run_live(
-                dsn=dsn,
-                api_key=api_key,
-                plan=plan,
-                triggered_by=actor,
-            )
-        except Exception:
-            # Do not expose request IDs, provider responses, content, or secrets.
-            raise RuntimeError("TikHub golden intake failed") from None
-    return _safe_result(result, plan.max_cost_usd)
+    _authorized_viewer(
+        os.environ.get("WM_END_USER_EMAIL"),
+        _get_variable(WRITER_ALLOWLIST_PATH),
+    )
+    # The child script owns the database resource, Secret read, advisory lock,
+    # budget gate, provider call and sanitized result. Windmill links this child
+    # to the app job so its authenticated end-user context is preserved.
+    result = _run_child({"db": DB_RESOURCE, **request})
+    if not isinstance(result, dict) or result.get("status") != "completed":
+        raise RuntimeError("TikHub golden intake failed")
+    return result

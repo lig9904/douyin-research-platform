@@ -24,7 +24,7 @@ def load_module():
 def test_preview_is_zero_call_and_does_not_require_database() -> None:
     module = load_module()
     result = module.main(
-        {}, execute=False, max_items=1, max_external_calls=1,
+        execute=False, max_items=1, max_external_calls=1,
         enrich_details=False, force_refresh=True,
     )
 
@@ -38,27 +38,64 @@ def test_paid_run_rejects_wrong_confirmation_before_database() -> None:
     module = load_module()
     with pytest.raises(PermissionError, match="exact paid-operation confirmation"):
         module.main(
-            {}, execute=True, confirmation="yes", max_items=1,
+            execute=True, confirmation="yes", max_items=1,
             max_external_calls=1, enrich_details=False,
         )
+
+
+def test_authenticated_app_dispatches_only_to_the_bounded_collector(monkeypatch) -> None:
+    module = load_module()
+    calls = []
+
+    monkeypatch.setenv("WM_END_USER_EMAIL", "operator@example.com")
+    monkeypatch.setattr(
+        module,
+        "_get_variable",
+        lambda path: calls.append(("variable", path)) or "operator@example.com",
+    )
+    monkeypatch.setattr(
+        module,
+        "_run_child",
+        lambda args: calls.append(("script", args))
+        or {"status": "completed", "provider_call_count": 1},
+    )
+    result = module.main(
+        execute=True,
+        confirmation=module.CONFIRMATION,
+        max_items=1,
+        max_external_calls=1,
+        max_cost_usd=0.01,
+        enrich_details=False,
+    )
+
+    assert result["status"] == "completed"
+    assert calls[0] == ("variable", module.WRITER_ALLOWLIST_PATH)
+    assert calls[1][1]["db"] == module.DB_RESOURCE
+    assert calls[1][1]["max_external_calls"] == 1
 
 
 def test_app_surface_keeps_paid_envelope_fixed_and_server_owned() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     ui = (APP / "src/components/OperationsOverview.tsx").read_text(encoding="utf-8")
-    config = (APP / "backend/run_manual_golden_intake.yaml").read_text(encoding="utf-8")
     lock = (APP / "backend/run_manual_golden_intake.lock").read_text(encoding="utf-8")
+    workspace_lock = (ROOT / "windmill/wmill-lock.yaml").read_text(encoding="utf-8")
 
     assert 'os.environ.get("WM_END_USER_EMAIL")' in source
     assert "WM_EMAIL" not in source
-    assert "_windmill_variable(API_KEY_PATH)" in source
-    assert "return wmill.get_variable(path)" in source
-    assert "raw_provider_payload_included" in source
+    assert "_get_variable(WRITER_ALLOWLIST_PATH)" in source
+    assert '"parent_job"' in source
+    assert "jobs/run/p/" in source
+    assert "jobs_u/completed/get_result_maybe/" in source
+    assert 'DB_RESOURCE = "$res:f/content_research/research_db"' in source
+    assert "API_KEY" not in source
     assert "API_KEY" not in ui
     assert "RUN_TIKHUB_GOLDEN_PAID" in ui
     assert "max_external_calls: 1" in ui
     assert "max_cost_usd: 0.01" in ui
     assert "enrich_details: false" in ui
-    assert "$res:f/content_research/research_db" in config
-    assert "wmill==1.815.0" in lock
+    assert lock.strip() == "# py: 3.12"
     assert "workspace-dependencies-mode: manual" not in lock
+    assert (
+        "f/content_research/research_dashboard.raw_app+"
+        "run_manual_golden_intake.py:"
+    ) in workspace_lock
