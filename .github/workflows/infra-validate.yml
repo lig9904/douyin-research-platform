@@ -17,6 +17,7 @@ on:
       - "ops/local-security/**"
       - "ops/test-server/**"
       - "docs/test-server-evidence-v1.schema.json"
+      - "docs/test-server-monitoring-contract-v1.schema.json"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
@@ -40,6 +41,7 @@ on:
       - "ops/local-security/**"
       - "ops/test-server/**"
       - "docs/test-server-evidence-v1.schema.json"
+      - "docs/test-server-monitoring-contract-v1.schema.json"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
@@ -76,6 +78,7 @@ jobs:
           bash -n scripts/local-windmill-sync.sh
           bash -n scripts/local-security-env.sh
           bash -n scripts/test-server-preflight.sh
+          bash -n scripts/test-server-globals-restore-drill.sh
           bash -n scripts/test-server-release.sh
           bash -n scripts/test-server-stack-smoke.sh
           bash -n scripts/test-server-windmill-preflight.sh
@@ -85,7 +88,10 @@ jobs:
       - name: Validate evidence tooling
         run: |
           python3 -m py_compile scripts/test-server-evidence.py
+          python3 -m py_compile scripts/test-server-backup-verify.py
+          python3 -m py_compile scripts/test-server-monitoring-contract.py
           python3 -m json.tool docs/test-server-evidence-v1.schema.json >/dev/null
+          python3 -m json.tool docs/test-server-monitoring-contract-v1.schema.json >/dev/null
 
       - name: Validate compose
         run: |
@@ -170,6 +176,13 @@ jobs:
           insert into workspace values ('ci-workspace');
           insert into usr values ('ci-user');
           SQL
+          "${compose[@]}" exec -T postgres psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create role test_server_ci_grantor login superuser;
+          create role test_server_ci_group nologin;
+          create role test_server_ci_member login;
+          SQL
+          "${compose[@]}" exec -T postgres psql -U test_server_ci_grantor -d postgres -v ON_ERROR_STOP=1 \
+            -c 'grant test_server_ci_group to test_server_ci_member with admin true, inherit false, set false'
 
           TEST_SERVER_RESEARCH_MIGRATE=YES scripts/test-server-release.sh migrate \
             --env-file .env.test-server --project test-server-release-ci \
@@ -208,6 +221,10 @@ jobs:
           TEST_SERVER_RESTORE_DRILL=YES scripts/test-server-release.sh restore-drill \
             --env-file .env.test-server --project test-server-release-ci \
             --backup-root "$PWD/work/release-ci-backups" "$backup_dir"
+          postgres_image="$(awk -F= '$1 == "POSTGRES_IMAGE" {sub(/^[^=]*=/, ""); print; exit}' .env.test-server)"
+          TEST_SERVER_GLOBALS_RESTORE_DRILL=YES scripts/test-server-globals-restore-drill.sh \
+            --backup-root "$PWD/work/release-ci-backups" \
+            --postgres-image "$postgres_image" "$backup_dir"
 
       - name: Start isolated reviewer PostgreSQL
         run: |

@@ -88,6 +88,11 @@ def _nullable_evidence_id(value: Any, field: str) -> None:
         raise EvidenceError(f"{field} must be null or a redacted evidence id")
 
 
+def _nullable_utc_timestamp(value: Any, field: str) -> None:
+    if value is not None and not _is_utc_timestamp(value):
+        raise EvidenceError(f"{field} must be null or an RFC3339 UTC timestamp")
+
+
 def _scan_values(value: Any) -> None:
     if isinstance(value, dict):
         for child in value.values():
@@ -103,7 +108,7 @@ def _scan_values(value: Any) -> None:
 def validate_bundle(bundle: Any, *, require_complete: bool = False) -> None:
     root = _exact_keys(
         bundle,
-        {"schema_version", "environment", "generated_at_utc", "deployment", "checks", "providers", "backup"},
+        {"schema_version", "environment", "generated_at_utc", "deployment", "checks", "providers", "backup", "monitoring"},
         "root",
     )
     if root["schema_version"] != SCHEMA_VERSION or root["environment"] != "test-server":
@@ -205,31 +210,127 @@ def validate_bundle(bundle: Any, *, require_complete: bool = False) -> None:
     backup = _exact_keys(
         root["backup"],
         {
+            "archive_format",
+            "archive_created_at_utc",
             "archive_manifest_sha256",
+            "archive_verified_at_utc",
+            "globals_inventory_sha256",
             "offsite_copy_evidence_id",
+            "offsite_copy_verified_at_utc",
             "database_restore_seconds",
+            "database_restore_manifest_sha256",
             "globals_restore_seconds",
+            "globals_restore_manifest_sha256",
+            "globals_restore_inventory_sha256",
             "rpo_seconds",
         },
         "backup",
     )
+    if backup["archive_format"] not in {None, "test-server-backup-v1"}:
+        raise EvidenceError("backup.archive_format is invalid")
+    _nullable_utc_timestamp(backup["archive_created_at_utc"], "backup.archive_created_at_utc")
     _nullable_sha(backup["archive_manifest_sha256"], "backup.archive_manifest_sha256")
+    _nullable_utc_timestamp(backup["archive_verified_at_utc"], "backup.archive_verified_at_utc")
+    _nullable_sha(backup["globals_inventory_sha256"], "backup.globals_inventory_sha256")
     _nullable_evidence_id(backup["offsite_copy_evidence_id"], "backup.offsite_copy_evidence_id")
+    _nullable_utc_timestamp(backup["offsite_copy_verified_at_utc"], "backup.offsite_copy_verified_at_utc")
+    _nullable_sha(backup["database_restore_manifest_sha256"], "backup.database_restore_manifest_sha256")
+    _nullable_sha(backup["globals_restore_manifest_sha256"], "backup.globals_restore_manifest_sha256")
+    _nullable_sha(backup["globals_restore_inventory_sha256"], "backup.globals_restore_inventory_sha256")
     for field in ("database_restore_seconds", "globals_restore_seconds", "rpo_seconds"):
         metric = backup[field]
         if metric is not None and (type(metric) is not int or metric < 0 or metric > 31_536_000):
             raise EvidenceError(f"backup.{field} is invalid")
 
+    monitoring = _exact_keys(
+        root["monitoring"],
+        {"contract_sha256", "contract_verified_at_utc", "external_alert"},
+        "monitoring",
+    )
+    _nullable_sha(monitoring["contract_sha256"], "monitoring.contract_sha256")
+    _nullable_utc_timestamp(monitoring["contract_verified_at_utc"], "monitoring.contract_verified_at_utc")
+    external_alert = _exact_keys(
+        monitoring["external_alert"],
+        {"state", "fired_at_utc", "acknowledged_at_utc", "closed_at_utc", "external_delivery_evidence_id"},
+        "monitoring.external_alert",
+    )
+    alert_state = external_alert["state"]
+    if alert_state not in {"not_run", "fired", "acknowledged", "closed"}:
+        raise EvidenceError("monitoring.external_alert.state is invalid")
+    alert_timestamp_fields = ("fired_at_utc", "acknowledged_at_utc", "closed_at_utc")
+    for field in alert_timestamp_fields:
+        _nullable_utc_timestamp(external_alert[field], f"monitoring.external_alert.{field}")
+    _nullable_evidence_id(
+        external_alert["external_delivery_evidence_id"],
+        "monitoring.external_alert.external_delivery_evidence_id",
+    )
+    expected_alert_timestamps = {
+        "not_run": set(),
+        "fired": {"fired_at_utc"},
+        "acknowledged": {"fired_at_utc", "acknowledged_at_utc"},
+        "closed": set(alert_timestamp_fields),
+    }[alert_state]
+    present_alert_timestamps = {field for field in alert_timestamp_fields if external_alert[field] is not None}
+    if present_alert_timestamps != expected_alert_timestamps:
+        raise EvidenceError("monitoring external alert state has invalid timestamps")
+    if alert_state == "not_run":
+        if external_alert["external_delivery_evidence_id"] is not None:
+            raise EvidenceError("not_run external alert cannot carry delivery evidence")
+    else:
+        if external_alert["external_delivery_evidence_id"] is None:
+            raise EvidenceError("executed external alert requires delivery evidence")
+        ordered_alert_times = [
+            datetime.fromisoformat(external_alert[field][:-1] + "+00:00")
+            for field in alert_timestamp_fields
+            if external_alert[field] is not None
+        ]
+        if any(left >= right for left, right in zip(ordered_alert_times, ordered_alert_times[1:])):
+            raise EvidenceError("monitoring external alert timestamps must be strictly ordered")
+
     if by_id["gate_a_https_proxy"]["status"] == "pass" and deployment["certificate_sha256"] is None:
         raise EvidenceError("HTTPS pass requires certificate_sha256")
-    if by_id["gate_b_pre_migration_backup"]["status"] == "pass" and backup["archive_manifest_sha256"] is None:
-        raise EvidenceError("backup pass requires archive_manifest_sha256")
-    if by_id["gate_e_database_restore"]["status"] == "pass" and backup["database_restore_seconds"] is None:
-        raise EvidenceError("database restore pass requires measured duration")
-    if by_id["gate_e_globals_restore"]["status"] == "pass" and backup["globals_restore_seconds"] is None:
-        raise EvidenceError("globals restore pass requires measured duration")
-    if by_id["gate_e_offsite_backup"]["status"] == "pass" and backup["offsite_copy_evidence_id"] is None:
-        raise EvidenceError("offsite backup pass requires evidence id")
+    if by_id["gate_b_pre_migration_backup"]["status"] == "pass" and (
+        backup["archive_format"] != "test-server-backup-v1"
+        or backup["archive_created_at_utc"] is None
+        or backup["archive_manifest_sha256"] is None
+        or backup["archive_verified_at_utc"] is None
+        or backup["globals_inventory_sha256"] is None
+    ):
+        raise EvidenceError("backup pass requires verified test-server-backup-v1 digests and timestamp")
+    if (
+        by_id["gate_e_schedule_safety"]["status"] == "pass"
+        or by_id["gate_e_concurrency"]["status"] == "pass"
+    ) and (monitoring["contract_sha256"] is None or monitoring["contract_verified_at_utc"] is None):
+        raise EvidenceError("schedule and concurrency pass require a verified monitoring contract")
+    if by_id["gate_e_database_restore"]["status"] == "pass" and (
+        backup["database_restore_seconds"] is None
+        or backup["archive_format"] != "test-server-backup-v1"
+        or backup["archive_created_at_utc"] is None
+        or backup["archive_verified_at_utc"] is None
+        or backup["archive_manifest_sha256"] is None
+        or backup["database_restore_manifest_sha256"] != backup["archive_manifest_sha256"]
+    ):
+        raise EvidenceError("database restore pass requires measured duration bound to the verified archive")
+    if by_id["gate_e_globals_restore"]["status"] == "pass" and (
+        backup["globals_restore_seconds"] is None
+        or backup["archive_format"] != "test-server-backup-v1"
+        or backup["archive_created_at_utc"] is None
+        or backup["archive_verified_at_utc"] is None
+        or backup["archive_manifest_sha256"] is None
+        or backup["globals_inventory_sha256"] is None
+        or backup["globals_restore_manifest_sha256"] != backup["archive_manifest_sha256"]
+        or backup["globals_restore_inventory_sha256"] != backup["globals_inventory_sha256"]
+    ):
+        raise EvidenceError("globals restore pass requires measured duration bound to the verified archive and inventory")
+    if by_id["gate_e_offsite_backup"]["status"] == "pass" and (
+        backup["offsite_copy_evidence_id"] is None
+        or backup["offsite_copy_verified_at_utc"] is None
+        or backup["archive_verified_at_utc"] is None
+        or backup["rpo_seconds"] is None
+    ):
+        raise EvidenceError("offsite backup pass requires archive and offsite verification evidence")
+    if by_id["gate_e_alert_closure"]["status"] == "pass" and alert_state != "closed":
+        raise EvidenceError("alert closure pass requires a closed externally delivered alert lifecycle")
 
     _scan_values(root)
     if require_complete:
@@ -316,11 +417,30 @@ def _initial_bundle(args: argparse.Namespace) -> dict[str, Any]:
         "checks": checks,
         "providers": providers,
         "backup": {
+            "archive_format": None,
+            "archive_created_at_utc": None,
             "archive_manifest_sha256": None,
+            "archive_verified_at_utc": None,
+            "globals_inventory_sha256": None,
             "offsite_copy_evidence_id": None,
+            "offsite_copy_verified_at_utc": None,
             "database_restore_seconds": None,
+            "database_restore_manifest_sha256": None,
             "globals_restore_seconds": None,
+            "globals_restore_manifest_sha256": None,
+            "globals_restore_inventory_sha256": None,
             "rpo_seconds": None,
+        },
+        "monitoring": {
+            "contract_sha256": None,
+            "contract_verified_at_utc": None,
+            "external_alert": {
+                "state": "not_run",
+                "fired_at_utc": None,
+                "acknowledged_at_utc": None,
+                "closed_at_utc": None,
+                "external_delivery_evidence_id": None,
+            },
         },
     }
 

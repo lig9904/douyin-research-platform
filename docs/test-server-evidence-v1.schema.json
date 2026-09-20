@@ -4,7 +4,7 @@
   "title": "Test Server Evidence V1 Structure",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "environment", "generated_at_utc", "deployment", "checks", "providers", "backup"],
+  "required": ["schema_version", "environment", "generated_at_utc", "deployment", "checks", "providers", "backup", "monitoring"],
   "properties": {
     "schema_version": {"const": "test-server-evidence-v1"},
     "environment": {"const": "test-server"},
@@ -93,13 +93,31 @@
     "backup": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["archive_manifest_sha256", "offsite_copy_evidence_id", "database_restore_seconds", "globals_restore_seconds", "rpo_seconds"],
+      "required": ["archive_format", "archive_created_at_utc", "archive_manifest_sha256", "archive_verified_at_utc", "globals_inventory_sha256", "offsite_copy_evidence_id", "offsite_copy_verified_at_utc", "database_restore_seconds", "database_restore_manifest_sha256", "globals_restore_seconds", "globals_restore_manifest_sha256", "globals_restore_inventory_sha256", "rpo_seconds"],
       "properties": {
+        "archive_format": {"enum": [null, "test-server-backup-v1"]},
+        "archive_created_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
         "archive_manifest_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "archive_verified_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
+        "globals_inventory_sha256": {"$ref": "#/$defs/nullableSha256"},
         "offsite_copy_evidence_id": {"$ref": "#/$defs/nullableEvidenceId"},
+        "offsite_copy_verified_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
         "database_restore_seconds": {"$ref": "#/$defs/nullableDuration"},
+        "database_restore_manifest_sha256": {"$ref": "#/$defs/nullableSha256"},
         "globals_restore_seconds": {"$ref": "#/$defs/nullableDuration"},
+        "globals_restore_manifest_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "globals_restore_inventory_sha256": {"$ref": "#/$defs/nullableSha256"},
         "rpo_seconds": {"$ref": "#/$defs/nullableDuration"}
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_sha256", "contract_verified_at_utc", "external_alert"],
+      "properties": {
+        "contract_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "contract_verified_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
+        "external_alert": {"$ref": "#/$defs/externalAlert"}
       }
     }
   },
@@ -110,23 +128,36 @@
     },
     {
       "if": {"properties": {"checks": {"properties": {"gate_b_pre_migration_backup": {"properties": {"status": {"const": "pass"}}}}}}},
-      "then": {"properties": {"backup": {"properties": {"archive_manifest_sha256": {"$ref": "#/$defs/sha256"}}}}}
+      "then": {"properties": {"backup": {"properties": {"archive_format": {"const": "test-server-backup-v1"}, "archive_created_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "archive_manifest_sha256": {"$ref": "#/$defs/sha256"}, "archive_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "globals_inventory_sha256": {"$ref": "#/$defs/sha256"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_e_schedule_safety": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"monitoring": {"properties": {"contract_sha256": {"$ref": "#/$defs/sha256"}, "contract_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_e_concurrency": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"monitoring": {"properties": {"contract_sha256": {"$ref": "#/$defs/sha256"}, "contract_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}}}}}
     },
     {
       "if": {"properties": {"checks": {"properties": {"gate_e_database_restore": {"properties": {"status": {"const": "pass"}}}}}}},
-      "then": {"properties": {"backup": {"properties": {"database_restore_seconds": {"$ref": "#/$defs/duration"}}}}}
+      "then": {"properties": {"backup": {"properties": {"archive_format": {"const": "test-server-backup-v1"}, "archive_created_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "archive_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "archive_manifest_sha256": {"$ref": "#/$defs/sha256"}, "database_restore_seconds": {"$ref": "#/$defs/duration"}, "database_restore_manifest_sha256": {"$ref": "#/$defs/sha256"}}}}}
     },
     {
       "if": {"properties": {"checks": {"properties": {"gate_e_globals_restore": {"properties": {"status": {"const": "pass"}}}}}}},
-      "then": {"properties": {"backup": {"properties": {"globals_restore_seconds": {"$ref": "#/$defs/duration"}}}}}
+      "then": {"properties": {"backup": {"properties": {"archive_format": {"const": "test-server-backup-v1"}, "archive_created_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "archive_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "archive_manifest_sha256": {"$ref": "#/$defs/sha256"}, "globals_inventory_sha256": {"$ref": "#/$defs/sha256"}, "globals_restore_seconds": {"$ref": "#/$defs/duration"}, "globals_restore_manifest_sha256": {"$ref": "#/$defs/sha256"}, "globals_restore_inventory_sha256": {"$ref": "#/$defs/sha256"}}}}}
     },
     {
       "if": {"properties": {"checks": {"properties": {"gate_e_offsite_backup": {"properties": {"status": {"const": "pass"}}}}}}},
-      "then": {"properties": {"backup": {"properties": {"offsite_copy_evidence_id": {"$ref": "#/$defs/evidenceId"}}}}}
+      "then": {"properties": {"backup": {"properties": {"archive_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "offsite_copy_evidence_id": {"$ref": "#/$defs/evidenceId"}, "offsite_copy_verified_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "rpo_seconds": {"$ref": "#/$defs/duration"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_e_alert_closure": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"monitoring": {"properties": {"external_alert": {"properties": {"state": {"const": "closed"}, "fired_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "acknowledged_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "closed_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "external_delivery_evidence_id": {"$ref": "#/$defs/evidenceId"}}}}}}}
     }
   ],
   "$defs": {
     "utcTimestamp": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"},
+    "nullableUtcTimestamp": {"anyOf": [{"$ref": "#/$defs/utcTimestamp"}, {"type": "null"}]},
     "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "nullableSha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "image": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$"},
@@ -134,6 +165,24 @@
     "nullableEvidenceId": {"type": ["string", "null"], "pattern": "^ev_[a-z0-9][a-z0-9_-]{0,62}$"},
     "duration": {"type": "integer", "minimum": 0, "maximum": 31536000},
     "nullableDuration": {"type": ["integer", "null"], "minimum": 0, "maximum": 31536000},
+    "externalAlert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "fired_at_utc", "acknowledged_at_utc", "closed_at_utc", "external_delivery_evidence_id"],
+      "properties": {
+        "state": {"enum": ["not_run", "fired", "acknowledged", "closed"]},
+        "fired_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
+        "acknowledged_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
+        "closed_at_utc": {"$ref": "#/$defs/nullableUtcTimestamp"},
+        "external_delivery_evidence_id": {"$ref": "#/$defs/nullableEvidenceId"}
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "not_run"}}}, "then": {"properties": {"fired_at_utc": {"type": "null"}, "acknowledged_at_utc": {"type": "null"}, "closed_at_utc": {"type": "null"}, "external_delivery_evidence_id": {"type": "null"}}}},
+        {"if": {"properties": {"state": {"const": "fired"}}}, "then": {"properties": {"fired_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "acknowledged_at_utc": {"type": "null"}, "closed_at_utc": {"type": "null"}, "external_delivery_evidence_id": {"$ref": "#/$defs/evidenceId"}}}},
+        {"if": {"properties": {"state": {"const": "acknowledged"}}}, "then": {"properties": {"fired_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "acknowledged_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "closed_at_utc": {"type": "null"}, "external_delivery_evidence_id": {"$ref": "#/$defs/evidenceId"}}}},
+        {"if": {"properties": {"state": {"const": "closed"}}}, "then": {"properties": {"fired_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "acknowledged_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "closed_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "external_delivery_evidence_id": {"$ref": "#/$defs/evidenceId"}}}}
+      ]
+    },
     "check": {
       "type": "object",
       "additionalProperties": false,

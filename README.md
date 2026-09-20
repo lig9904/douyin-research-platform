@@ -97,5 +97,5 @@ Canonical ID 始终使用：
 - Web 研究台：已在本机 Windmill CE 部署，已验收首页、视频库、账号库、热点库、全局搜索、运行/成本只读页，以及 L3 待审摘要→一次性正文页→审核保存→零调用预算预览全链路
 - 研究台内部写操作：团队共享监测使用 actor 审计；专题、视频收藏和保存筛选按登录身份隔离；全部使用幂等事务与零外呼边界
 - 本机 V1 全链路验收：真实 TikHub、Ark、ASR、浏览器写操作、HTTPS/ACL/备份恢复的脱敏结果见 `docs/LOCAL_V1_ACCEPTANCE_2026-09-20.md`；不等同于测试服务器或生产生效
-- 测试服务器部署与验收：本机/CI 已提供五服务一次性 Overlay 烟测；域名、真实三账号 ACL、服务器 Secret、小流量 Provider、计划任务、异机恢复、脱敏证据包和回滚边界见 `docs/TEST_SERVER_READINESS_V1.md`；须取得目标环境输入后执行，不预设生产参数
+- 测试服务器部署与验收：本机/CI 已提供五服务一次性 Overlay 烟测、`test-server-backup-v1` 双库与 globals 隔离恢复、无外发监控契约；域名、真实三账号 ACL、服务器 Secret、小流量 Provider、异机备份和真实外部告警闭环见 `docs/TEST_SERVER_READINESS_V1.md`；须取得目标环境输入后执行，不用本机契约冒充目标环境生效
 - 本机只读 MCP：stdio 三项工具已使用受限 reviewer 角色完成真实业务库集成冒烟；写入尝试由 PostgreSQL 拒绝

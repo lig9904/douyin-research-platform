@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:douyin-research:test-server-monitoring-contract:v1",
+  "title": "Test-server local-only monitoring contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "environment", "generated_at_utc", "schedule", "monitors", "alerts", "delivery"],
+  "properties": {
+    "schema_version": {"const": "test-server-monitoring-contract-v1"},
+    "environment": {"const": "test-server"},
+    "generated_at_utc": {"type": "string", "format": "date-time"},
+    "schedule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["timezone", "provider_egress_enabled", "idempotency_key", "max_concurrency", "timeout_seconds", "failure_policy"],
+      "properties": {
+        "timezone": {"const": "Asia/Shanghai"},
+        "provider_egress_enabled": {"const": false},
+        "idempotency_key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{2,62}$"},
+        "max_concurrency": {"const": 1},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 300},
+        "failure_policy": {"const": "disable_and_alert"}
+      }
+    },
+    "monitors": {"$ref": "#/$defs/monitorMap"},
+    "alerts": {"$ref": "#/$defs/alertMap"},
+    "delivery": {
+      "type": "object", "additionalProperties": false, "required": ["mode", "status"],
+      "properties": {"mode": {"const": "disabled_no_external_delivery"}, "status": {"const": "not_attempted"}}
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"monitors": {"properties": {"proxy_https": {"properties": {"status": {"enum": ["not_run", "blocked"]}}}}}}}, "then": {"properties": {"alerts": {"properties": {"proxy_https": {"properties": {"state": {"const": "not_run"}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"proxy_https": {"properties": {"status": {"const": "fail"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"proxy_https": {"properties": {"state": {"enum": ["fired", "acknowledged", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"proxy_https": {"properties": {"status": {"const": "pass"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"proxy_https": {"properties": {"state": {"enum": ["not_run", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"windmill_health": {"properties": {"status": {"enum": ["not_run", "blocked"]}}}}}}}, "then": {"properties": {"alerts": {"properties": {"windmill_health": {"properties": {"state": {"const": "not_run"}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"windmill_health": {"properties": {"status": {"const": "fail"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"windmill_health": {"properties": {"state": {"enum": ["fired", "acknowledged", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"windmill_health": {"properties": {"status": {"const": "pass"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"windmill_health": {"properties": {"state": {"enum": ["not_run", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"postgres_health": {"properties": {"status": {"enum": ["not_run", "blocked"]}}}}}}}, "then": {"properties": {"alerts": {"properties": {"postgres_health": {"properties": {"state": {"const": "not_run"}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"postgres_health": {"properties": {"status": {"const": "fail"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"postgres_health": {"properties": {"state": {"enum": ["fired", "acknowledged", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"postgres_health": {"properties": {"status": {"const": "pass"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"postgres_health": {"properties": {"state": {"enum": ["not_run", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"backup_failure": {"properties": {"status": {"enum": ["not_run", "blocked"]}}}}}}}, "then": {"properties": {"alerts": {"properties": {"backup_failure": {"properties": {"state": {"const": "not_run"}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"backup_failure": {"properties": {"status": {"const": "fail"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"backup_failure": {"properties": {"state": {"enum": ["fired", "acknowledged", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"backup_failure": {"properties": {"status": {"const": "pass"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"backup_failure": {"properties": {"state": {"enum": ["not_run", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"restore_failure": {"properties": {"status": {"enum": ["not_run", "blocked"]}}}}}}}, "then": {"properties": {"alerts": {"properties": {"restore_failure": {"properties": {"state": {"const": "not_run"}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"restore_failure": {"properties": {"status": {"const": "fail"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"restore_failure": {"properties": {"state": {"enum": ["fired", "acknowledged", "closed"]}}}}}}}},
+    {"if": {"properties": {"monitors": {"properties": {"restore_failure": {"properties": {"status": {"const": "pass"}}}}}}}, "then": {"properties": {"alerts": {"properties": {"restore_failure": {"properties": {"state": {"enum": ["not_run", "closed"]}}}}}}}}
+  ],
+  "$defs": {
+    "evidenceId": {"type": "string", "pattern": "^ev_[a-z0-9][a-z0-9_-]{0,62}$"},
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "monitor": {
+      "type": "object", "additionalProperties": false, "required": ["status", "checked_at_utc", "evidence_id"],
+      "properties": {
+        "status": {"enum": ["not_run", "pass", "fail", "blocked"]},
+        "checked_at_utc": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+        "evidence_id": {"oneOf": [{"$ref": "#/$defs/evidenceId"}, {"type": "null"}]}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "not_run"}}}, "then": {"properties": {"checked_at_utc": {"type": "null"}, "evidence_id": {"type": "null"}}}},
+        {"if": {"properties": {"status": {"enum": ["pass", "fail", "blocked"]}}}, "then": {"properties": {"checked_at_utc": {"$ref": "#/$defs/timestamp"}, "evidence_id": {"$ref": "#/$defs/evidenceId"}}}}
+      ]
+    },
+    "alert": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "fired_at_utc", "acknowledged_at_utc", "closed_at_utc", "evidence_id"],
+      "properties": {
+        "state": {"enum": ["not_run", "fired", "acknowledged", "closed"]},
+        "fired_at_utc": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+        "acknowledged_at_utc": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+        "closed_at_utc": {"oneOf": [{"$ref": "#/$defs/timestamp"}, {"type": "null"}]},
+        "evidence_id": {"oneOf": [{"$ref": "#/$defs/evidenceId"}, {"type": "null"}]}
+      },
+      "allOf": [
+        {"if": {"properties": {"state": {"const": "not_run"}}}, "then": {"properties": {"fired_at_utc": {"type": "null"}, "acknowledged_at_utc": {"type": "null"}, "closed_at_utc": {"type": "null"}, "evidence_id": {"type": "null"}}}},
+        {"if": {"properties": {"state": {"const": "fired"}}}, "then": {"properties": {"fired_at_utc": {"$ref": "#/$defs/timestamp"}, "acknowledged_at_utc": {"type": "null"}, "closed_at_utc": {"type": "null"}, "evidence_id": {"$ref": "#/$defs/evidenceId"}}}},
+        {"if": {"properties": {"state": {"const": "acknowledged"}}}, "then": {"properties": {"fired_at_utc": {"$ref": "#/$defs/timestamp"}, "acknowledged_at_utc": {"$ref": "#/$defs/timestamp"}, "closed_at_utc": {"type": "null"}, "evidence_id": {"$ref": "#/$defs/evidenceId"}}}},
+        {"if": {"properties": {"state": {"const": "closed"}}}, "then": {"properties": {"fired_at_utc": {"$ref": "#/$defs/timestamp"}, "acknowledged_at_utc": {"$ref": "#/$defs/timestamp"}, "closed_at_utc": {"$ref": "#/$defs/timestamp"}, "evidence_id": {"$ref": "#/$defs/evidenceId"}}}}
+      ]
+    },
+    "monitorMap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["proxy_https", "windmill_health", "postgres_health", "backup_failure", "restore_failure"],
+      "properties": {"proxy_https": {"$ref": "#/$defs/monitor"}, "windmill_health": {"$ref": "#/$defs/monitor"}, "postgres_health": {"$ref": "#/$defs/monitor"}, "backup_failure": {"$ref": "#/$defs/monitor"}, "restore_failure": {"$ref": "#/$defs/monitor"}}
+    },
+    "alertMap": {
+      "type": "object", "additionalProperties": false,
+      "required": ["proxy_https", "windmill_health", "postgres_health", "backup_failure", "restore_failure"],
+      "properties": {"proxy_https": {"$ref": "#/$defs/alert"}, "windmill_health": {"$ref": "#/$defs/alert"}, "postgres_health": {"$ref": "#/$defs/alert"}, "backup_failure": {"$ref": "#/$defs/alert"}, "restore_failure": {"$ref": "#/$defs/alert"}}
+    }
+  }
+}
