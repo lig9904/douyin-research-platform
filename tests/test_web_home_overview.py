@@ -200,6 +200,8 @@ def test_home_backend_returns_real_multiplatform_dashboard_shape() -> None:
     assert float(result["blackhorse"][0]["priority"]) == pytest.approx(88)
     assert result["keywords"][0]["keyword"] == "海边传说"
     assert result["ip_adaptation"]["status"] == "pending"
+    assert "尚未启用" not in result["ip_adaptation"]["message"]
+    assert "视频详情" in result["ip_adaptation"]["message"]
 
     keys = [x["key"] for x in result["platforms"]]
     assert keys[:6] == [
