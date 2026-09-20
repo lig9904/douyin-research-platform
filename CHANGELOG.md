@@ -3,6 +3,24 @@
 本文件记录面向使用者和部署者的版本变化。项目仍在进入首个测试服务器验收阶段；
 Release、测试环境生效和生产生效是三个不同状态。
 
+## [0.1.0rc2] - 2026-09-20
+
+V1 测试服务器候选版。RC2 建立在不可变的 RC1 tag 之上，面向“专用外部反代 +
+私网应用服务器”的测试环境；不代表测试服务器或生产环境已经上线。
+
+### Added
+
+- 外部反代测试服务器 Compose overlay：Windmill 仅绑定经校验的 RFC1918 地址 `:8000`，
+  不部署本机 Nginx，PostgreSQL 不暴露宿主机端口。
+- 发布前配置校验与运行时 smoke：缺少 Docker/Compose、错误 overlay、公开或回环绑定地址、
+  未渲染的私网 Windmill 端口，均失败关闭。
+
+### Release notes
+
+- RC1 tag `v0.1.0-rc.1` 保持不变；RC2 是后续测试服务器部署的候选基线。
+- 测试服务器仍需在现场完成外部反代 FQDN、来源 ACL、Secret、备份恢复和小流量 Provider
+  smoke 的验收，未通过不得声明生产就绪。
+
 ## [0.1.0rc1] - 2026-09-20
 
 V1 本机验收候选版。此版本用于固定即将部署到测试服务器的代码与文档基线，
@@ -42,4 +60,5 @@ V1 本机验收候选版。此版本用于固定即将部署到测试服务器�
 - 快手、视频号、小红书、B 站和微博仅保留平台抽象，尚未接入 Provider。
 - 本版本不得作为生产就绪声明。
 
+[0.1.0rc2]: https://github.com/lig9904/douyin-research-platform/releases/tag/v0.1.0-rc.2
 [0.1.0rc1]: https://github.com/lig9904/douyin-research-platform/releases/tag/v0.1.0-rc.1

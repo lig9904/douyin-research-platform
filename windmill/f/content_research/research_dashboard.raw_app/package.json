@@ -1,7 +1,7 @@
 {
   "name": "content-research-dashboard",
   "private": true,
-  "version": "0.1.0-rc.1",
+  "version": "0.1.0-rc.2",
   "dependencies": {
     "antd": "6.6.4",
     "react": "19.3.0",
