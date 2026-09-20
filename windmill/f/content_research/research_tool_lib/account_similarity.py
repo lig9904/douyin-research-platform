@@ -38,6 +38,18 @@ class AccountSimilarityProfile:
     follower_count: int | None
     video_count: int | None
 
+    def __post_init__(self) -> None:
+        normalized_domains = frozenset(
+            domain.strip()
+            for domain in self.content_domains
+            if isinstance(domain, str) and domain.strip()
+        )
+        object.__setattr__(self, "content_domains", normalized_domains)
+        for field in ("account_type", "certification_type"):
+            value = getattr(self, field)
+            normalized = value.strip() if isinstance(value, str) and value.strip() else None
+            object.__setattr__(self, field, normalized)
+
 
 @dataclass(frozen=True, slots=True)
 class AccountSimilarityMatch:

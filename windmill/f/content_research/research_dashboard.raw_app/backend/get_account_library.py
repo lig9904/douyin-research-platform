@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, TypedDict
+from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
@@ -361,6 +362,22 @@ def main(
         detail: dict[str, Any] = {}
 
         if selected_id:
+            try:
+                selected_id = str(UUID(selected_id))
+            except (TypeError, ValueError, AttributeError):
+                return {
+                    "platforms": platforms,
+                    "domain_options": domain_options,
+                    "account_type_options": account_type_options,
+                    "location_options": location_options,
+                    "certification_options": certification_options,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "items": items,
+                    "detail": {},
+                }
+
             detail = _fetch_one(
                 conn,
                 base_cte
@@ -399,6 +416,20 @@ def main(
                 """,
                 (days, days, days, selected_id),
             )
+
+            if not detail:
+                return {
+                    "platforms": platforms,
+                    "domain_options": domain_options,
+                    "account_type_options": account_type_options,
+                    "location_options": location_options,
+                    "certification_options": certification_options,
+                    "total": total,
+                    "page": page,
+                    "page_size": page_size,
+                    "items": items,
+                    "detail": {},
+                }
 
             trend = _fetch_all(
                 conn,
@@ -479,7 +510,6 @@ def main(
                 where a.platform=%s
                   and a.id<>%s::uuid
                 order by a.id
-                limit 200
                 """,
                 (days, days, days, detail["platform"], selected_id),
             )

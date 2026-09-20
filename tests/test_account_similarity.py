@@ -100,6 +100,23 @@ def test_missing_values_are_not_zero_filled_and_sparse_profiles_are_excluded() -
     assert matches[0].components == {"content_domains": 23}
 
 
+def test_blank_labels_and_domains_are_normalized_as_missing() -> None:
+    target = _profile("target", domains=frozenset(), followers=100, videos=10)
+    blank = _profile(
+        "blank",
+        domains=frozenset({"", "   "}),
+        account_type=" ",
+        certification_type="",
+        followers=110,
+        videos=11,
+    )
+
+    assert blank.content_domains == frozenset()
+    assert blank.account_type is None
+    assert blank.certification_type is None
+    assert rank_similar_accounts(target, [blank]) == []
+
+
 def test_platform_boundary_limit_and_invalid_counts() -> None:
     target = _profile("target")
     foreign = _profile("foreign", platform="kuaishou")

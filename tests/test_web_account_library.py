@@ -325,3 +325,86 @@ def test_account_library_empty_search() -> None:
     assert result["total"] == 0
     assert result["items"] == []
     assert result["detail"] == {}
+
+
+def test_stale_selected_account_returns_list_without_detail() -> None:
+    assert DSN
+    clear_and_seed()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN),
+        platform="douyin",
+        days=30,
+        selected_account_id="00000000-0000-0000-0000-000000000001",
+    )
+
+    assert result["total"] == 1
+    assert len(result["items"]) == 1
+    assert result["detail"] == {}
+
+
+def test_invalid_selected_account_returns_list_without_detail() -> None:
+    assert DSN
+    clear_and_seed()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN),
+        platform="douyin",
+        days=30,
+        selected_account_id="not-a-uuid",
+    )
+
+    assert result["total"] == 1
+    assert len(result["items"]) == 1
+    assert result["detail"] == {}
+
+
+def test_similarity_ranks_candidate_beyond_first_two_hundred_ids() -> None:
+    assert DSN
+    account_id = clear_and_seed()
+    best_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.executemany(
+            """
+            insert into source_account(
+              id, platform, platform_account_id, nickname,
+              account_type, certification_type
+            )
+            values (%s::uuid, 'douyin', %s, %s, '机构', '企业认证')
+            """,
+            [
+                (
+                    f"00000000-0000-0000-0000-{index:012d}",
+                    f"noise-{index}",
+                    f"无关账号{index}",
+                )
+                for index in range(1, 201)
+            ],
+        )
+        cur.execute(
+            """
+            insert into source_account(
+              id, platform, platform_account_id, nickname,
+              account_type, certification_type
+            )
+            values (%s::uuid, 'douyin', 'best-after-200', '最相似账号', '个人', '个人认证')
+            """,
+            (best_id,),
+        )
+        cur.executemany(
+            """
+            insert into account_tag(account_id, tag_type, tag_value, source)
+            values (%s::uuid, 'content_domain', %s, 'manual')
+            """,
+            [(best_id, "旅行风景"), (best_id, "海洋文化")],
+        )
+        conn.commit()
+
+    result = load_backend().main(
+        resource_from_dsn(DSN),
+        platform="douyin",
+        selected_account_id=account_id,
+    )
+
+    assert result["detail"]["similar_accounts"][0]["id"] == best_id
