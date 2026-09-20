@@ -1,11 +1,15 @@
 # /// script
 # requires-python = "==3.13.*"
-# dependencies = ["psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# dependencies = [
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@8849f6e742f800b35c8f7ec431f488b7638b361e",
+#   "psycopg[binary]==3.3.6", "wmill==1.815.0",
+# ]
 # ///
 """Resume only persisted submitted/running ASR jobs; never discover new work."""
 from uuid import UUID
 import psycopg
 from psycopg.conninfo import make_conninfo
+from douyin_research.l2.asr_execution import MAX_SCHEDULED_POLLS, MAX_SCHEDULED_AGE_SECONDS
 
 WORKER_PATH = "f/content_research/analysis/run_reviewed_asr"
 BATCH_SIZE = 5
@@ -14,11 +18,18 @@ BATCH_SIZE = 5
 def _pending(dsn):
     with psycopg.connect(dsn) as conn:
         conn.execute("set transaction read only")
-        return conn.execute("""select id,video_id,metadata from asr_execution_job
+        base = """from asr_execution_job
             where provider='volcengine-doubao-asr' and task_key like 'live-asr:%%'
             and status in ('submitted','running') and provider_task_ref is not null
-            and submission_count=1
-            order by updated_at,id limit %s""", (BATCH_SIZE,)).fetchall()
+            and submission_count=1"""
+        eligible = """poll_count < coalesce((metadata->>'poll_limit')::integer,%s)
+            and created_at + make_interval(secs => coalesce(
+                (metadata->>'poll_max_age_seconds')::integer,%s)) > now()"""
+        policy = (MAX_SCHEDULED_POLLS, MAX_SCHEDULED_AGE_SECONDS)
+        rows = conn.execute("select id,video_id,metadata " + base + " and (" + eligible + ") order by updated_at,id limit %s",
+            (*policy, BATCH_SIZE)).fetchall()
+        limited = conn.execute("select count(*) " + base + " and not (" + eligible + ")", policy).fetchone()[0]
+        return rows, limited
 
 
 def main() -> dict:
@@ -27,7 +38,7 @@ def main() -> dict:
         db = wmill.get_resource("f/content_research/research_db")
         dsn = make_conninfo(host=db["host"], port=db.get("port", 5432), user=db["user"],
             password=db["password"], dbname=db["dbname"], sslmode=db.get("sslmode", "prefer"))
-        rows = _pending(dsn)
+        rows, limited = _pending(dsn)
     except Exception:
         raise RuntimeError("ASR pending jobs unavailable") from None
     completed = pending = failed = 0
@@ -50,6 +61,6 @@ def main() -> dict:
                 failed += 1
         except Exception:
             failed += 1
-    if failed:
-        raise RuntimeError(f"ASR polling requires attention: completed={completed}, pending={pending}, failed={failed}") from None
-    return {"selected": len(rows), "completed": completed, "pending": pending, "failed": 0}
+    if failed or limited:
+        raise RuntimeError(f"ASR polling requires attention: completed={completed}, pending={pending}, failed={failed}, limited={limited}") from None
+    return {"selected": len(rows), "completed": completed, "pending": pending, "failed": 0, "limited": 0}

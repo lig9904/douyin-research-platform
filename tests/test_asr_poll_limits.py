@@ -38,6 +38,7 @@ def persisted(monkeypatch):
 @pytest.mark.parametrize("update", [
     "poll_count=72", "created_at=now()-interval '25 hours'",
     "poll_count=72,metadata='{}'::jsonb",  # Pre-policy jobs use the same safe defaults.
+    "poll_count=2,metadata=metadata || '{\"poll_limit\":2}'::jsonb",
 ])
 def test_limit_or_expiry_stops_before_budget_reservation(persisted, update):
     coordinator, request, job, key = persisted

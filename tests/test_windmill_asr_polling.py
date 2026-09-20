@@ -51,7 +51,7 @@ def test_resume_guard_never_creates_new_budget_or_calls_provider(monkeypatch, sa
 @pytest.mark.parametrize("statuses", [[], ["completed", "running", "submitted"], ["failed", "completed"], ["exception", "completed"], ["poll_failed", "completed"]])
 def test_polling_serializes_saved_job_arguments_and_continues_after_failure(monkeypatch, statuses):
     rows = [(uuid4(), uuid4(), dict(reviewed_asset_id=str(uuid4()), media_review_version="v1")) for _ in statuses]
-    monkeypatch.setattr(poller, "_pending", lambda _: rows)
+    monkeypatch.setattr(poller, "_pending", lambda _: (rows, 0))
     calls = []
     def run_script(**kwargs):
         index = len(calls)
@@ -74,16 +74,25 @@ def test_polling_serializes_saved_job_arguments_and_continues_after_failure(monk
         assert "completed=1" in str(caught.value)
     else:
         assert poller.main() == dict(selected=len(rows), completed=statuses.count("completed"),
-            pending=len(statuses)-statuses.count("completed"), failed=0)
+            pending=len(statuses)-statuses.count("completed"), failed=0, limited=0)
     assert len(calls) == len(rows)
 
 
 def test_invalid_saved_metadata_never_dispatches_worker(monkeypatch):
-    monkeypatch.setattr(poller, "_pending", lambda _: [(uuid4(), uuid4(), {})])
+    monkeypatch.setattr(poller, "_pending", lambda _: ([(uuid4(), uuid4(), {})], 0))
     monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
         get_resource=lambda _: dict(host="localhost", user="test", password="secret", dbname="test"),
         run_script=lambda **kwargs: pytest.fail("invalid metadata dispatched")))
     with pytest.raises(RuntimeError, match="failed=1"):
+        poller.main()
+
+
+def test_limited_jobs_are_reported_without_dispatch(monkeypatch):
+    monkeypatch.setattr(poller, "_pending", lambda _: ([], 2))
+    monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
+        get_resource=lambda _: dict(host="localhost", user="test", password="secret", dbname="test"),
+        run_script=lambda **kwargs: pytest.fail("limited job dispatched")))
+    with pytest.raises(RuntimeError, match="limited=2"):
         poller.main()
 
 
@@ -111,8 +120,14 @@ def test_database_selector_excludes_unsubmitted_and_terminal_jobs():
                     values (%s,%s,%s,'volcengine-doubao-asr','test','test','test','test','test',
                     %s,%s,%s,'CNY',current_date,'isolated-poll-test','2000-01-01')""",
                     (identifier, prefix+str(identifier), video, status, ref, count))
-        selected = {row[0] for row in poller._pending(dsn) if row[1] == video}
+        selected = {row[0] for row in poller._pending(dsn)[0] if row[1] == video}
         assert selected == expected
+        with psycopg.connect(dsn) as conn:
+            conn.execute("update asr_execution_job set poll_count=72 where video_id=%s and status='submitted'", (video,))
+            conn.execute("update asr_execution_job set created_at=now()-interval '25 hours' where video_id=%s and status='running'", (video,))
+        rows, limited = poller._pending(dsn)
+        assert not any(row[1] == video for row in rows)
+        assert limited >= 2
     finally:
         with psycopg.connect(dsn) as conn:
             conn.execute("delete from source_video where id=%s", (video,))
