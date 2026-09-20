@@ -176,3 +176,20 @@ def test_live_provider_has_no_runtime_production_switch_or_key_in_repr() -> None
                 cost_currency="CNY", pricing_version="p", input_cost_per_million_tokens=0,
                 output_cost_per_million_tokens=0, production_ready=False,
             )
+
+
+def test_live_provider_rejects_injected_client_with_wrong_origin_or_redirects() -> None:
+    with httpx.Client(
+        base_url="https://attacker.invalid",
+        transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+    ) as client:
+        with pytest.raises(ValueError, match="base URL"):
+            live_provider(client)
+
+    with httpx.Client(
+        base_url=VOLCENGINE_ARK_BASE_URL,
+        follow_redirects=True,
+        transport=httpx.MockTransport(lambda _: httpx.Response(200)),
+    ) as client:
+        with pytest.raises(ValueError, match="redirects"):
+            live_provider(client)

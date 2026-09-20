@@ -153,3 +153,16 @@ def test_budget_stops_before_second_external_call() -> None:
             "select used_requests from daily_budget where provider='fake' and budget_key='tiny'"
         )
         assert cur.fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), float("-inf"), -0.01])
+def test_budget_rejects_invalid_costs_before_database_access(invalid: float) -> None:
+    guard = DailyBudgetGuard("postgresql://invalid.invalid/research")
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        guard.configure(
+            provider="fake", budget_key="invalid", max_requests=1, max_cost=invalid
+        )
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        guard.acquire(provider="fake", budget_key="invalid", estimated_cost=invalid)
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        guard.refund(provider="fake", budget_key="invalid", estimated_cost=invalid)

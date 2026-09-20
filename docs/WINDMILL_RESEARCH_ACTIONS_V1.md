@@ -17,8 +17,16 @@
 ## 输入与身份
 
 前端只提交资产 UUID、动作、内部状态、专题/筛选名称和 UUID v4 幂等键。
-调用方不能提交 actor；后端只从 Windmill `WM_END_USER_EMAIL` 获取并校验当前用户，
-身份缺失时在数据库写入前失败关闭。
+调用方不能提交 actor；后端只从 Windmill `WM_END_USER_EMAIL` 获取并校验当前用户。
+写入还必须命中服务器管理的 `f/content_research/research_action_writers` allowlist：该变量可用
+小写 email 的 JSON 数组或逗号/换行列表配置，但值只存在本机或目标环境，绝不进入 Git。变量缺失、
+格式错误、身份缺失或不在名单内时，后端在建立数据库连接前失败关闭。
+
+`monitoring_status`、`monitoring_priority` 与 `next_due_at` 是团队共享研究队列，
+不是个人偏好；任何 allowlist 中的研究成员都能看到并维护同一状态。actor 用于来源校验、
+幂等绑定和审计。专题、收藏与保存筛选才按 actor 隔离。只读 Viewer 即使可打开 Members-mode
+App，也会在后端被拒绝，不能只依赖 Folder ACL 或前端隐藏按钮；测试服务器仍须同时验证真实
+admin/reviewer/viewer 的 Folder ACL。
 
 单次批量操作最多 50 个唯一资产；专题/筛选名最多 80 字符，备注最多 500 字符，
 保存筛选的规范 JSON 最大 4096 字节并使用按页面固定的字段白名单。筛选值不允许嵌套对象
@@ -44,9 +52,11 @@
 ## 验收
 
 - 身份缺失零写入；
+- allowlist 未配置、格式错误或 Viewer 身份零写入；
 - 不存在资产零写入，审计记录也回滚；
 - 视频、账号、热点均能加入同一专题；
 - 监测更新和保存筛选可在数据库重读；
+- 两个获准写入的研究成员共享监测队列，但专题和筛选互相不可见；
 - 幂等重放 `db_writes=0`，冲突键失败关闭；
 - 所有操作 `external_calls=0`、`llm_calls=0`；
 - 浏览器实际点击后刷新页面仍能看到保存状态。

@@ -25,6 +25,7 @@ def test_proxy_has_tls_rate_limit_and_explicit_safe_log_format() -> None:
     assert "$request_uri" not in safe_line
     assert "Authorization" not in safe_line
     assert "$http_" not in safe_line
+    assert "error_log /dev/null crit;" in source
 
 
 def test_acl_probe_uses_real_windmill_roles_and_rolls_back_synthetic_rows() -> None:
@@ -45,6 +46,7 @@ def test_lifecycle_uses_own_context_never_sources_env_and_has_restore_guards() -
     assert "--context \"$CONTEXT\" compose -p \"$PROJECT\"" in source
     assert "source \"$ENV_FILE\"" not in source
     assert "Authorization redaction" in source
+    assert "query sentinel" in source
     assert "SHA256SUMS" in source
     assert "local_security_windmill_restore" in source
     assert "DROP DATABASE IF EXISTS $rw WITH (FORCE)" in source

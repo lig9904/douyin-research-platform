@@ -160,6 +160,12 @@ class VerifiedLiveVolcengineArkL3Provider(VolcengineArkL3Provider):
             raise ValueError("Volcengine Ark L3 expected response model is required")
         super().__init__(**kwargs)
         self._expected_response_model = expected_response_model
+        if client is not None:
+            expected_base = httpx.URL(VOLCENGINE_ARK_BASE_URL)
+            if client.base_url != expected_base:
+                raise ValueError("Volcengine Ark L3 client base URL is not allowed")
+            if client.follow_redirects:
+                raise ValueError("Volcengine Ark L3 client redirects must be disabled")
         # This is a source-level choice of the reviewed class, not a caller
         # switch.  The default class above remains permanently fail-closed.
         self.contract = replace(self.contract, production_ready=True)

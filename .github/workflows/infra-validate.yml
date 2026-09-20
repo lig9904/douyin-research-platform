@@ -5,26 +5,36 @@ on:
     paths:
       - "docker-compose.yml"
       - "docker-compose.l3-local.yml"
+      - "docker-compose.local-security.yml"
       - ".env.example"
       - ".env.l3-local.example"
+      - ".env.local-security.example"
       - "config/l3-local-*"
+      - "config/l3-security-local-*"
       - "db/**"
+      - "ops/local-security/**"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
+      - "scripts/local-security-env.sh"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
   pull_request:
     paths:
       - "docker-compose.yml"
       - "docker-compose.l3-local.yml"
+      - "docker-compose.local-security.yml"
       - ".env.example"
       - ".env.l3-local.example"
+      - ".env.local-security.example"
       - "config/l3-local-*"
+      - "config/l3-security-local-*"
       - "db/**"
+      - "ops/local-security/**"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
+      - "scripts/local-security-env.sh"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
 
@@ -44,6 +54,7 @@ jobs:
         run: |
           cp .env.example .env
           cp .env.l3-local.example .env.l3-local
+          cp .env.local-security.example .env.local-security
 
       - name: Validate shell syntax
         run: |
@@ -52,6 +63,7 @@ jobs:
           bash -n scripts/backup.sh
           bash -n scripts/local-l3-env.sh
           bash -n scripts/local-windmill-sync.sh
+          bash -n scripts/local-security-env.sh
           bash -n scripts/verify-stack.sh
           bash -n scripts/tikhub/v0_smoke.py 2>/dev/null || true
 
@@ -62,6 +74,11 @@ jobs:
             --env-file .env.l3-local \
             -f docker-compose.yml \
             -f docker-compose.l3-local.yml \
+            config >/dev/null
+          docker compose -p l3-security-ci \
+            --env-file .env.local-security \
+            -f docker-compose.yml \
+            -f docker-compose.local-security.yml \
             config >/dev/null
 
       - name: Start PostgreSQL only

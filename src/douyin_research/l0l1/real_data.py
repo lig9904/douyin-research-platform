@@ -7,10 +7,12 @@ normalizer and L0/L1 runner already used by the application.
 
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from douyin_research.providers.store import PostgresProviderStore
+from douyin_research.providers.types import ProviderCallMeta
 from douyin_research.providers.tikhub_provider import TikHubDouyinProvider
 from douyin_research.providers.transport import TikHubTransport
 
@@ -39,6 +41,19 @@ class GoldenIntakePlan:
     date_window_hours: int
     enrich_details: bool
     retry_count: int
+    force_refresh: bool
+
+
+class _RecordingPostgresProviderStore(PostgresProviderStore):
+    """Persist calls normally while retaining this process's aggregate proof."""
+
+    def __init__(self, dsn: str) -> None:
+        super().__init__(dsn)
+        self.recorded_calls: list[ProviderCallMeta] = []
+
+    def record_call(self, call: ProviderCallMeta) -> None:
+        self.recorded_calls.append(call)
+        super().record_call(call)
 
 
 def make_plan(
@@ -50,6 +65,7 @@ def make_plan(
     page: int = 1,
     date_window_hours: int = 24,
     enrich_details: bool = True,
+    force_refresh: bool = False,
 ) -> GoldenIntakePlan:
     """Validate a conservative one-page collection plan before touching a secret."""
     if not 1 <= max_items <= GOLDEN_MAX_ITEMS:
@@ -64,8 +80,8 @@ def make_plan(
             f"max_external_calls must be at least {needed_calls} when "
             f"enrich_details={enrich_details}"
         )
-    if max_cost_usd < 0:
-        raise ValueError("max_cost_usd must not be negative")
+    if not math.isfinite(max_cost_usd) or max_cost_usd < 0:
+        raise ValueError("max_cost_usd must be finite and non-negative")
     if page != 1:
         # The low-fan billboard has page numbering rather than a reliable
         # continuation cursor.  A golden run is intentionally one page; this
@@ -83,6 +99,7 @@ def make_plan(
         date_window_hours=date_window_hours,
         enrich_details=enrich_details,
         retry_count=0,
+        force_refresh=force_refresh,
     )
 
 
@@ -115,9 +132,10 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         cost_currency="USD",
     )
     transport = TikHubTransport(api_key, max_retries=0)
+    provider_store = _RecordingPostgresProviderStore(dsn)
     provider = TikHubDouyinProvider(
         transport=transport,
-        store=PostgresProviderStore(dsn),
+        store=provider_store,
         auth_scope="golden-local-v1",
         before_external_call=budget.make_before_external_call(
             provider="tikhub", budget_key=GOLDEN_BUDGET_KEY
@@ -143,6 +161,7 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
                         "page_size": plan.max_items,
                         "date_window": plan.date_window_hours,
                         "tags": [],
+                        "force_refresh": plan.force_refresh,
                     },
                     max_items=plan.max_items,
                 )
@@ -154,6 +173,8 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         transport.close()
 
     # Do not return raw provider payloads, video text, request IDs or secrets.
+    cached_calls = sum(1 for call in provider_store.recorded_calls if call.cached)
+    uncached_calls = sum(1 for call in provider_store.recorded_calls if not call.cached)
     return {
         "run_id": str(summary.run_id),
         "platform": summary.platform,
@@ -164,4 +185,7 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         "budget_key": GOLDEN_BUDGET_KEY,
         "max_external_calls": plan.max_external_calls,
         "retry_count": plan.retry_count,
+        "provider_call_count": len(provider_store.recorded_calls),
+        "cached_call_count": cached_calls,
+        "uncached_call_count": uncached_calls,
     }

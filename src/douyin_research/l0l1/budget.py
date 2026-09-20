@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date
 from typing import Callable
 
@@ -36,6 +37,16 @@ class DailyBudgetGuard:
     def configure(self, *, provider: str, budget_key: str, max_requests: int | None,
                   max_cost: float | None, budget_date: date | None = None,
                   cost_currency: str = "USD") -> None:
+        if max_requests is not None and (
+            isinstance(max_requests, bool)
+            or not isinstance(max_requests, int)
+            or max_requests < 0
+        ):
+            raise ValueError("max_requests must be a non-negative integer or None")
+        if max_cost is not None:
+            max_cost = float(max_cost)
+            if not math.isfinite(max_cost) or max_cost < 0:
+                raise ValueError("max_cost must be finite and non-negative or None")
         budget_date = budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
@@ -62,8 +73,11 @@ class DailyBudgetGuard:
 
     def acquire(self, *, provider: str, budget_key: str, requests: int = 1,
                 estimated_cost: float = 0.0, budget_date: date | None = None) -> None:
-        if requests < 0 or estimated_cost < 0:
-            raise ValueError("budget reservation cannot be negative")
+        if isinstance(requests, bool) or not isinstance(requests, int) or requests < 0:
+            raise ValueError("budget requests must be a non-negative integer")
+        estimated_cost = float(estimated_cost)
+        if not math.isfinite(estimated_cost) or estimated_cost < 0:
+            raise ValueError("budget cost must be finite and non-negative")
         budget_date = budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
@@ -101,6 +115,11 @@ class DailyBudgetGuard:
 
     def refund(self, *, provider: str, budget_key: str, requests: int = 1,
                estimated_cost: float = 0.0, budget_date: date | None = None) -> None:
+        if isinstance(requests, bool) or not isinstance(requests, int) or requests < 0:
+            raise ValueError("budget requests must be a non-negative integer")
+        estimated_cost = float(estimated_cost)
+        if not math.isfinite(estimated_cost) or estimated_cost < 0:
+            raise ValueError("budget cost must be finite and non-negative")
         budget_date = budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(

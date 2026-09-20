@@ -3,3 +3,6 @@ fields:
   db:
     type: static
     value: $res:f/content_research/research_db
+  writer_allowlist:
+    type: static
+    value: $var:f/content_research/research_action_writers

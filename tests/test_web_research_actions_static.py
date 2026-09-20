@@ -30,6 +30,7 @@ def test_write_backend_gets_actor_only_from_windmill_identity() -> None:
     source = inspect.getsource(mutate) + inspect.getsource(read_state)
     assert 'os.environ.get("WM_END_USER_EMAIL"' in source
     assert "RESEARCH_ACTION_IDENTITY_REQUIRED" in source
+    assert "RESEARCH_ACTION_WRITER_FORBIDDEN" in source
     assert "max_retries" not in source
     assert "httpx" not in source
 
@@ -54,9 +55,15 @@ def test_dashboard_uses_real_bounded_write_backends() -> None:
     assert ">加入专题</Button>" not in combined  # prevents the old one-line disabled placeholders
 
 
-def test_windmill_metadata_binds_database_resource_only() -> None:
-    for stem in ("mutate_research_state", "get_research_user_state"):
-        metadata = (BACKEND / f"{stem}.yaml").read_text(encoding="utf-8")
-        assert "$res:f/content_research/research_db" in metadata
-        assert "actor:" not in metadata
-        assert "secret" not in metadata.lower()
+def test_windmill_metadata_binds_database_resource_and_server_writer_policy() -> None:
+    mutate_metadata = (BACKEND / "mutate_research_state.yaml").read_text(encoding="utf-8")
+    assert "$res:f/content_research/research_db" in mutate_metadata
+    assert "$var:f/content_research/research_action_writers" in mutate_metadata
+    assert "actor:" not in mutate_metadata
+    assert "secret" not in mutate_metadata.lower()
+
+    read_metadata = (BACKEND / "get_research_user_state.yaml").read_text(encoding="utf-8")
+    assert "$res:f/content_research/research_db" in read_metadata
+    assert "research_action_writers" not in read_metadata
+    assert "actor:" not in read_metadata
+    assert "secret" not in read_metadata.lower()

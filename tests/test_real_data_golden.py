@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
+import douyin_research.l0l1.real_data as real_data
 from douyin_research.l0l1.runner import DiscoverySource, L0L1Runner
 from douyin_research.l0l1.real_data import (
     GOLDEN_MAX_EXTERNAL_CALLS,
@@ -21,8 +24,14 @@ def test_default_golden_plan_is_dry_run_and_hard_bounded() -> None:
     assert plan.max_external_calls == GOLDEN_MAX_EXTERNAL_CALLS
     assert plan.page == 1
     assert plan.retry_count == 0
+    assert plan.force_refresh is False
     assert plan_dict(plan)["source"] == "douyin.billboard.low_fan"
     assert get_endpoint(plan.source).unit_cost_usd == 0.001
+
+
+def test_force_refresh_is_explicit_in_golden_plan() -> None:
+    plan = make_plan(dry_run=False, force_refresh=True)
+    assert plan_dict(plan)["force_refresh"] is True
 
 
 @pytest.mark.parametrize(
@@ -36,11 +45,30 @@ def test_default_golden_plan_is_dry_run_and_hard_bounded() -> None:
         ({"page": 2}, "page=1"),
         ({"date_window_hours": 25}, "date_window_hours"),
         ({"max_cost_usd": -0.001}, "max_cost_usd"),
+        ({"max_cost_usd": float("nan")}, "max_cost_usd"),
+        ({"max_cost_usd": float("inf")}, "max_cost_usd"),
+        ({"max_cost_usd": float("-inf")}, "max_cost_usd"),
     ],
 )
 def test_golden_plan_rejects_spend_or_pagination_expansion(kwargs, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         make_plan(**kwargs)
+
+
+def test_run_live_revalidates_directly_constructed_nonfinite_budget(monkeypatch) -> None:
+    plan = replace(make_plan(dry_run=False), max_cost_usd=float("nan"))
+
+    def unexpected_transport(*args, **kwargs):
+        pytest.fail("transport must not be created for an invalid budget")
+
+    monkeypatch.setattr(real_data, "TikHubTransport", unexpected_transport)
+    with pytest.raises(ValueError, match="max_cost must be finite"):
+        real_data.run_live(
+            dsn="postgresql://invalid.invalid/research",
+            api_key="not-used",
+            plan=plan,
+            triggered_by="test",
+        )
 
 
 def test_no_detail_plan_can_fit_one_external_call() -> None:

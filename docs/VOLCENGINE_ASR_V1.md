@@ -79,7 +79,7 @@ The readiness facts to collect are:
    TikHub key, Ark key, legacy App ID, Access Token, AK, or SK;
 2. recording-file recognition model 2.0 is enabled for the account;
 3. the source supplied to `media_ref` is a supported audio URL using
-   `raw`, `wav`, `mp3`, or `ogg`;
+   `raw`, `wav`, `mp3`, `ogg`, or `m4a`;
 4. the current price and cost-reconciliation method are recorded;
 5. query/poll operations are confirmed not to incur an independent charge.
 

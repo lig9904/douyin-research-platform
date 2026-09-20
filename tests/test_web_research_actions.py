@@ -30,6 +30,7 @@ def _load(stem: str):
 
 mutate = _load("mutate_research_state")
 read_state = _load("get_research_user_state")
+WRITERS = "researcher@example.com,second-researcher@example.com"
 
 
 def _resource(dsn: str) -> dict[str, object]:
@@ -89,6 +90,7 @@ def _seed() -> dict[str, str]:
 
 def _call(db, **kwargs):
     defaults = {
+        "writer_allowlist": WRITERS,
         "asset_type": "",
         "asset_ids": [],
         "monitoring_status": "",
@@ -106,9 +108,31 @@ def _call(db, **kwargs):
 def test_research_actions_require_end_user_identity(monkeypatch) -> None:
     monkeypatch.delenv("WM_END_USER_EMAIL", raising=False)
     with pytest.raises(PermissionError, match="IDENTITY_REQUIRED"):
-        mutate.main({}, "save_filter", str(uuid4()), view_key="videos")
+        mutate.main({}, "save_filter", str(uuid4()), view_key="videos", writer_allowlist=WRITERS)
     with pytest.raises(PermissionError, match="IDENTITY_REQUIRED"):
         read_state.main({}, "videos")
+
+
+@pytest.mark.parametrize(
+    ("writer_allowlist", "message"),
+    [
+        ("", "WRITER_ALLOWLIST_REQUIRED"),
+        ("Researcher@Example.com", "WRITER_ALLOWLIST_INVALID"),
+        ("[]", "WRITER_ALLOWLIST_REQUIRED"),
+    ],
+)
+def test_research_actions_fail_closed_without_a_valid_writer_policy(
+    monkeypatch, writer_allowlist: str, message: str
+) -> None:
+    monkeypatch.setenv("WM_END_USER_EMAIL", "researcher@example.com")
+    with pytest.raises(PermissionError, match=message):
+        mutate.main(
+            {},
+            "save_filter",
+            str(uuid4()),
+            view_key="videos",
+            writer_allowlist=writer_allowlist,
+        )
 
 
 def test_collections_monitoring_filters_and_idempotency(monkeypatch) -> None:
@@ -194,6 +218,16 @@ def test_collections_monitoring_filters_and_idempotency(monkeypatch) -> None:
     isolated_state = read_state.main(db, "videos")
     assert isolated_state["collections"] == []
     assert isolated_state["saved_filters"] == []
+    shared_monitoring = _call(
+        db,
+        action="set_monitoring",
+        idempotency_key=str(uuid4()),
+        asset_type="video",
+        asset_ids=[ids["video"]],
+        monitoring_status="monitoring",
+        monitoring_priority=55,
+    )
+    assert shared_monitoring["changed_count"] == 1
     monkeypatch.setenv("WM_END_USER_EMAIL", "Researcher@Example.com")
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
@@ -201,9 +235,9 @@ def test_collections_monitoring_filters_and_idempotency(monkeypatch) -> None:
             "select monitoring_status, monitoring_priority from source_video where id=%s",
             (ids["video"],),
         )
-        assert cur.fetchone() == ("follow_up", 75)
+        assert cur.fetchone() == ("monitoring", 55)
         cur.execute("select count(*) from research_user_action")
-        assert cur.fetchone()[0] == 5
+        assert cur.fetchone()[0] == 6
 
 
 def test_invalid_or_missing_assets_leave_no_audit_record(monkeypatch) -> None:
@@ -224,6 +258,34 @@ def test_invalid_or_missing_assets_leave_no_audit_record(monkeypatch) -> None:
         )
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select count(*) from research_user_action where idempotency_key=%s", (key,))
+        assert cur.fetchone()[0] == 0
+
+
+def test_unlisted_viewer_is_rejected_before_any_database_write(monkeypatch) -> None:
+    assert DSN
+    ids = _seed()
+    db = _resource(DSN)
+    key = str(uuid4())
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select monitoring_status from source_video where id=%s", (ids["video"],))
+        original_status = cur.fetchone()[0]
+    monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
+
+    with pytest.raises(PermissionError, match="WRITER_FORBIDDEN"):
+        _call(
+            db,
+            writer_allowlist="researcher@example.com",
+            action="set_monitoring",
+            idempotency_key=key,
+            asset_type="video",
+            asset_ids=[ids["video"]],
+            monitoring_status="monitoring",
+        )
+
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select monitoring_status from source_video where id=%s", (ids["video"],))
+        assert cur.fetchone()[0] == original_status
         cur.execute("select count(*) from research_user_action where idempotency_key=%s", (key,))
         assert cur.fetchone()[0] == 0
 

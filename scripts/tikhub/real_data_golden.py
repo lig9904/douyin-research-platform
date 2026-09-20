@@ -35,6 +35,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--date-window-hours", type=int, default=24)
     p.add_argument("--no-enrich-details", action="store_true")
     p.add_argument("--triggered-by", default="local-golden-operator")
+    p.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="bypass the discovery cache; still bounded by the same paid-call budget",
+    )
     return p
 
 
@@ -47,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
         max_cost_usd=args.max_cost_usd,
         date_window_hours=args.date_window_hours,
         enrich_details=not args.no_enrich_details,
+        force_refresh=args.force_refresh,
     )
     if not args.live:
         print(json.dumps({"mode": "dry_run", "plan": plan_dict(plan)}, ensure_ascii=False))

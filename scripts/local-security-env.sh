@@ -70,17 +70,19 @@ cmd_verify_acl() {
   echo '[local-security] verified CE Folder RLS for synthetic admin/reviewer/viewer identities.'
 }
 cmd_verify_proxy() {
-  require_env; ensure_runtime; local port sentinel statuses limited
+  require_env; ensure_runtime; local port sentinel query_sentinel statuses limited
   port="$(env_value LOCAL_SECURITY_HTTPS_PORT)"; wait_for proxy
   openssl s_client -connect "127.0.0.1:$port" -servername localhost -CAfile "$RUNTIME_DIR/certs/localhost.crt" </dev/null 2>/dev/null | grep -q 'Verify return code: 0 (ok)'
   sentinel="Bearer local-security-no-log-$(openssl rand -hex 8)"
+  query_sentinel="local-query-no-log-$(openssl rand -hex 8)"
   curl -fsS --cacert "$RUNTIME_DIR/certs/localhost.crt" -H "Authorization: $sentinel" "https://localhost:$port/api/version" >/dev/null
   ! compose logs --no-color proxy | grep -Fq "$sentinel" || { echo 'ERROR: proxy log exposed authorization sentinel.' >&2; exit 1; }
   statuses="$RUNTIME_DIR/rate-statuses.txt"; : > "$statuses"
-  export LOCAL_SECURITY_RATE_URL="https://localhost:$port/api/version" LOCAL_SECURITY_CA_FILE="$RUNTIME_DIR/certs/localhost.crt" LOCAL_SECURITY_STATUS_FILE="$statuses"
+  export LOCAL_SECURITY_RATE_URL="https://localhost:$port/api/version?local_probe=$query_sentinel" LOCAL_SECURITY_CA_FILE="$RUNTIME_DIR/certs/localhost.crt" LOCAL_SECURITY_STATUS_FILE="$statuses"
   seq 1 48 | xargs -P 24 -n 1 sh -c 'curl -s -o /dev/null -w "%{http_code}\n" --cacert "$LOCAL_SECURITY_CA_FILE" "$LOCAL_SECURITY_RATE_URL" >> "$LOCAL_SECURITY_STATUS_FILE"' >/dev/null
   ! grep -Ev '^(200|429)$' "$statuses" >/dev/null || { echo 'ERROR: unexpected proxy status in rate test.' >&2; exit 1; }
   limited="$(grep -c '^429$' "$statuses" || true)"; [[ "$limited" -gt 0 ]] || { echo 'ERROR: no 429 observed during rate probe.' >&2; exit 1; }
+  ! compose logs --no-color proxy | grep -Fq "$query_sentinel" || { echo 'ERROR: proxy log exposed query sentinel.' >&2; exit 1; }
   echo "[local-security] TLS, Authorization redaction, and rate-limit baseline verified ($limited HTTP 429)."
 }
 backup_dir() { [[ -n "${1:-}" ]] && printf '%s\n' "$1" || printf '%s/backups/%s\n' "$RUNTIME_DIR" "$(date -u +%Y%m%dT%H%M%SZ)"; }

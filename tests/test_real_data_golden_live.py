@@ -28,12 +28,15 @@ def test_real_tikhub_golden_path_is_ledgered_and_queryable() -> None:
     result = run_live(
         dsn=DSN,
         api_key=API_KEY,
-        plan=make_plan(dry_run=False),
+        plan=make_plan(dry_run=False, force_refresh=True),
         triggered_by="pytest-real-golden",
     )
     assert result["observations"] <= 5
     assert result["unique_platform_videos"] <= 5
     assert result["scored_videos"] <= result["unique_platform_videos"]
+    assert result["provider_call_count"] <= 2
+    assert result["uncached_call_count"] >= 1
+    assert result["cached_call_count"] + result["uncached_call_count"] == result["provider_call_count"]
 
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute("select status, output_count from pipeline_run where id=%s", (result["run_id"],))

@@ -15,13 +15,18 @@ DOCKER_DAEMON_CONF="$ROOT_DIR/config/l3-local-docker-daemon.json"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/local-l3-env.sh <init|start|status|provision|verify|test|review|stop>
+Usage: scripts/local-l3-env.sh <init|start|status|provision|verify|migrate|restore-drill|test|review|stop>
 
 Review:
   scripts/local-l3-env.sh review <video-id> <privacy-review-version> <fingerprint>
 
 All commands target only the Colima profile and Compose project l3-review-local.
 The test command recreates only the dedicated douyin_research_test database.
+The migrate command targets only this profile's douyin_research database,
+creates a checked backup first, and requires LOCAL_RESEARCH_MIGRATE=YES.
+The restore-drill command restores one checked migration backup only into the
+fixed temporary local_research_restore database and requires
+LOCAL_RESEARCH_RESTORE_DRILL=YES.
 EOF
 }
 
@@ -207,6 +212,169 @@ cmd_test() {
   TEST_DATABASE_URL="$test_url" uv run --extra dev pytest "$@"
 }
 
+cmd_migrate() {
+  require_env
+  [[ "${LOCAL_RESEARCH_MIGRATE:-}" == "YES" ]] || {
+    echo "ERROR: set LOCAL_RESEARCH_MIGRATE=YES for the reviewed local migration." >&2
+    exit 2
+  }
+  ensure_runtime
+  compose up -d postgres
+  wait_for_postgres
+
+  local research_db duplicates has_account invalid_items stamp backup_dir migration_path verified
+  research_db="$(env_value RESEARCH_DB_NAME)"
+  [[ "$research_db" == "douyin_research" ]] || {
+    echo "ERROR: local migration only permits the fixed douyin_research database." >&2
+    exit 2
+  }
+
+  research_query() {
+    compose exec -T postgres bash -c \
+      'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec psql -U "$RESEARCH_DB_USER" -d "$RESEARCH_DB_NAME" -At -v ON_ERROR_STOP=1 -c "$1"' \
+      bash "$1"
+  }
+  duplicates="$(research_query \
+    "select count(*) from (select created_by, lower(name) from collection group by created_by, lower(name) having count(*) > 1) duplicate_names")"
+  [[ "$duplicates" == "0" ]] || {
+    echo "ERROR: duplicate owner/name collections must be resolved before migration." >&2
+    exit 1
+  }
+  has_account="$(research_query \
+    "select exists(select 1 from information_schema.columns where table_schema='public' and table_name='collection_item' and column_name='account_id')")"
+  if [[ "$has_account" == "t" ]]; then
+    invalid_items="$(research_query \
+      "select count(*) from collection_item where (video_id is not null)::int + (account_id is not null)::int + (signal_id is not null)::int <> 1")"
+  else
+    invalid_items="$(research_query \
+      "select count(*) from collection_item where (video_id is not null)::int + (signal_id is not null)::int <> 1")"
+  fi
+  [[ "$invalid_items" == "0" ]] || {
+    echo "ERROR: invalid collection targets must be resolved before migration." >&2
+    exit 1
+  }
+
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_dir="$ROOT_DIR/work/local-db-migrations/$stamp"
+  [[ ! -e "$backup_dir" ]] || { echo "ERROR: refusing to overwrite migration backup." >&2; exit 1; }
+  mkdir -p "$backup_dir"
+  chmod 700 "$ROOT_DIR/work/local-db-migrations" "$backup_dir"
+  compose exec -T postgres bash -c \
+    'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec pg_dump -U "$RESEARCH_DB_USER" -Fc "$RESEARCH_DB_NAME"' \
+    > "$backup_dir/douyin_research.dump"
+  chmod 600 "$backup_dir/douyin_research.dump"
+  (cd "$backup_dir" && shasum -a 256 douyin_research.dump > SHA256SUMS)
+  printf 'created_at_utc=%s\ncontext=%s\nproject=%s\ndatabase=%s\n' \
+    "$stamp" "$CONTEXT" "$PROJECT" "$research_db" > "$backup_dir/manifest.txt"
+
+  {
+    printf '%s\n' '\set ON_ERROR_STOP on' 'begin;'
+    for migration_path in "$ROOT_DIR"/db/migrations/*.sql; do
+      printf '%s %s\n' '\echo applying' "$(basename "$migration_path")"
+      sed -n '1,$p' "$migration_path"
+    done
+    printf '%s\n' 'commit;'
+  } | compose exec -T postgres bash -c \
+    'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec psql -U "$RESEARCH_DB_USER" -d "$RESEARCH_DB_NAME" -v ON_ERROR_STOP=1' \
+    >/dev/null
+
+  verified="$(research_query \
+    "select (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || exists(select 1 from information_schema.columns where table_schema='public' and table_name='collection_item' and column_name='account_id')::int || '|' || exists(select 1 from pg_constraint where conname='collection_item_one_target')::int || '|' || (to_regclass('public.uq_collection_owner_name') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('saved_research_filter','research_user_action'))::int || '|' || (has_table_privilege(current_user,'public.saved_research_filter','SELECT') and has_table_privilege(current_user,'public.saved_research_filter','INSERT') and has_table_privilege(current_user,'public.saved_research_filter','UPDATE') and has_table_privilege(current_user,'public.research_user_action','SELECT') and has_table_privilege(current_user,'public.research_user_action','INSERT') and has_table_privilege(current_user,'public.research_user_action','UPDATE'))::int")"
+  [[ "$verified" == "1|1|1|1|1|1|1" ]] || {
+    echo "ERROR: migration verification did not match the research action contract." >&2
+    exit 1
+  }
+  echo "[local-l3] migrations applied atomically after preflight; verified backup: $backup_dir"
+}
+
+cmd_restore_drill() (
+  require_env
+  [[ "${LOCAL_RESEARCH_RESTORE_DRILL:-}" == "YES" ]] || {
+    echo "ERROR: set LOCAL_RESEARCH_RESTORE_DRILL=YES for the local restore drill." >&2
+    exit 2
+  }
+  [[ "$#" == "1" ]] || {
+    echo "ERROR: restore-drill requires one migration backup directory." >&2
+    exit 2
+  }
+
+  local backup_dir research_db restore_db=local_research_restore count_sql source_counts restored_counts verified remaining
+  [[ -d "$1" ]] || { echo "ERROR: migration backup directory does not exist." >&2; exit 2; }
+  backup_dir="$(cd "$1" && pwd -P)"
+  case "$backup_dir" in
+    "$ROOT_DIR"/work/local-db-migrations/*) ;;
+    *) echo "ERROR: restore drill only accepts backups under work/local-db-migrations/." >&2; exit 2 ;;
+  esac
+  [[ -f "$backup_dir/douyin_research.dump" && -f "$backup_dir/SHA256SUMS" && -f "$backup_dir/manifest.txt" ]] || {
+    echo "ERROR: migration backup is incomplete." >&2
+    exit 1
+  }
+  grep -Fq "douyin_research.dump" "$backup_dir/SHA256SUMS" || {
+    echo "ERROR: migration backup checksum does not cover the research dump." >&2
+    exit 1
+  }
+  (cd "$backup_dir" && shasum -a 256 -c SHA256SUMS >/dev/null)
+
+  ensure_runtime
+  compose up -d postgres
+  wait_for_postgres
+  research_db="$(env_value RESEARCH_DB_NAME)"
+  [[ "$research_db" == "douyin_research" && "$restore_db" != "$research_db" ]] || {
+    echo "ERROR: restore drill database guard failed." >&2
+    exit 2
+  }
+
+  cleanup_restore() {
+    compose exec -T postgres psql -U "$(env_value POSTGRES_USER)" -d postgres \
+      -v ON_ERROR_STOP=1 -v restore_db="$restore_db" >/dev/null <<'SQL' || true
+SELECT format('DROP DATABASE IF EXISTS %I WITH (FORCE)', :'restore_db')\gexec
+SQL
+  }
+  cleanup_restore_strict() {
+    compose exec -T postgres psql -U "$(env_value POSTGRES_USER)" -d postgres \
+      -v ON_ERROR_STOP=1 -v restore_db="$restore_db" >/dev/null <<'SQL'
+SELECT format('DROP DATABASE IF EXISTS %I WITH (FORCE)', :'restore_db')\gexec
+SQL
+  }
+  database_query() {
+    local database="$1" query="$2"
+    compose exec -T postgres bash -c \
+      'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec psql -U "$RESEARCH_DB_USER" -d "$1" -At -v ON_ERROR_STOP=1 -c "$2"' \
+      bash "$database" "$query"
+  }
+  trap cleanup_restore EXIT
+  cleanup_restore
+  compose exec -T postgres psql -U "$(env_value POSTGRES_USER)" -d postgres \
+    -v ON_ERROR_STOP=1 -v restore_db="$restore_db" -v restore_owner="$(env_value RESEARCH_DB_USER)" >/dev/null <<'SQL'
+SELECT format('CREATE DATABASE %I OWNER %I', :'restore_db', :'restore_owner')\gexec
+SQL
+  compose exec -T postgres bash -c \
+    'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec pg_restore -U "$RESEARCH_DB_USER" --no-owner --no-privileges -d local_research_restore' \
+    < "$backup_dir/douyin_research.dump"
+
+  count_sql="select (select count(*) from source_video) || '|' || (select count(*) from collection) || '|' || (select count(*) from collection_item)"
+  source_counts="$(database_query "$research_db" "$count_sql")"
+  restored_counts="$(database_query "$restore_db" "$count_sql")"
+  [[ "$source_counts" == "$restored_counts" ]] || {
+    echo "ERROR: restored key-table row counts do not match the source database." >&2
+    exit 1
+  }
+  verified="$(database_query "$restore_db" "select (to_regclass('public.source_video') is not null)::int || '|' || (to_regclass('public.collection') is not null)::int || '|' || (to_regclass('public.collection_item') is not null)::int || '|' || (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('source_video','collection','collection_item','saved_research_filter','research_user_action'))::int")"
+  [[ "$verified" == "1|1|1|1|1|1" ]] || {
+    echo "ERROR: restored database schema or owner verification failed." >&2
+    exit 1
+  }
+
+  cleanup_restore_strict
+  remaining="$(compose exec -T postgres psql -U "$(env_value POSTGRES_USER)" -d postgres -At -v ON_ERROR_STOP=1 -c "select exists(select 1 from pg_database where datname='$restore_db')")"
+  [[ "$remaining" == "f" ]] || {
+    echo "ERROR: temporary restore database still exists after cleanup." >&2
+    exit 1
+  }
+  trap - EXIT
+  echo "[local-l3] restore drill passed: checksum, key-table counts, owners, and cleanup verified."
+)
+
 cmd_review() {
   require_env
   ensure_runtime
@@ -250,6 +418,8 @@ case "${1:-}" in
   status) cmd_status ;;
   provision) cmd_provision ;;
   verify) cmd_verify ;;
+  migrate) cmd_migrate ;;
+  restore-drill) shift; cmd_restore_drill "$@" ;;
   test) shift; cmd_test "$@" ;;
   review) shift; cmd_review "$@" ;;
   stop) cmd_stop ;;

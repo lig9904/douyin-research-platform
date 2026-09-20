@@ -1,7 +1,7 @@
 #requirements:
 #psycopg[binary]==3.3.6
 
-"""Bounded, actor-bound write operations for the research dashboard."""
+"""Bounded, actor-audited write operations for the research dashboard."""
 
 from __future__ import annotations
 
@@ -83,6 +83,41 @@ def _actor() -> str:
     if not _ACTOR_RE.fullmatch(value) or len(value) > 254:
         raise PermissionError("RESEARCH_ACTION_IDENTITY_REQUIRED")
     return value
+
+
+def _authorized_writer(writer_allowlist: str | None) -> str:
+    """Return the authenticated actor only when local/server policy permits writes.
+
+    App backends run using the publisher's database resource, so resource ACLs
+    alone cannot prove that a Viewer did not invoke this endpoint.  The runtime
+    allowlist is deliberately server-managed and never supplied by the caller.
+    """
+
+    actor = _actor()
+    if not isinstance(writer_allowlist, str) or not writer_allowlist.strip():
+        raise PermissionError("RESEARCH_ACTION_WRITER_ALLOWLIST_REQUIRED")
+    source = writer_allowlist.strip()
+    if source.startswith("["):
+        try:
+            values = json.loads(source)
+        except json.JSONDecodeError:
+            raise PermissionError("RESEARCH_ACTION_WRITER_ALLOWLIST_INVALID") from None
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            raise PermissionError("RESEARCH_ACTION_WRITER_ALLOWLIST_INVALID")
+    else:
+        values = re.split(r"[,\n]", source)
+
+    allowed: set[str] = set()
+    for value in values:
+        email = value.strip()
+        if email != email.lower() or not _ACTOR_RE.fullmatch(email):
+            raise PermissionError("RESEARCH_ACTION_WRITER_ALLOWLIST_INVALID")
+        allowed.add(email)
+    if not allowed:
+        raise PermissionError("RESEARCH_ACTION_WRITER_ALLOWLIST_REQUIRED")
+    if actor not in allowed:
+        raise PermissionError("RESEARCH_ACTION_WRITER_FORBIDDEN")
+    return actor
 
 
 def _uuid4(value: object, *, field: str) -> str:
@@ -353,11 +388,12 @@ def main(
     view_key: str = "",
     filter_name: str = "",
     filters_json: str = "{}",
+    writer_allowlist: str = "",
 ):
     try:
         return _mutate(
             db,
-            actor=_actor(),
+            actor=_authorized_writer(writer_allowlist),
             action=action,
             idempotency_key=idempotency_key,
             asset_type=asset_type,
