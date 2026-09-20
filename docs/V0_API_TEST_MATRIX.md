@@ -88,6 +88,24 @@
 
 结论边界：作品翻页、评论翻页、跨页去重要求和评论回复已获得真实证据，评论回复由 PENDING 提升为 PARTIAL。由于仍是单账号/单作品小样本，且尚未进行删除/私密映射、更多账号分层、Ground Truth 准确性、429/5xx 和本地账单对账，相关能力均不标记 PASS，Issue #1 继续保持开放。
 
+## A5. 第四批计划：发现页、搜索页与详情批量关联（尚未运行）
+
+- 代码与手动 GitHub Actions 只预置一个严格十调用计划：daily usage → 三个
+  `calculate_price` 报价 → 低粉爆款榜两页 → 视频搜索两页 → App V3 批量详情 →
+  daily usage。
+- 运行必须由人工 `workflow_dispatch` 输入 `BATCH4_10`，并使用 SDK 2.1.1、
+  `max_retries=0`。Billboard 按固定 `page=1/2` 请求，第一页只要有稳定作品 ID 即可进入
+  第二页（仅明确 `has_more=false` 时停止）；Search 第二页必须传递第一页返回的 cursor、
+  `search_id` 与 `backtrace`，任一缺失或 `has_more` 非真即停止，不继续后续收费调用。
+- App V3 详情批量按来源各最多 10 条、总计最多 20 条；Billboard 与 Search 都必须至少贡献
+  1 条。摘要只按来源统计请求、返回和未返回数量，未返回不解释为删除或私密。
+- 原始响应只在进程内短暂写入 gitignored、本机临时目录且权限为 0600：启动前会清理同一目录
+  的旧 JSON，结束时再次清理并尝试删除空目录。日志只保留数量、布尔值、字段覆盖和公开报价，
+  不输出 key、request ID、账号/作品 ID、cursor 或名称；GitHub workflow 的 `always()` 清理
+  仅作为纵深防御。
+
+本节是待执行方案，不构成实测证据；以下矩阵状态保持不变。
+
 ## B. Billboard / 发现层
 
 | 能力 | 预期用途 | L层 | 实测重点 | 生产频率候选 | 状态 |
