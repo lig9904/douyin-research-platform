@@ -109,6 +109,7 @@ def test_windmill_metadata_keeps_golden_flow_manual_serial_and_server_secret_onl
         root / "windmill/f/content_research/flows/manual_golden_intake.flow/flow.yaml"
     ).read_text()
     metadata = SCRIPT.with_suffix(".script.yaml").read_text()
+    lock = SCRIPT.with_suffix(".script.lock").read_text()
     source = SCRIPT.read_text()
 
     assert "\nschedule:" not in flow.lower()
@@ -121,3 +122,7 @@ def test_windmill_metadata_keeps_golden_flow_manual_serial_and_server_secret_onl
     assert "concurrent_limit: 1" in metadata
     assert 'wmill.get_variable(path)' in source
     assert "TIKHUB_API_KEY" not in source
+    assert "#psycopg[binary]==3.3.6" in source
+    assert "psycopg==3.3.6" in lock
+    assert "psycopg-binary==3.3.6" in lock
+    assert "tikhub==2.1.1" in lock
