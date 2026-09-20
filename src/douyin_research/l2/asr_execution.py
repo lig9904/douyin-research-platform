@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Callable, Iterator, Protocol
@@ -45,7 +45,7 @@ class ASRExecutionRequest:
     model_revision: str
     engine_version: str
     source_fingerprint: str
-    media_ref: str
+    media_ref: str = field(repr=False)
     estimated_api_cost: Decimal | float | int | None
     estimated_asr_cost: Decimal | float | int | None
     cost_currency: str
@@ -53,6 +53,11 @@ class ASRExecutionRequest:
     confirmation: str = ""
     max_polls: int = 0
     budget_date: date | None = None
+    # Scheduler or approved operator identity; never sent to the provider.
+    actor: str | None = None
+    trigger_source: str = "manual"
+    reviewed_asset_id: UUID | str | None = None
+    media_review_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,10 +107,8 @@ class ASRExecutionCoordinator:
             return preview
         if request.confirmation != ASR_CONFIRMATION:
             raise PermissionError("exact paid-operation confirmation is required")
-        if request.estimated_api_cost is None or request.estimated_asr_cost is None:
-            raise ValueError("known API and ASR estimates are required for paid execution")
-
         with self._single_paid_job():
+            self._media_identity(request)
             existing = self._load_job(request.task_key)
             if existing is not None:
                 self._assert_job_matches(existing, request)
@@ -170,6 +173,9 @@ class ASRExecutionCoordinator:
         created: bool = False,
     ) -> dict[str, object]:
         external_calls = initial_external_calls
+        # A resumed job belongs to its original reservation day, including
+        # polling and final cost reconciliation after midnight.
+        request = replace(request, budget_date=job["budget_date"])
         provider_task_ref = str(job["provider_task_ref"])
         for _ in range(request.max_polls):
             self._reserve_poll(request, UUID(str(job["id"])))
@@ -213,7 +219,7 @@ class ASRExecutionCoordinator:
                 (budget_date, request.provider, ASR_BUDGET_KEY),
             )
             budget = cur.fetchone()
-            if budget is None or (budget[0] is None and budget[1] is None):
+            if budget is None:
                 raise RuntimeError("daily ASR budget must be configured")
             if budget[2] != request.cost_currency:
                 raise RuntimeError("daily ASR budget currency does not match request")
@@ -226,8 +232,14 @@ class ASRExecutionCoordinator:
         budget_date = request.budget_date or date.today()
         estimated_api = _decimal(request.estimated_api_cost)
         estimated_asr = _decimal(request.estimated_asr_cost)
-        assert estimated_api is not None and estimated_asr is not None
-        estimated_total = estimated_api + estimated_asr
+        # Keep a known component visible while marking the whole reservation
+        # unknown if either supplier price has not been verified.  A missing
+        # quote is never represented as a zero-cost ASR call.
+        estimated_total = sum(
+            (value for value in (estimated_api, estimated_asr) if value is not None),
+            Decimal("0"),
+        )
+        quote_unknown = estimated_api is None or estimated_asr is None
         job_id = uuid4()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             _reserve_budget(
@@ -237,6 +249,7 @@ class ASRExecutionCoordinator:
                 currency=request.cost_currency,
                 requests=1,
                 estimated_cost=estimated_total,
+                quote_unknown=quote_unknown,
             )
             cur.execute(
                 """
@@ -260,7 +273,7 @@ class ASRExecutionCoordinator:
                     request.model_revision,
                     request.engine_version,
                     request.source_fingerprint,
-                    _hash(request.media_ref),
+                    self._media_identity(request),
                     estimated_api,
                     estimated_asr,
                     request.cost_currency,
@@ -268,7 +281,11 @@ class ASRExecutionCoordinator:
                     ASR_BUDGET_KEY,
                     Jsonb(
                         {
-                            "manual_only": True,
+                            "manual_only": request.trigger_source == "manual",
+                            "trigger_source": request.trigger_source,
+                            "reviewed_asset_id": str(request.reviewed_asset_id) if request.reviewed_asset_id else None,
+                            "media_review_version": request.media_review_version,
+                            "triggered_by": request.actor.strip() if request.actor else None,
                             "sdk_retries": 0,
                             "media_ref_stored": False,
                             "semantic_inference": False,
@@ -292,6 +309,7 @@ class ASRExecutionCoordinator:
                 currency=request.cost_currency,
                 requests=1,
                 estimated_cost=Decimal("0"),
+                quote_unknown=False,
             )
             cur.execute(
                 """
@@ -438,8 +456,8 @@ class ASRExecutionCoordinator:
         )
         return dict(zip(keys, row, strict=True))
 
-    @staticmethod
     def _assert_job_matches(
+        self,
         job: dict[str, object],
         request: ASRExecutionRequest,
     ) -> None:
@@ -450,11 +468,11 @@ class ASRExecutionCoordinator:
             request.model_revision,
             request.engine_version,
             request.source_fingerprint,
-            _hash(request.media_ref),
+            self._media_identity(request),
             _decimal(request.estimated_api_cost),
             _decimal(request.estimated_asr_cost),
             request.cost_currency,
-            request.budget_date or date.today(),
+            request.budget_date or job["budget_date"],
             ASR_BUDGET_KEY,
         )
         actual = (
@@ -473,6 +491,17 @@ class ASRExecutionCoordinator:
         )
         if actual != expected:
             raise ValueError("task_key already exists with different ASR execution inputs")
+
+    def _media_identity(self, request: ASRExecutionRequest) -> str:
+        if request.provider == "volcengine-doubao-asr" or request.reviewed_asset_id is not None:
+            if request.reviewed_asset_id is None or not request.media_review_version:
+                raise ValueError("persisted media approval is required for live ASR")
+            from .media_review import assert_reviewed_delivery
+
+            return assert_reviewed_delivery(self.dsn, video_id=request.video_id,
+                asset_id=request.reviewed_asset_id, review_version=request.media_review_version,
+                media_url=request.media_ref, source_fingerprint=request.source_fingerprint)
+        return _hash(request.media_ref)
 
     @staticmethod
     def _assert_provider(
@@ -578,13 +607,18 @@ def _preview(request: ASRExecutionRequest) -> dict[str, object]:
         "maximum_external_calls": 1 + request.max_polls,
         "estimated_total_cost": float(total) if total is not None else None,
         "cost_currency": request.cost_currency,
-        "execution_ready": total is not None,
+        "execution_ready": True,
+        "cost_basis": "estimated" if total is not None else "unknown",
         "sdk_retries": 0,
         "llm_calls": 0,
     }
 
 
 def _validate_request(request: ASRExecutionRequest) -> None:
+    if request.trigger_source not in {"manual", "schedule"}:
+        raise ValueError("invalid ASR trigger source")
+    if request.trigger_source == "schedule" and not request.actor:
+        raise ValueError("scheduled ASR worker identity required")
     required = {
         "task_key": request.task_key,
         "provider": request.provider,
@@ -604,6 +638,12 @@ def _validate_request(request: ASRExecutionRequest) -> None:
         parsed = _decimal(value)
         if parsed is not None and parsed < 0:
             raise ValueError("estimated costs cannot be negative")
+    if request.actor is not None and (
+        not isinstance(request.actor, str)
+        or not request.actor.strip()
+        or len(request.actor.strip()) > 320
+    ):
+        raise ValueError("ASR execution actor is invalid")
 
 
 def _provider_request(request: ASRExecutionRequest) -> ASRProviderRequest:
@@ -679,10 +719,12 @@ def _reserve_budget(
     currency: str,
     requests: int,
     estimated_cost: Decimal,
+    quote_unknown: bool,
 ) -> None:
     cur.execute(
         """
-        select max_cost, max_requests, spent_cost, used_requests, cost_currency
+        select max_cost, max_requests, spent_cost, used_requests, cost_currency,
+               unknown_price_requests
         from daily_budget
         where budget_date=%s and provider=%s and budget_key=%s
         for update
@@ -692,22 +734,39 @@ def _reserve_budget(
     row = cur.fetchone()
     if row is None:
         raise RuntimeError("daily ASR budget must be configured")
-    max_cost, max_requests, spent_cost, used_requests, configured_currency = row
+    (
+        max_cost,
+        max_requests,
+        spent_cost,
+        used_requests,
+        configured_currency,
+        unknown_price_requests,
+    ) = row
     if configured_currency != currency:
         raise RuntimeError("daily ASR budget currency does not match request")
     next_requests = used_requests + requests
     next_cost = Decimal(spent_cost) + estimated_cost
     if max_requests is not None and next_requests > max_requests:
         raise RuntimeError("daily ASR request budget exceeded")
+    if quote_unknown and max_cost is not None:
+        raise RuntimeError("daily ASR cost budget cannot reserve an unknown price")
     if max_cost is not None and next_cost > Decimal(max_cost):
         raise RuntimeError("daily ASR cost budget exceeded")
     cur.execute(
         """
         update daily_budget
-        set used_requests=%s, spent_cost=%s, updated_at=now()
+        set used_requests=%s, spent_cost=%s,
+            unknown_price_requests=%s, updated_at=now()
         where budget_date=%s and provider=%s and budget_key=%s
         """,
-        (next_requests, next_cost, budget_date, provider, ASR_BUDGET_KEY),
+        (
+            next_requests,
+            next_cost,
+            int(unknown_price_requests) + (requests if quote_unknown else 0),
+            budget_date,
+            provider,
+            ASR_BUDGET_KEY,
+        ),
     )
 
 

@@ -62,6 +62,7 @@ def _execute(
     plan.update(
         {
             "adapter_status": ADAPTER_STATUS,
+            "execution_ready": False,
             "paid_execution_available": False,
         }
     )
