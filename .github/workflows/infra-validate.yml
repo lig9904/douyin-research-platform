@@ -128,7 +128,7 @@ jobs:
       - name: Wait for PostgreSQL
         run: |
           for i in {1..30}; do
-            if docker compose exec -T postgres pg_isready -U postgres -d windmill >/dev/null 2>&1; then
+            if docker compose exec -T postgres pg_isready -h 127.0.0.1 -U postgres -d windmill >/dev/null 2>&1; then
               exit 0
             fi
             sleep 2
@@ -152,7 +152,7 @@ jobs:
           compose=(docker compose -p test-server-release-ci --env-file .env.test-server -f docker-compose.yml -f docker-compose.test-server.yml)
           "${compose[@]}" up -d postgres
           for i in {1..30}; do
-            if "${compose[@]}" exec -T postgres pg_isready -U postgres -d windmill >/dev/null 2>&1; then
+            if "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U postgres -d windmill >/dev/null 2>&1; then
               break
             fi
             if [ "$i" = 30 ]; then
@@ -222,7 +222,7 @@ jobs:
               --env-file .env.l3-local \
               -f docker-compose.yml \
               -f docker-compose.l3-local.yml \
-              exec -T postgres pg_isready -U postgres -d windmill >/dev/null 2>&1; then
+              exec -T postgres pg_isready -h 127.0.0.1 -U postgres -d windmill >/dev/null 2>&1; then
               exit 0
             fi
             sleep 2

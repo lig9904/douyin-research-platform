@@ -42,3 +42,19 @@ def test_test_server_example_is_non_runnable_and_git_safe() -> None:
     assert "TEST_SERVER_TLS_DIR=/CHANGE_ME_ABSOLUTE_TLS_DIRECTORY" in example
     assert "TIKHUB_API_KEY=" not in example
     assert "!.env.test-server.example" in ignore
+
+
+def test_postgres_readiness_never_accepts_the_temporary_socket_server() -> None:
+    expected = "pg_isready -h 127.0.0.1"
+    paths = (
+        "docker-compose.yml",
+        "scripts/test-server-release.sh",
+        "scripts/local-l3-env.sh",
+        "scripts/local-security-env.sh",
+        ".github/workflows/infra-validate.yml",
+        ".github/workflows/provider-tests.yml",
+    )
+
+    for relative_path in paths:
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert expected in source, relative_path

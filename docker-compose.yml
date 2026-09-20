@@ -31,7 +31,9 @@ services:
       - ./db/init/01-bootstrap-research.sh:/docker-entrypoint-initdb.d/01-bootstrap-research.sh:ro
       - ./db/schema.sql:/bootstrap/schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-windmill}"]
+      # The entrypoint's temporary bootstrap server accepts Unix-socket probes
+      # before it shuts down. TCP only becomes ready on the final server.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-windmill}"]
       interval: 10s
       timeout: 5s
       retries: 10
