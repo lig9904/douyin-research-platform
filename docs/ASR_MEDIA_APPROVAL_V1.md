@@ -35,6 +35,8 @@
 
 `submitted` / `running` 表示仍需后续调度轮询，不能视为转写完成；失败或需核对状态使 Windmill 任务失败。轮询恢复继续调用同一入口和同一资产，不创建新的付费提交。上线须配置实际调度并验证两个周期，不能只部署脚本。对外错误固定脱敏，不返回签名 URL 或凭据。
 
+即使执行任务记录丢失，只要同一 task_key 仍有 `research_task_cost`（含失败、取消或未知费用），协调器会在构造 Provider 和预留预算前返回 `reconciliation_required / orphan_cost_record`。费用记录不能被当作“没有任务”的证据；须核对原始执行，不自动再次付费提交。
+
 ## 待完成任务自动轮询
 
 `analysis/poll_pending_asr` 无公开输入，固定读取已提交一次、具有供应商任务引用、状态 submitted/running 的 live ASR 任务；不会选择 submitting、终态或人工任务。每轮最多串行处理 5 条，按更新时间从旧到新；这是吞吐批次，不是金额上限。单条失败后继续本批其他任务，最终以脱敏汇总错误标记调度失败。
