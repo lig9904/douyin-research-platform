@@ -24,7 +24,6 @@ from v0_batch2 import (  # noqa: E402
     first_value,
     metric_coverage,
     pagination,
-    public_price_summary,
     safe_shape,
     supports_keyword,
     usage_delta_summary,
@@ -42,6 +41,8 @@ SDK_VERSION = "2.1.1"
 LOW_FAN_ENDPOINT = "/api/v1/douyin/billboard/fetch_hot_total_low_fan_list"
 VIDEO_SEARCH_ENDPOINT = "/api/v1/douyin/search/fetch_video_search_v2"
 MULTI_VIDEO_ENDPOINT = "/api/v1/douyin/app/v3/fetch_multi_video_v2"
+PRICE_TOKENS = ("price", "cost", "discount", "request")
+SENSITIVE_PRICE_TOKENS = ("id", "uid", "token", "cursor", "key", "secret")
 
 
 def save_raw(label: str, payload: dict[str, Any]) -> Path:
@@ -215,6 +216,31 @@ def search_page_tokens(payload: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
     )
 
 
+def public_price_summary(payload: dict[str, Any]) -> dict[str, float]:
+    """Keep public pricing leaves while excluding identifiers and opaque request metadata."""
+    result: dict[str, float] = {}
+
+    def visit(value: Any, path: tuple[str, ...]) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                visit(child, (*path, str(key)))
+            return
+        if isinstance(value, list):
+            for index, child in enumerate(value):
+                visit(child, (*path, str(index)))
+            return
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            return
+        normalized = ".".join(path).lower()
+        if any(token in normalized for token in SENSITIVE_PRICE_TOKENS):
+            return
+        if any(token in normalized for token in PRICE_TOKENS):
+            result[".".join(path)] = float(value)
+
+    visit(payload.get("data"), ("data",))
+    return result
+
+
 def _summary(label: str, payload: dict[str, Any]) -> dict[str, Any]:
     # safe_shape intentionally exposes neither IDs, cursor values, nor names.
     return safe_shape(label, payload)
@@ -301,11 +327,13 @@ def run() -> int:
             search_id="",
             backtrace="",
         )
+        search_ids1 = stable_video_ids(search1)
+        if not search_ids1:
+            raise ProbeFailure("video_search_page1: no stable aweme_id")
         search_cursor1, search_id1, backtrace1, search_more1 = search_page_tokens(search1)
         require_search_next_page(
             "video_search_page1", search_cursor1, search_id1, backtrace1, search_more1
         )
-        search_ids1 = stable_video_ids(search1)
         summary = _summary("video_search_page1", search1)
         summary.update({"unique_video_count": len(search_ids1), "has_more": search_more1})
         summaries.append(summary)

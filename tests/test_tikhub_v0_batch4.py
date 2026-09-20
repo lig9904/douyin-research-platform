@@ -27,6 +27,7 @@ def _envelope(data: object) -> dict[str, object]:
 class _FakeTikHub:
     instances: list["_FakeTikHub"] = []
     page1_has_more = 1
+    search_page1_has_video = True
 
     def __init__(self, *, api_key: str, max_retries: int):
         self.api_key = api_key
@@ -54,7 +55,7 @@ class _FakeTikHub:
 
         def calculate_price(self, *, endpoint: str, request_per_day: int):
             self.parent.calls.append(("price", {"endpoint": endpoint, "request_per_day": request_per_day}))
-            return _envelope({"price": 0.001})
+            return _envelope({"price": 0.001, "request_per_day": 100, "request_id": 987654})
 
     class Billboard:
         def __init__(self, parent):
@@ -71,7 +72,10 @@ class _FakeTikHub:
         def fetch_video_search_v2(self, *, keyword: str, cursor: object, sort_type: str, publish_time: str, filter_duration: str, content_type: str, search_id: str, backtrace: str):
             self.parent.calls.append(("search", {"keyword": keyword, "cursor": cursor, "search_id": search_id, "backtrace": backtrace}))
             next_cursor = 20 if cursor == 0 else 40
-            return _envelope({"cursor": next_cursor, "has_more": 1 if cursor == 0 else 0, "search_id": "private-search-token", "backtrace": "private-backtrace-token", "items": [_video(f"search-{next_cursor}")]})
+            items = [_video(f"search-{next_cursor}")]
+            if cursor == 0 and not self.parent.search_page1_has_video:
+                items = []
+            return _envelope({"cursor": next_cursor, "has_more": 1 if cursor == 0 else 0, "search_id": "private-search-token", "backtrace": "private-backtrace-token", "items": items})
 
     class App:
         def __init__(self, parent):
@@ -98,6 +102,7 @@ def _video(identifier: str) -> dict[str, object]:
 def _install_fake_sdk(monkeypatch) -> None:
     _FakeTikHub.instances.clear()
     _FakeTikHub.page1_has_more = 1
+    _FakeTikHub.search_page1_has_video = True
     monkeypatch.setitem(sys.modules, "tikhub", types.SimpleNamespace(TikHub=_FakeTikHub, __version__="2.1.1"))
 
 
@@ -129,6 +134,7 @@ def test_batch4_fixed_ten_call_plan_has_zero_retries_and_redacted_stdout(tmp_pat
     assert "must-not-print" not in rendered
     assert "private-search-token" not in rendered
     assert "private-backtrace-token" not in rendered
+    assert "987654" not in rendered
 
 
 def test_batch4_stops_before_second_billboard_page_only_when_has_more_is_false(tmp_path, monkeypatch) -> None:
@@ -230,6 +236,46 @@ def test_search_second_page_requires_all_opaque_tokens() -> None:
         probe.require_search_next_page("search", 20, "search-id", "backtrace", 0)
     with pytest.raises(probe.ProbeFailure, match="no second page"):
         probe.require_search_next_page("search", 20, "search-id", "backtrace", "0")
+
+
+def test_public_price_summary_excludes_numeric_request_identifiers() -> None:
+    probe = _load_batch4()
+    summary = probe.public_price_summary(
+        {
+            "code": 200,
+            "data": {
+                "price": 0.001,
+                "request_per_day": 100,
+                "discount": 0.5,
+                "request_id": 987654,
+                "nested": {"api_key_count": 3, "cost": 0.1},
+            },
+        }
+    )
+
+    assert summary == {
+        "data.price": 0.001,
+        "data.request_per_day": 100.0,
+        "data.discount": 0.5,
+        "data.nested.cost": 0.1,
+    }
+    assert "987654" not in str(summary)
+
+
+def test_search_page_one_without_stable_video_stops_before_second_page(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    _install_fake_sdk(monkeypatch)
+    _FakeTikHub.search_page1_has_video = False
+    monkeypatch.setattr(probe, "OUT_DIR", tmp_path)
+    monkeypatch.setenv(probe.GATE_ENV, probe.GATE_VALUE)
+    monkeypatch.setenv(probe.API_KEY_ENV, "private-api-key")
+
+    with pytest.raises(probe.ProbeFailure, match="no stable aweme_id"):
+        probe.run()
+
+    assert [name for name, _ in _FakeTikHub.instances[-1].calls] == [
+        "usage", "price", "price", "price", "billboard", "billboard", "search"
+    ]
 
 
 def test_billboard_second_page_does_not_require_cursor_or_has_more_presence() -> None:
