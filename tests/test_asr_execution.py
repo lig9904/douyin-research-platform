@@ -59,15 +59,15 @@ def _video(level: int = 2, key: str = "main") -> UUID:
 
 def _budget(
     *,
-    max_requests: int = 10,
-    max_cost: Decimal = Decimal("10"),
+    max_requests: int | None = 10,
+    max_cost: Decimal | None = Decimal("10"),
     currency: str = "CNY",
 ) -> None:
     assert DSN
     DailyBudgetGuard(DSN).configure(
         provider=PROVIDER,
         budget_key=ASR_BUDGET_KEY,
-        max_cost=float(max_cost),
+        max_cost=float(max_cost) if max_cost is not None else None,
         max_requests=max_requests,
         budget_date=BUDGET_DATE,
         cost_currency=currency,
@@ -178,6 +178,7 @@ def test_preview_and_wrong_confirmation_never_load_provider() -> None:
         "estimated_total_cost": 0.3,
         "cost_currency": "CNY",
         "execution_ready": True,
+        "cost_basis": "estimated",
         "sdk_retries": 0,
         "llm_calls": 0,
     }
@@ -455,3 +456,124 @@ def test_provider_retries_and_changed_task_inputs_are_rejected() -> None:
             (BUDGET_DATE, PROVIDER, ASR_BUDGET_KEY),
         )
         assert cur.fetchone()[0] == 1
+
+
+def test_unknown_price_reserves_request_without_inventing_zero_cost_and_can_complete() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="unknown-price")
+    _budget(max_requests=None, max_cost=None)
+    submitted = ASRProviderState(status="submitted", provider_task_ref="private-provider-task")
+    coordinator = ASRExecutionCoordinator(DSN)
+    request = _request(
+        video_id,
+        task_key="synthetic-asr-unknown-price",
+        estimated_api_cost=None,
+        estimated_asr_cost=None,
+        execute=True,
+        confirmation=ASR_CONFIRMATION,
+        max_polls=0,
+    )
+    first_provider = FakeProvider(submitted)
+    first = coordinator.run(request, provider_factory=lambda: first_provider)
+    assert first["status"] == "submitted"
+    assert first_provider.submit_calls
+
+    completed = ASRProviderState(
+        status="completed",
+        provider_task_ref="private-provider-task",
+        evidence=_evidence(),
+        cost=TaskCost(
+            api_cost=None,
+            asr_cost=None,
+            llm_cost=Decimal("0"),
+            currency="CNY",
+            basis="unknown",
+        ),
+    )
+    polling_provider = FakeProvider(submitted, [completed])
+    finished = coordinator.run(
+        _request(
+            video_id,
+            task_key=request.task_key,
+            estimated_api_cost=None,
+            estimated_asr_cost=None,
+            execute=True,
+            confirmation=ASR_CONFIRMATION,
+            max_polls=1,
+        ),
+        provider_factory=lambda: polling_provider,
+    )
+    assert finished["status"] == "completed"
+    assert polling_provider.submit_calls == []
+    assert polling_provider.poll_calls == ["private-provider-task"]
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, spent_cost, unknown_price_requests
+            from daily_budget
+            where budget_date=%s and provider=%s and budget_key=%s
+            """,
+            (BUDGET_DATE, PROVIDER, ASR_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (2, Decimal("0"), 1)
+        cur.execute(
+            """
+            select api_cost, asr_cost, total_cost, cost_basis
+            from research_task_cost where task_key=%s
+            """,
+            (request.task_key,),
+        )
+        assert cur.fetchone() == (None, None, None, "unknown")
+
+
+def test_unknown_price_is_refused_when_explicit_cost_ceiling_exists() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="unknown-price-ceiling")
+    _budget(max_requests=10, max_cost=Decimal("1"))
+    provider = FakeProvider(ASRProviderState(status="submitted", provider_task_ref="private-provider-task"))
+    with pytest.raises(RuntimeError, match="cannot reserve an unknown price"):
+        ASRExecutionCoordinator(DSN).run(
+            _request(
+                video_id,
+                task_key="synthetic-asr-unknown-price-ceiling",
+                estimated_api_cost=None,
+                estimated_asr_cost=None,
+                execute=True,
+                confirmation=ASR_CONFIRMATION,
+            ),
+            provider_factory=lambda: provider,
+        )
+    assert provider.submit_calls == []
+
+
+def test_partial_quote_keeps_known_subtotal_and_marks_the_request_unknown() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="partial-quote")
+    _budget(max_requests=None, max_cost=None)
+    provider = FakeProvider(
+        ASRProviderState(status="submitted", provider_task_ref="private-provider-task")
+    )
+    ASRExecutionCoordinator(DSN).run(
+        _request(
+            video_id,
+            task_key="synthetic-asr-partial-quote",
+            estimated_api_cost=Decimal("0.1"),
+            estimated_asr_cost=None,
+            execute=True,
+            confirmation=ASR_CONFIRMATION,
+        ),
+        provider_factory=lambda: provider,
+    )
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select used_requests, spent_cost, unknown_price_requests
+            from daily_budget
+            where budget_date=%s and provider=%s and budget_key=%s
+            """,
+            (BUDGET_DATE, PROVIDER, ASR_BUDGET_KEY),
+        )
+        assert cur.fetchone() == (1, Decimal("0.1"), 1)
