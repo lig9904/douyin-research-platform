@@ -21,6 +21,7 @@ from typing import Any, Callable
 from v0_batch2 import (  # noqa: E402
     CallBudget,
     ProbeFailure,
+    first_value,
     metric_coverage,
     pagination,
     public_price_summary,
@@ -125,10 +126,16 @@ def emit(summary: dict[str, Any]) -> None:
     print("BATCH4_PROGRESS " + json.dumps(summary, ensure_ascii=False, sort_keys=True))
 
 
-def require_next_page(label: str, cursor: Any, has_more: Any) -> None:
+def require_search_next_page(
+    label: str, cursor: Any, search_id: Any, backtrace: Any, has_more: Any
+) -> None:
     if cursor in (None, "", 0, "0"):
-        raise ProbeFailure(f"{label}: missing cursor for fixed second page")
-    if has_more in (False, 0, "0", None):
+        raise ProbeFailure(f"{label}: missing cursor for second page")
+    if not isinstance(search_id, str) or not search_id:
+        raise ProbeFailure(f"{label}: missing search_id for second page")
+    if not isinstance(backtrace, str) or not backtrace:
+        raise ProbeFailure(f"{label}: missing backtrace for second page")
+    if has_more not in (True, 1, "1"):
         raise ProbeFailure(f"{label}: no second page available")
 
 
@@ -150,21 +157,62 @@ def cursor_changed(first: Any, second: Any) -> bool:
     return first not in (None, "") and second not in (None, "") and str(first) != str(second)
 
 
-def select_detail_ids(*pages: dict[str, Any]) -> list[str]:
-    """Select a bounded, de-duplicated batch without logging any selected ID."""
+def require_billboard_second_page(has_more: Any) -> None:
+    """Billboard paginates by fixed page number, not cursor tokens."""
+    if has_more in (False, 0, "0"):
+        raise ProbeFailure("billboard_low_fan_page1: no second page available")
+
+
+def select_source_ids(pages: tuple[dict[str, Any], ...], seen: set[str]) -> list[str]:
+    """Take at most ten source-local IDs, excluding IDs allocated to another source."""
     selected: list[str] = []
-    seen: set[str] = set()
     for page in pages:
         for video in video_candidates(page):
             identifier = video["aweme_id"]
-            if identifier not in seen:
-                selected.append(identifier)
-                seen.add(identifier)
-            if len(selected) == 50:
+            if identifier in seen:
+                continue
+            selected.append(identifier)
+            seen.add(identifier)
+            if len(selected) == 10:
                 return selected
-    if not selected:
-        raise ProbeFailure("discovery pages returned no stable aweme_id for detail batch")
     return selected
+
+
+def select_detail_sources(
+    billboard_pages: tuple[dict[str, Any], ...], search_pages: tuple[dict[str, Any], ...]
+) -> dict[str, list[str]]:
+    """Build a max-20 batch with an independently bounded contribution per source."""
+    seen: set[str] = set()
+    selected = {
+        "billboard": select_source_ids(billboard_pages, seen),
+        "search": select_source_ids(search_pages, seen),
+    }
+    if not selected["billboard"] or not selected["search"]:
+        raise ProbeFailure("detail batch requires at least one Billboard and one Search video")
+    return selected
+
+
+def detail_source_summary(selected: dict[str, list[str]], payload: dict[str, Any]) -> dict[str, int]:
+    """Report source-local result counts only; missing results have no status meaning."""
+    returned = stable_video_ids(payload)
+    summary: dict[str, int] = {}
+    for source, identifiers in selected.items():
+        requested = set(identifiers)
+        returned_count = len(requested & returned)
+        summary[f"{source}_requested_count"] = len(requested)
+        summary[f"{source}_returned_count"] = returned_count
+        summary[f"{source}_not_returned_count"] = len(requested) - returned_count
+    return summary
+
+
+def search_page_tokens(payload: dict[str, Any]) -> tuple[Any, Any, Any, Any]:
+    data = payload.get("data")
+    return (
+        first_value(data, ("cursor",)),
+        first_value(data, ("search_id",)),
+        first_value(data, ("backtrace",)),
+        first_value(data, ("has_more",)),
+    )
 
 
 def _summary(label: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -215,9 +263,11 @@ def run() -> int:
             date_window=24,
             tags=[],
         )
-        billboard_cursor1, billboard_more1 = pagination(billboard1)
-        require_next_page("billboard_low_fan_page1", billboard_cursor1, billboard_more1)
         billboard_ids1 = stable_video_ids(billboard1)
+        if not billboard_ids1:
+            raise ProbeFailure("billboard_low_fan_page1: no stable aweme_id")
+        _, billboard_more1 = pagination(billboard1)
+        require_billboard_second_page(billboard_more1)
         summary = _summary("billboard_low_fan_page1", billboard1)
         summary.update({"unique_video_count": len(billboard_ids1), "has_more": billboard_more1})
         summaries.append(summary)
@@ -231,11 +281,11 @@ def run() -> int:
             date_window=24,
             tags=[],
         )
-        billboard_cursor2, billboard_more2 = pagination(billboard2)
+        _, billboard_more2 = pagination(billboard2)
         billboard_ids2 = stable_video_ids(billboard2)
         summary = _summary("billboard_low_fan_page2", billboard2)
         summary.update(page_relation(billboard_ids1, billboard_ids2))
-        summary.update({"cursor_changed": cursor_changed(billboard_cursor1, billboard_cursor2), "has_more": billboard_more2})
+        summary.update({"has_more": billboard_more2})
         summaries.append(summary)
         emit(summary)
 
@@ -251,8 +301,10 @@ def run() -> int:
             search_id="",
             backtrace="",
         )
-        search_cursor1, search_more1 = pagination(search1)
-        require_next_page("video_search_page1", search_cursor1, search_more1)
+        search_cursor1, search_id1, backtrace1, search_more1 = search_page_tokens(search1)
+        require_search_next_page(
+            "video_search_page1", search_cursor1, search_id1, backtrace1, search_more1
+        )
         search_ids1 = stable_video_ids(search1)
         summary = _summary("video_search_page1", search1)
         summary.update({"unique_video_count": len(search_ids1), "has_more": search_more1})
@@ -268,10 +320,10 @@ def run() -> int:
             publish_time="7",
             filter_duration="0-1",
             content_type="1",
-            search_id="",
-            backtrace="",
+            search_id=search_id1,
+            backtrace=backtrace1,
         )
-        search_cursor2, search_more2 = pagination(search2)
+        search_cursor2, _, _, search_more2 = search_page_tokens(search2)
         search_ids2 = stable_video_ids(search2)
         summary = _summary("video_search_page2", search2)
         summary.update(page_relation(search_ids1, search_ids2))
@@ -279,7 +331,10 @@ def run() -> int:
         summaries.append(summary)
         emit(summary)
 
-        detail_ids = select_detail_ids(billboard1, billboard2, search1, search2)
+        detail_sources = select_detail_sources(
+            (billboard1, billboard2), (search1, search2)
+        )
+        detail_ids = detail_sources["billboard"] + detail_sources["search"]
         detail = budget.call(
             "multi_video_detail",
             client.douyin_app_v3.fetch_multi_video_v2,
@@ -287,11 +342,8 @@ def run() -> int:
         )
         detail_videos = video_candidates(detail)
         summary = _summary("multi_video_detail", detail)
-        summary.update({
-            "requested_video_count": len(detail_ids),
-            "returned_unique_video_count": len(detail_videos),
-            "metric_coverage": metric_coverage(detail_videos),
-        })
+        summary.update(detail_source_summary(detail_sources, detail))
+        summary.update({"returned_unique_video_count": len(detail_videos), "metric_coverage": metric_coverage(detail_videos)})
         summaries.append(summary)
         emit(summary)
 

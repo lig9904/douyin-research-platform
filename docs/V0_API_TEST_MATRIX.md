@@ -94,8 +94,11 @@
   `calculate_price` 报价 → 低粉爆款榜两页 → 视频搜索两页 → App V3 批量详情 →
   daily usage。
 - 运行必须由人工 `workflow_dispatch` 输入 `BATCH4_10`，并使用 SDK 2.1.1、
-  `max_retries=0`。任一 response envelope、分页游标或稳定作品 ID 不满足预期时立即停止，
-  不继续后续收费调用。
+  `max_retries=0`。Billboard 按固定 `page=1/2` 请求，第一页只要有稳定作品 ID 即可进入
+  第二页（仅明确 `has_more=false` 时停止）；Search 第二页必须传递第一页返回的 cursor、
+  `search_id` 与 `backtrace`，任一缺失或 `has_more` 非真即停止，不继续后续收费调用。
+- App V3 详情批量按来源各最多 10 条、总计最多 20 条；Billboard 与 Search 都必须至少贡献
+  1 条。摘要只按来源统计请求、返回和未返回数量，未返回不解释为删除或私密。
 - 原始响应只落在 gitignored、本机临时目录且权限为 0600；日志只保留数量、布尔值、字段
   覆盖和公开报价，不输出 key、request ID、账号/作品 ID、cursor 或名称。
 

@@ -69,9 +69,9 @@ class _FakeTikHub:
             self.parent = parent
 
         def fetch_video_search_v2(self, *, keyword: str, cursor: object, sort_type: str, publish_time: str, filter_duration: str, content_type: str, search_id: str, backtrace: str):
-            self.parent.calls.append(("search", {"keyword": keyword, "cursor": cursor}))
+            self.parent.calls.append(("search", {"keyword": keyword, "cursor": cursor, "search_id": search_id, "backtrace": backtrace}))
             next_cursor = 20 if cursor == 0 else 40
-            return _envelope({"cursor": next_cursor, "has_more": 1 if cursor == 0 else 0, "items": [_video(f"search-{next_cursor}")]})
+            return _envelope({"cursor": next_cursor, "has_more": 1 if cursor == 0 else 0, "search_id": "private-search-token", "backtrace": "private-backtrace-token", "items": [_video(f"search-{next_cursor}")]})
 
     class App:
         def __init__(self, parent):
@@ -117,13 +117,21 @@ def test_batch4_fixed_ten_call_plan_has_zero_retries_and_redacted_stdout(tmp_pat
         "usage", "price", "price", "price", "billboard", "billboard", "search", "search", "detail", "usage",
     ]
     assert len(client.calls[8][1]["body"]) == 4
+    assert client.calls[7][1] == {
+        "keyword": "秦皇岛旅游",
+        "cursor": 20,
+        "search_id": "private-search-token",
+        "backtrace": "private-backtrace-token",
+    }
     rendered = capsys.readouterr().out
     assert "private-api-key" not in rendered
     assert "billboard-1" not in rendered
     assert "must-not-print" not in rendered
+    assert "private-search-token" not in rendered
+    assert "private-backtrace-token" not in rendered
 
 
-def test_batch4_stops_before_second_billboard_page_when_pagination_is_unavailable(tmp_path, monkeypatch) -> None:
+def test_batch4_stops_before_second_billboard_page_only_when_has_more_is_false(tmp_path, monkeypatch) -> None:
     probe = _load_batch4()
     _install_fake_sdk(monkeypatch)
     _FakeTikHub.page1_has_more = 0
@@ -161,14 +169,25 @@ def test_page_relation_and_selected_detail_ids_do_not_need_public_identifiers() 
         "combined_unique_video_count": 3,
     }
     assert "private-" not in str(probe.page_relation(first, second))
-    assert probe.select_detail_ids(
-        {"code": 200, "data": {"items": [_video("private-a"), _video("private-b")] }},
-        {"code": 200, "data": {"items": [_video("private-b"), _video("private-c")] }},
-    ) == ["private-a", "private-b", "private-c"]
+    selected = probe.select_detail_sources(
+        ({"code": 200, "data": {"items": [_video("private-a"), _video("private-b")] }},),
+        ({"code": 200, "data": {"items": [_video("private-b"), _video("private-c")] }},),
+    )
+    assert selected == {"billboard": ["private-a", "private-b"], "search": ["private-c"]}
+    summary = probe.detail_source_summary(selected, {"code": 200, "data": {"items": [_video("private-a"), _video("private-c")]}})
+    assert summary == {
+        "billboard_requested_count": 2,
+        "billboard_returned_count": 1,
+        "billboard_not_returned_count": 1,
+        "search_requested_count": 1,
+        "search_returned_count": 1,
+        "search_not_returned_count": 0,
+    }
 
 
 def test_environment_and_sdk_version_are_exact(monkeypatch) -> None:
     probe = _load_batch4()
+    _install_fake_sdk(monkeypatch)
 
     monkeypatch.delenv(probe.GATE_ENV, raising=False)
     monkeypatch.delenv(probe.API_KEY_ENV, raising=False)
@@ -176,4 +195,59 @@ def test_environment_and_sdk_version_are_exact(monkeypatch) -> None:
     with pytest.raises(probe.ProbeFailure, match="must equal"):
         probe.require_environment()
     with pytest.raises(probe.ProbeFailure, match="must equal"):
+        probe.run()
+    assert _FakeTikHub.instances == []
+    with pytest.raises(probe.ProbeFailure, match="must equal"):
         probe.require_sdk_version("2.1.2")
+
+
+def test_budget_rejects_eleventh_request_before_calling_provider(tmp_path, monkeypatch) -> None:
+    probe = _load_batch4()
+    monkeypatch.setattr(probe, "OUT_DIR", tmp_path)
+    budget = probe.Batch4Budget(max_calls=10)
+    invoked = 0
+
+    def ok():
+        nonlocal invoked
+        invoked += 1
+        return _envelope({})
+
+    for index in range(10):
+        budget.call(f"call_{index}", ok)
+    with pytest.raises(probe.ProbeFailure, match="budget exhausted"):
+        budget.call("call_11", ok)
+    assert invoked == 10
+
+
+def test_search_second_page_requires_all_opaque_tokens() -> None:
+    probe = _load_batch4()
+
+    with pytest.raises(probe.ProbeFailure, match="missing search_id"):
+        probe.require_search_next_page("search", 20, "", "backtrace", 1)
+    with pytest.raises(probe.ProbeFailure, match="missing backtrace"):
+        probe.require_search_next_page("search", 20, "search-id", None, 1)
+    with pytest.raises(probe.ProbeFailure, match="no second page"):
+        probe.require_search_next_page("search", 20, "search-id", "backtrace", 0)
+    with pytest.raises(probe.ProbeFailure, match="no second page"):
+        probe.require_search_next_page("search", 20, "search-id", "backtrace", "0")
+
+
+def test_billboard_second_page_does_not_require_cursor_or_has_more_presence() -> None:
+    probe = _load_batch4()
+
+    probe.require_billboard_second_page(None)
+    with pytest.raises(probe.ProbeFailure, match="no second page"):
+        probe.require_billboard_second_page(False)
+
+
+def test_detail_selection_rejects_single_source_and_caps_each_source_at_ten() -> None:
+    probe = _load_batch4()
+    billboard = {"code": 200, "data": {"items": [_video(f"billboard-{index}") for index in range(15)]}}
+    search = {"code": 200, "data": {"items": [_video(f"search-{index}") for index in range(15)]}}
+
+    selected = probe.select_detail_sources((billboard,), (search,))
+    assert len(selected["billboard"]) == 10
+    assert len(selected["search"]) == 10
+    assert len(selected["billboard"] + selected["search"]) == 20
+    with pytest.raises(probe.ProbeFailure, match="Billboard and one Search"):
+        probe.select_detail_sources((billboard,), ({"code": 200, "data": {"items": []}},))
