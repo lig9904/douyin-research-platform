@@ -29,6 +29,8 @@ def test_stack_smoke_source_has_disposable_full_stack_and_security_contract() ->
     assert 'RUNTIME_BASE="$ROOT_DIR/work"' in source
     assert 'mktemp -d "$RUNTIME_BASE/test-server-stack-smoke.XXXXXX"' in source
     assert 'chmod 600 "$ENV_FILE"' in source
+    assert 'chmod 755 "$TLS_DIR"' in source
+    assert 'chmod 644 "$TLS_DIR/privkey.pem" "$TLS_DIR/fullchain.pem"' in source
     assert 'example_image WINDMILL_IMAGE' in source
     assert 'example_image POSTGRES_IMAGE' in source
     assert 'example_image NGINX_IMAGE' in source
@@ -47,6 +49,7 @@ def test_stack_smoke_source_has_disposable_full_stack_and_security_contract() ->
     assert '"ALL"' in source and '"CAP_CHOWN"' in source and '"CAP_SETGID"' in source and '"CAP_SETUID"' in source
     assert "no-new-privileges" in source
     assert "proxy logs exposed an Authorization or query sentinel" in source
+    assert "proxy exited before the HTTPS readiness probe succeeded" in source
     assert "compose down --volumes --remove-orphans" in source
     assert "rm -rf -- \"$RUNTIME_DIR\"" in source
     assert "TIKHUB" not in source

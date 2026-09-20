@@ -99,6 +99,11 @@ openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 1 \
   -subj '/CN=localhost' \
   -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
   -keyout "$TLS_DIR/privkey.pem" -out "$TLS_DIR/fullchain.pem" >/dev/null 2>&1
+# The proxy intentionally lacks CAP_DAC_OVERRIDE. On a native Linux bind mount
+# it therefore needs ordinary read/traverse bits for this proxy-only mount.
+# The containing RUNTIME_DIR remains mode 0700 on the host.
+chmod 755 "$TLS_DIR"
+chmod 644 "$TLS_DIR/privkey.pem" "$TLS_DIR/fullchain.pem"
 
 postgres_password="$(openssl rand -hex 24)"
 research_password="$(openssl rand -hex 24)"
@@ -145,6 +150,12 @@ for _ in $(seq 1 90); do
       -H "Authorization: Bearer $AUTH_SENTINEL" \
       "https://127.0.0.1:${proxy_https_port}/api/version?probe=${QUERY_SENTINEL}" >/dev/null; then
     break
+  fi
+  proxy_container="$(compose ps --all -q proxy)"
+  if [[ -n "$proxy_container" && "$(docker inspect --format '{{.State.Running}}' "$proxy_container")" != true ]]; then
+    echo 'ERROR: proxy exited before the HTTPS readiness probe succeeded.' >&2
+    compose logs --no-color proxy >&2
+    exit 1
   fi
   sleep 2
 done
