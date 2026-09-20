@@ -1,0 +1,7 @@
+summary: Resume submitted ASR every five minutes
+schedule: "0 */5 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/analysis/poll_pending_asr
+is_flow: false
+enabled: false
+args: {}
