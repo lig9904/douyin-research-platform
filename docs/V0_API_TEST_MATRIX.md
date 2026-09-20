@@ -88,6 +88,19 @@
 
 结论边界：作品翻页、评论翻页、跨页去重要求和评论回复已获得真实证据，评论回复由 PENDING 提升为 PARTIAL。由于仍是单账号/单作品小样本，且尚未进行删除/私密映射、更多账号分层、Ground Truth 准确性、429/5xx 和本地账单对账，相关能力均不标记 PASS，Issue #1 继续保持开放。
 
+## A5. 第四批计划：发现页、搜索页与详情批量关联（尚未运行）
+
+- 代码与手动 GitHub Actions 只预置一个严格十调用计划：daily usage → 三个
+  `calculate_price` 报价 → 低粉爆款榜两页 → 视频搜索两页 → App V3 批量详情 →
+  daily usage。
+- 运行必须由人工 `workflow_dispatch` 输入 `BATCH4_10`，并使用 SDK 2.1.1、
+  `max_retries=0`。任一 response envelope、分页游标或稳定作品 ID 不满足预期时立即停止，
+  不继续后续收费调用。
+- 原始响应只落在 gitignored、本机临时目录且权限为 0600；日志只保留数量、布尔值、字段
+  覆盖和公开报价，不输出 key、request ID、账号/作品 ID、cursor 或名称。
+
+本节是待执行方案，不构成实测证据；以下矩阵状态保持不变。
+
 ## B. Billboard / 发现层
 
 | 能力 | 预期用途 | L层 | 实测重点 | 生产频率候选 | 状态 |

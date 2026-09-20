@@ -1,0 +1,54 @@
+name: tikhub-paid-v0-batch4
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Type BATCH4_10 to allow the fixed ten-call Batch4 probe"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tikhub-paid-v0
+  cancel-in-progress: false
+
+jobs:
+  batch4:
+    if: ${{ inputs.confirmation == 'BATCH4_10' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install pinned project dependencies
+        run: uv sync --extra dev --locked
+
+      - name: Verify Batch4 safety before exposing the key
+        run: |
+          uv run python -m compileall -q scripts/tikhub/v0_batch2.py scripts/tikhub/v0_batch4.py
+          uv run pytest tests/test_tikhub_v0_batch2.py tests/test_tikhub_v0_batch4.py tests/test_tikhub_transport.py
+
+      - name: Run fixed ten-call paid Batch4 probe
+        env:
+          TIKHUB_API_KEY: ${{ secrets.TIKHUB_API_KEY }}
+          TIKHUB_ENABLE_PAID_BATCH4: ${{ inputs.confirmation }}
+        run: uv run python scripts/tikhub/v0_batch4.py
+
+      - name: Remove ephemeral raw responses
+        if: always()
+        run: |
+          test ! -e tmp/tikhub-v0-batch4 || find tmp/tikhub-v0-batch4 -maxdepth 1 -type f -name '*.json' -delete
