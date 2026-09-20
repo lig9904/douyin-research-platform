@@ -126,3 +126,5 @@ def test_windmill_metadata_keeps_golden_flow_manual_serial_and_server_secret_onl
     assert "psycopg==3.3.6" in lock
     assert "psycopg-binary==3.3.6" in lock
     assert "tikhub==2.1.1" in lock
+    assert "#wmill==1.815.0" in source
+    assert "wmill==1.815.0" in lock
