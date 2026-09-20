@@ -41,6 +41,40 @@
 - 计划任务、并发和失败告警的触发与关闭记录；
 - 失败回滚记录（如发生）：触发条件、恢复点、数据影响与复验结果。
 
+### 1.3 脱敏证据包
+
+上述输出必须汇总为受控的 `test-server-evidence-v1` JSON，而不是只留截图或口头结论。先在权限为 `0700` 的证据目录初始化一个严格 `0600`、全部 `not_run` 的模板；镜像参数必须使用实际的 digest 引用，不能使用 tag：
+
+```bash
+install -d -m 0700 /srv/douyin-research-test/evidence
+scripts/test-server-evidence.py init \
+  --output /srv/douyin-research-test/evidence/acceptance.json \
+  --commit-sha <40位已部署提交SHA> \
+  --compose-project douyin-research-test \
+  --fqdn <测试FQDN> \
+  --postgres-image <postgres镜像@sha256> \
+  --windmill-image <windmill镜像@sha256> \
+  --proxy-image <nginx镜像@sha256>
+```
+
+证据结构 Schema 见 [test-server-evidence-v1.schema.json](test-server-evidence-v1.schema.json)，固定的 19 个检查以对象键表达，因此无法重复或漏项。它只允许固定状态、UTC 时间、`ev_...` 脱敏证据 ID、计数/耗时、SHA-256 和聚合成本状态；没有自由正文、URL、邮箱、请求 ID、媒体地址或 Provider 响应字段。获准 Provider 才标记 `approved=true`；未获准项必须保持零调用、无成本。Schema 用于工具兼容和结构审阅，下面的 Python 验证器还执行敏感值启发式拦截与最终完成态检查，是封存前的权威入口；不得仅凭通用 JSON Schema 校验声称通过。每次更新后执行：
+
+```bash
+scripts/test-server-evidence.py verify \
+  --input /srv/douyin-research-test/evidence/acceptance.json
+```
+
+只有所有必需检查通过、每个获准 Provider 恰好一次受控 smoke 后，才执行最终验收与封存；封存不会输出证据正文，只另写 SHA-256：
+
+```bash
+scripts/test-server-evidence.py seal \
+  --input /srv/douyin-research-test/evidence/acceptance.json \
+  --output /srv/douyin-research-test/evidence/acceptance.sha256 \
+  --require-complete
+```
+
+验证器会拒绝额外字段、重复/缺失检查、非 digest 镜像、保留域名、权限不是 `0600` 的文件以及疑似 Authorization、token、Secret、邮箱、URL/query 或正文值；错误输出不回显可疑值。`verify` 通过仅证明格式和边界合规，不能代替各门的真实执行证据。
+
 ## 2. 拓扑与接口边界
 
 测试服务器只使用当前仓库的固定镜像 digest 与双数据库边界：Windmill 内部库 `windmill` 和业务库 `douyin_research`。浏览器入口经测试域名的反向代理 HTTPS 到 Windmill；Worker 仅使用 Docker 私有网络的 `WINDMILL_INTERNAL_URL`。不得将数据库端口或 Windmill 明文端口直接对公网发布。
@@ -67,10 +101,17 @@
 
 操作：
 
-1. 在候选主机先运行 `scripts/test-server-preflight.sh --domain <测试 FQDN>`；它只读检查 Linux、Docker/Compose、磁盘、80/443 端口、DNS 与 HTTPS 出口，不安装或部署任何内容。DNS 尚在变更窗口时只能显式使用 `--allow-pending-dns`，并在启动前重新执行严格检查。
-2. 在测试服务器取得目标分支的已审阅 commit，校验工作树无未审阅本地改动。
-3. 将 `.env.test-server.example` 复制为 Git 忽略的 `.env.test-server`，替换每个 `CHANGE_ME` 与 `example.invalid`，设为 `0600`；为 PostgreSQL 与研究库设置独立随机 URL-safe 密码，并把证书目录设为仅目标主机可读的绝对路径。
-4. 先执行配置渲染，不启动容器：
+1. 在提交候选进入测试服务器前，先在本机或 CI 执行一次不读取部署配置、不调用 Provider 的完整 Overlay 烟测：
+
+   ```bash
+   TEST_SERVER_STACK_SMOKE=YES scripts/test-server-stack-smoke.sh
+   ```
+
+   它使用随机密码、一次性自签 localhost 证书和唯一 Compose project，真实启动 PostgreSQL、Windmill server、default/native worker 与 proxy，验证回环 TLS、明文拒绝、数据库/Server 无宿主端口、proxy 权限收敛和日志哨兵脱敏，并在退出时删除该项目、卷和临时目录。该结果只证明部署拓扑可以本机启动，不能替代正式 FQDN、CA 证书或真实身份验收。
+2. 在候选主机运行 `scripts/test-server-preflight.sh --domain <测试 FQDN>`；它只读检查 Linux、Docker/Compose、磁盘、80/443 端口、DNS 与 HTTPS 出口，不安装或部署任何内容。DNS 尚在变更窗口时只能显式使用 `--allow-pending-dns`，并在启动前重新执行严格检查。
+3. 在测试服务器取得目标分支的已审阅 commit，校验工作树无未审阅本地改动。
+4. 将 `.env.test-server.example` 复制为 Git 忽略的 `.env.test-server`，替换每个 `CHANGE_ME` 与 `example.invalid`，设为 `0600`；为 PostgreSQL 与研究库设置独立随机 URL-safe 密码，并把证书目录设为仅目标主机可读的绝对路径。
+5. 先执行配置渲染，不启动容器：
 
    ```bash
    docker compose -p douyin-research-test \
@@ -79,8 +120,8 @@
    ```
 
    `WINDMILL_BASE_URL` 必须是最终 `https://<测试 FQDN>`；`WINDMILL_INTERNAL_URL` 保持 Docker 内部地址，不能设成浏览器域名或 localhost。
-5. `docker-compose.test-server.yml` 用 `!reset []` 移除 PostgreSQL 和 Windmill 的直接端口，只由固定 digest 的 Nginx 暴露 80/443。证书目录只读挂载；代理 access log 仅记录无 query 的 `$uri`，不记录 Cookie、Authorization、请求体或请求头。
-6. 经人工复核渲染结果后再启动固定 digest 的 PostgreSQL、Windmill server、default worker、native worker 与 proxy，确认健康检查和两个数据库边界。
+6. `docker-compose.test-server.yml` 用 `!reset []` 移除 PostgreSQL 和 Windmill 的直接端口，只由固定 digest 的 Nginx 暴露 80/443。证书目录只读挂载；代理 access log 仅记录无 query 的 `$uri`，不记录 Cookie、Authorization、请求体或请求头。
+7. 经人工复核渲染结果后再启动固定 digest 的 PostgreSQL、Windmill server、default worker、native worker 与 proxy，确认健康检查和两个数据库边界。
 
 输出与验收：浏览器只能经 `https://<测试 FQDN>` 访问；HTTP 明文入口重定向或拒绝、容器内部服务端口不公开、证书链与主机名匹配。记录实际 FQDN、证书颁发者、镜像 digest 与健康检查结果，但不记录私钥或密码。
 
@@ -223,6 +264,7 @@ Secret 最小集与用途如下；名称是接口契约，不是实际值：
 - [ ] schedule/并发的安全停用与失败处理通过；未授权外呼 schedule 保持禁用。
 - [ ] 双库备份已校验并存放于异机受控位置；数据库恢复库演练、清理和实测耗时通过；globals/roles 已在一次性隔离集群验证，或明确保留为未验收项。
 - [ ] 监控/告警已至少触发一次并完成关闭；日志与证据中无 Secret、正文或 bearer 数据。
+- [ ] `test-server-evidence-v1` 通过 `--require-complete` 校验并生成独立 SHA-256；原始证据位于受控位置且未写入 Git。
 
 ## 5. 进入生产前的独立门
 

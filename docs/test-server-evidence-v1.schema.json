@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:douyin-research:test-server-evidence-v1",
+  "title": "Test Server Evidence V1 Structure",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "environment", "generated_at_utc", "deployment", "checks", "providers", "backup"],
+  "properties": {
+    "schema_version": {"const": "test-server-evidence-v1"},
+    "environment": {"const": "test-server"},
+    "generated_at_utc": {"$ref": "#/$defs/utcTimestamp"},
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit_sha", "compose_project", "fqdn", "images", "certificate_sha256"],
+      "properties": {
+        "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "compose_project": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$"},
+        "fqdn": {
+          "type": "string",
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
+          "not": {"pattern": "\\.(?:example|invalid|test|localhost|local)$"}
+        },
+        "certificate_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "images": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["postgres", "windmill", "proxy"],
+          "properties": {
+            "postgres": {"$ref": "#/$defs/image"},
+            "windmill": {"$ref": "#/$defs/image"},
+            "proxy": {"$ref": "#/$defs/image"}
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "gate_a_host_preflight",
+        "gate_a_compose_render",
+        "gate_a_https_proxy",
+        "gate_a_direct_port_isolation",
+        "gate_b_pre_migration_backup",
+        "gate_b_migration_ledger",
+        "gate_b_windmill_inventory",
+        "gate_b_app_read_path",
+        "gate_c_admin_acl",
+        "gate_c_reviewer_acl",
+        "gate_c_viewer_acl",
+        "gate_c_actor_audit",
+        "gate_d_log_redaction",
+        "gate_e_schedule_safety",
+        "gate_e_concurrency",
+        "gate_e_database_restore",
+        "gate_e_globals_restore",
+        "gate_e_offsite_backup",
+        "gate_e_alert_closure"
+      ],
+      "properties": {
+        "gate_a_host_preflight": {"$ref": "#/$defs/check"},
+        "gate_a_compose_render": {"$ref": "#/$defs/check"},
+        "gate_a_https_proxy": {"$ref": "#/$defs/check"},
+        "gate_a_direct_port_isolation": {"$ref": "#/$defs/check"},
+        "gate_b_pre_migration_backup": {"$ref": "#/$defs/check"},
+        "gate_b_migration_ledger": {"$ref": "#/$defs/check"},
+        "gate_b_windmill_inventory": {"$ref": "#/$defs/check"},
+        "gate_b_app_read_path": {"$ref": "#/$defs/check"},
+        "gate_c_admin_acl": {"$ref": "#/$defs/check"},
+        "gate_c_reviewer_acl": {"$ref": "#/$defs/check"},
+        "gate_c_viewer_acl": {"$ref": "#/$defs/check"},
+        "gate_c_actor_audit": {"$ref": "#/$defs/check"},
+        "gate_d_log_redaction": {"$ref": "#/$defs/check"},
+        "gate_e_schedule_safety": {"$ref": "#/$defs/check"},
+        "gate_e_concurrency": {"$ref": "#/$defs/check"},
+        "gate_e_database_restore": {"$ref": "#/$defs/check"},
+        "gate_e_globals_restore": {"$ref": "#/$defs/check"},
+        "gate_e_offsite_backup": {"$ref": "#/$defs/check"},
+        "gate_e_alert_closure": {"$ref": "#/$defs/check"}
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tikhub", "ark", "asr"],
+      "properties": {
+        "tikhub": {"$ref": "#/$defs/provider"},
+        "ark": {"$ref": "#/$defs/provider"},
+        "asr": {"$ref": "#/$defs/provider"}
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["archive_manifest_sha256", "offsite_copy_evidence_id", "database_restore_seconds", "globals_restore_seconds", "rpo_seconds"],
+      "properties": {
+        "archive_manifest_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "offsite_copy_evidence_id": {"$ref": "#/$defs/nullableEvidenceId"},
+        "database_restore_seconds": {"$ref": "#/$defs/nullableDuration"},
+        "globals_restore_seconds": {"$ref": "#/$defs/nullableDuration"},
+        "rpo_seconds": {"$ref": "#/$defs/nullableDuration"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_a_https_proxy": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"deployment": {"properties": {"certificate_sha256": {"$ref": "#/$defs/sha256"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_b_pre_migration_backup": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"backup": {"properties": {"archive_manifest_sha256": {"$ref": "#/$defs/sha256"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_e_database_restore": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"backup": {"properties": {"database_restore_seconds": {"$ref": "#/$defs/duration"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_e_globals_restore": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"backup": {"properties": {"globals_restore_seconds": {"$ref": "#/$defs/duration"}}}}}
+    },
+    {
+      "if": {"properties": {"checks": {"properties": {"gate_e_offsite_backup": {"properties": {"status": {"const": "pass"}}}}}}},
+      "then": {"properties": {"backup": {"properties": {"offsite_copy_evidence_id": {"$ref": "#/$defs/evidenceId"}}}}}
+    }
+  ],
+  "$defs": {
+    "utcTimestamp": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?Z$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nullableSha256": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "image": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}$"},
+    "evidenceId": {"type": "string", "pattern": "^ev_[a-z0-9][a-z0-9_-]{0,62}$"},
+    "nullableEvidenceId": {"type": ["string", "null"], "pattern": "^ev_[a-z0-9][a-z0-9_-]{0,62}$"},
+    "duration": {"type": "integer", "minimum": 0, "maximum": 31536000},
+    "nullableDuration": {"type": ["integer", "null"], "minimum": 0, "maximum": 31536000},
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "checked_at_utc", "evidence_id"],
+      "properties": {
+        "status": {"enum": ["not_run", "pass", "fail", "blocked"]},
+        "checked_at_utc": {"anyOf": [{"$ref": "#/$defs/utcTimestamp"}, {"type": "null"}]},
+        "evidence_id": {"$ref": "#/$defs/nullableEvidenceId"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "not_run"}}},
+          "then": {"properties": {"checked_at_utc": {"type": "null"}, "evidence_id": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"enum": ["pass", "fail", "blocked"]}}},
+          "then": {"properties": {"checked_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "evidence_id": {"$ref": "#/$defs/evidenceId"}}}
+        }
+      ]
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["approved", "status", "checked_at_utc", "evidence_id", "call_count", "cost_status", "actual_cost_microunits"],
+      "properties": {
+        "approved": {"type": "boolean"},
+        "status": {"enum": ["not_run", "pass", "fail", "blocked"]},
+        "checked_at_utc": {"anyOf": [{"$ref": "#/$defs/utcTimestamp"}, {"type": "null"}]},
+        "evidence_id": {"$ref": "#/$defs/nullableEvidenceId"},
+        "call_count": {"type": "integer", "minimum": 0, "maximum": 1},
+        "cost_status": {"enum": ["not_applicable", "pending", "reconciled"]},
+        "actual_cost_microunits": {"type": ["integer", "null"], "minimum": 0}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"approved": {"const": false}}},
+          "then": {"properties": {"status": {"const": "not_run"}, "checked_at_utc": {"type": "null"}, "evidence_id": {"type": "null"}, "call_count": {"const": 0}, "cost_status": {"const": "not_applicable"}, "actual_cost_microunits": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"approved": {"const": true}, "status": {"const": "not_run"}}},
+          "then": {"properties": {"checked_at_utc": {"type": "null"}, "evidence_id": {"type": "null"}, "call_count": {"const": 0}, "cost_status": {"const": "not_applicable"}, "actual_cost_microunits": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"approved": {"const": true}, "status": {"enum": ["pass", "fail", "blocked"]}}},
+          "then": {"properties": {"checked_at_utc": {"$ref": "#/$defs/utcTimestamp"}, "evidence_id": {"$ref": "#/$defs/evidenceId"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "blocked"}}},
+          "then": {"properties": {"call_count": {"const": 0}, "cost_status": {"const": "not_applicable"}, "actual_cost_microunits": {"type": "null"}}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"call_count": {"const": 1}, "cost_status": {"enum": ["pending", "reconciled"]}}}
+        },
+        {
+          "if": {"properties": {"call_count": {"const": 0}}},
+          "then": {"properties": {"cost_status": {"const": "not_applicable"}}}
+        },
+        {
+          "if": {"properties": {"cost_status": {"const": "reconciled"}}},
+          "then": {"properties": {"actual_cost_microunits": {"type": "integer", "minimum": 0}}}
+        },
+        {
+          "if": {"properties": {"cost_status": {"enum": ["not_applicable", "pending"]}}},
+          "then": {"properties": {"actual_cost_microunits": {"type": "null"}}}
+        }
+      ]
+    }
+  }
+}

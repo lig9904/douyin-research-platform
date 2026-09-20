@@ -16,11 +16,12 @@ on:
       - "db/**"
       - "ops/local-security/**"
       - "ops/test-server/**"
+      - "docs/test-server-evidence-v1.schema.json"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
       - "scripts/local-security-env.sh"
-      - "scripts/test-server-*.sh"
+      - "scripts/test-server-*"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
   pull_request:
@@ -38,11 +39,12 @@ on:
       - "db/**"
       - "ops/local-security/**"
       - "ops/test-server/**"
+      - "docs/test-server-evidence-v1.schema.json"
       - "scripts/backup.sh"
       - "scripts/local-l3-env.sh"
       - "scripts/local-windmill-sync.sh"
       - "scripts/local-security-env.sh"
-      - "scripts/test-server-*.sh"
+      - "scripts/test-server-*"
       - "scripts/verify-stack.sh"
       - ".github/workflows/infra-validate.yml"
 
@@ -52,7 +54,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -75,9 +77,15 @@ jobs:
           bash -n scripts/local-security-env.sh
           bash -n scripts/test-server-preflight.sh
           bash -n scripts/test-server-release.sh
+          bash -n scripts/test-server-stack-smoke.sh
           bash -n scripts/test-server-windmill-preflight.sh
           bash -n scripts/verify-stack.sh
           bash -n scripts/tikhub/v0_smoke.py 2>/dev/null || true
+
+      - name: Validate evidence tooling
+        run: |
+          python3 -m py_compile scripts/test-server-evidence.py
+          python3 -m json.tool docs/test-server-evidence-v1.schema.json >/dev/null
 
       - name: Validate compose
         run: |
@@ -110,6 +118,9 @@ jobs:
             -v "$PWD/ops/test-server/nginx.conf:/etc/nginx/nginx.conf:ro" \
             -v "$PWD/work/ci-tls:/etc/nginx/certs:ro" \
             "$nginx_image" nginx -t
+
+      - name: Exercise disposable test-server full stack
+        run: TEST_SERVER_STACK_SMOKE=YES scripts/test-server-stack-smoke.sh
 
       - name: Start PostgreSQL only
         run: docker compose up -d postgres
