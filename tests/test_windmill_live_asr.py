@@ -17,7 +17,7 @@ SPEC.loader.exec_module(worker)
 
 
 def test_public_inputs_cannot_supply_url_key_or_actor():
-    assert list(inspect.signature(worker.main).parameters) == ["video_id", "asset_id", "review_version"]
+    assert list(inspect.signature(worker.main).parameters) == ["video_id", "asset_id", "review_version", "resume_job_id"]
 
 
 def test_invalid_id_stops_before_configuration(monkeypatch):

@@ -11,4 +11,7 @@ schema:
       type: string
     review_version:
       type: string
+    resume_job_id:
+      type: string
+      description: Optional existing job ID; when set, refuses to create a different task.
   required: [video_id, asset_id, review_version]

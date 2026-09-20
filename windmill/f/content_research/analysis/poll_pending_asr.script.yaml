@@ -1,0 +1,7 @@
+summary: Resume pending ASR jobs without starting new submissions
+description: Fixed database and reviewed worker path. Serial batch of five persisted jobs. Requires at least two normal workers when scheduled.
+timeout: 1800
+concurrent_limit: 1
+schema:
+  type: object
+  properties: {}

@@ -48,16 +48,27 @@ def _configuration():
         raise RuntimeError("ASR worker configuration unavailable") from None
 
 
-def main(video_id: str, asset_id: str, review_version: str) -> dict:
+def main(video_id: str, asset_id: str, review_version: str, resume_job_id: str | None = None) -> dict:
     video, asset = UUID(video_id), UUID(asset_id)
+    resume_id = UUID(resume_job_id) if resume_job_id is not None else None
     try:
         dsn, cfg, media, storage = _configuration()
         request = request_from_reviewed_asset(dsn, video_id=video, asset_id=asset,
             review_version=review_version, storage=storage, public_origin=media["public_endpoint"],
             storage_location=media["storage_location"], api_key=cfg["api_key"], max_polls=cfg["max_polls"])
         with psycopg.connect(dsn) as conn:
+            task_key = live_asr_task_key(video, request.source_fingerprint)
+            if resume_id is not None:
+                saved = conn.execute("""select task_key,status from asr_execution_job
+                    where id=%s""", (resume_id,)).fetchone()
+                if saved is None or saved[0] != task_key or saved[1] not in {"submitted", "running", "completed"}:
+                    raise RuntimeError("ASR resume identity or state changed")
+                if cfg["max_polls"] < 1:
+                    raise RuntimeError("ASR polling disabled in worker configuration")
             prior = conn.execute("select budget_date from asr_execution_job where task_key=%s",
-                (live_asr_task_key(video, request.source_fingerprint),)).fetchone()
+                (task_key,)).fetchone()
+            if resume_id is not None and prior is None:
+                raise RuntimeError("ASR resume reservation missing")
             run_date = prior[0] if prior else date.today()
             if prior:
                 budget = conn.execute("""select 1 from daily_budget
