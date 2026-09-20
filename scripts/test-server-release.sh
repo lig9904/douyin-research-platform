@@ -102,7 +102,7 @@ compose() {
 wait_for_postgres() {
   local attempt
   for attempt in $(seq 1 30); do
-    if compose exec -T postgres pg_isready -U "$postgres_user" -d "$windmill_database" >/dev/null 2>&1; then return 0; fi
+    if compose exec -T postgres pg_isready -h 127.0.0.1 -U "$postgres_user" -d "$windmill_database" >/dev/null 2>&1; then return 0; fi
     sleep 2
   done
   echo 'ERROR: PostgreSQL did not become ready in the explicitly selected Compose project.' >&2

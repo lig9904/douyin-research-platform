@@ -39,7 +39,7 @@ wait_for() {
   local kind="$1" port
   port="$(env_value LOCAL_SECURITY_HTTPS_PORT)"
   for _ in $(seq 1 45); do
-    if [[ "$kind" == pg ]] && compose exec -T postgres pg_isready -U "$(env_value POSTGRES_USER)" -d windmill >/dev/null 2>&1; then return; fi
+    if [[ "$kind" == pg ]] && compose exec -T postgres pg_isready -h 127.0.0.1 -U "$(env_value POSTGRES_USER)" -d windmill >/dev/null 2>&1; then return; fi
     if [[ "$kind" == proxy ]] && curl -fsS --cacert "$RUNTIME_DIR/certs/localhost.crt" "https://localhost:${port}/api/version" >/dev/null 2>&1; then return; fi
     sleep 2
   done

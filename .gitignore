@@ -6,6 +6,7 @@
 !.env.test-server.example
 __pycache__/
 *.pyc
+*.egg-info/
 .venv/
 venv/
 node_modules/
