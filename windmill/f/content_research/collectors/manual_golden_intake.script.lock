@@ -22,3 +22,4 @@ tikhub==2.1.1
 typer==0.27.2
 typing-extensions==4.16.0
 typing-inspection==0.4.4
+wmill==1.815.0
