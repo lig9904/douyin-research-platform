@@ -31,6 +31,8 @@ ASR_CONFIRMATION = "RUN_ASR_PAID"
 ASR_BUDGET_KEY = "windmill_manual_asr"
 ASR_LOCK_NAME = "douyin_research:manual_asr_execution"
 MAX_POLLS_PER_RUN = 3
+MAX_SCHEDULED_POLLS = 72
+MAX_SCHEDULED_AGE_SECONDS = 86400
 ALLOWED_PROVIDER_STATUSES = frozenset(
     {"submitted", "running", "completed", "failed"}
 )
@@ -285,6 +287,8 @@ class ASRExecutionCoordinator:
                             "trigger_source": request.trigger_source,
                             "reviewed_asset_id": str(request.reviewed_asset_id) if request.reviewed_asset_id else None,
                             "media_review_version": request.media_review_version,
+                            "poll_limit": MAX_SCHEDULED_POLLS if request.trigger_source == "schedule" else None,
+                            "poll_max_age_seconds": MAX_SCHEDULED_AGE_SECONDS if request.trigger_source == "schedule" else None,
                             "triggered_by": request.actor.strip() if request.actor else None,
                             "sdk_retries": 0,
                             "media_ref_stored": False,
@@ -302,6 +306,20 @@ class ASRExecutionCoordinator:
     def _reserve_poll(self, request: ASRExecutionRequest, job_id: UUID) -> None:
         budget_date = request.budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            if request.trigger_source == "schedule":
+                cur.execute("""select poll_count,
+                    coalesce((metadata->>'poll_limit')::integer,%s),
+                    created_at + make_interval(secs => coalesce(
+                        (metadata->>'poll_max_age_seconds')::integer,%s)) <= now()
+                    from asr_execution_job where id=%s for update""",
+                    (MAX_SCHEDULED_POLLS, MAX_SCHEDULED_AGE_SECONDS, job_id))
+                policy = cur.fetchone()
+                if policy is None:
+                    raise RuntimeError("ASR poll reservation missing")
+                if policy[0] >= policy[1] or policy[2]:
+                    cur.execute("update asr_execution_job set error_code='poll_limit_reached',updated_at=now() where id=%s", (job_id,))
+                    conn.commit()
+                    raise RuntimeError("ASR polling limit reached; operator review required")
             _reserve_budget(
                 cur,
                 budget_date=budget_date,
