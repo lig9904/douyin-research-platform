@@ -672,11 +672,17 @@ def test_provider_modalities_cannot_claim_unsupplied_evidence() -> None:
         assert cur.fetchone()[0] == 0
 
 
-def test_actual_cost_over_reservation_is_recorded_and_fails_closed() -> None:
+def test_actual_cost_over_reservation_is_recorded_and_fails_closed(monkeypatch) -> None:
     assert DSN
     _clear()
     video_id = _video(selected=True, key="cost-overrun")
     _budget(max_cost=Decimal("0.4"))
+    class Clock(date):
+        current = BUDGET_DATE
+        @classmethod
+        def today(cls):
+            return cls.current
+    monkeypatch.setattr("douyin_research.l3.execution.date", Clock)
     provider = FakeProvider(
         _response(
             cost=TaskCost(
@@ -688,12 +694,18 @@ def test_actual_cost_over_reservation_is_recorded_and_fails_closed() -> None:
             )
         )
     )
+    original_generate = provider.generate
+    def across_midnight(request):
+        Clock.current = BUDGET_DATE + timedelta(days=1)
+        return original_generate(request)
+    provider.generate = across_midnight
     result = L3ExecutionCoordinator(DSN).run(
         _request(
             video_id,
             execute=True,
             confirmation=L3_CONFIRMATION,
             task_key="synthetic-l3-cost-overrun",
+            budget_date=None,
         ),
         evidence_factory=lambda: _evidence(video_id),
         provider_factory=lambda: provider,
@@ -839,18 +851,30 @@ def test_retrying_provider_and_invalid_result_are_rejected_safely() -> None:
         assert cur.fetchone()[0] == 1
 
 
-def test_unknown_price_reservation_is_explicit_and_reconciles_known_usage_cost() -> None:
+def test_unknown_price_reservation_is_explicit_and_reconciles_known_usage_cost(monkeypatch) -> None:
     assert DSN
     _clear()
     video_id = _video(selected=True, key="unknown-live-price")
     _budget(max_requests=None, max_cost=None)
     provider = FakeProvider(_response())
+    class Clock(date):
+        current = BUDGET_DATE
+        @classmethod
+        def today(cls):
+            return cls.current
+    monkeypatch.setattr("douyin_research.l3.execution.date", Clock)
+    original_generate = provider.generate
+    def across_midnight(request):
+        Clock.current = BUDGET_DATE + timedelta(days=1)
+        return original_generate(request)
+    provider.generate = across_midnight
     request = _request(
         video_id,
         execute=True,
         confirmation=L3_CONFIRMATION,
         estimated_llm_cost=None,
         task_key="synthetic-l3-unknown-live-price",
+        budget_date=None,
     )
 
     result = L3ExecutionCoordinator(DSN).run(
@@ -871,6 +895,40 @@ def test_unknown_price_reservation_is_explicit_and_reconciles_known_usage_cost()
             (BUDGET_DATE, PROVIDER, L3_BUDGET_KEY),
         )
         assert cur.fetchone() == (1, 0, Decimal("0.21"))
+    # Simulate a crash between atomic budget settlement and completed status.
+    with psycopg.connect(DSN) as conn:
+        conn.execute("update l3_execution_job set status='running' where task_key=%s", (request.task_key,))
+    replay = L3ExecutionCoordinator(DSN).run(request,
+        evidence_factory=lambda: pytest.fail("recovery must reuse evidence"),
+        provider_factory=lambda: pytest.fail("recovery must not call provider"))
+    assert replay["status"] == "completed"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select spent_cost from daily_budget where provider=%s and budget_key=%s", (PROVIDER, L3_BUDGET_KEY)).fetchone() == (Decimal("0.21"),)
+
+
+def test_persisted_result_waits_for_budget_reconciliation_without_regeneration(monkeypatch):
+    _clear()
+    video = _video(selected=True, key="budget-recovery")
+    _budget(max_requests=None, max_cost=None)
+    provider = FakeProvider(_response())
+    coordinator = L3ExecutionCoordinator(DSN)
+    request = _request(video, execute=True, confirmation=L3_CONFIRMATION, estimated_llm_cost=None)
+    real_reconcile = coordinator._reconcile_completed_budget
+    def unavailable(*args):
+        raise RuntimeError("synthetic ledger outage")
+    monkeypatch.setattr(coordinator, "_reconcile_completed_budget", unavailable)
+    first = coordinator.run(request, evidence_factory=lambda: _evidence(video), provider_factory=lambda: provider)
+    assert first["status"] == "reconciliation_required"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select status from l3_execution_job where task_key=%s", (request.task_key,)).fetchone()[0] != "completed"
+        assert conn.execute("select status from research_task_cost where task_key=%s", (request.task_key,)).fetchone()[0] == "completed"
+    monkeypatch.setattr(coordinator, "_reconcile_completed_budget", real_reconcile)
+    result = coordinator.run(request, evidence_factory=lambda: pytest.fail("no new evidence"),
+                             provider_factory=lambda: pytest.fail("no paid resubmit"))
+    assert result["status"] == "completed"
+    assert len(provider.calls) == 1
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select unknown_price_requests,spent_cost from daily_budget where provider=%s and budget_key=%s", (PROVIDER, L3_BUDGET_KEY)).fetchone() == (0, Decimal("0.21"))
 
 
 def test_unknown_price_is_rejected_when_the_configured_budget_has_a_cost_ceiling() -> None:

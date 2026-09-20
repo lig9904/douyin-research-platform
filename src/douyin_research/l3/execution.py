@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import Protocol
@@ -170,6 +170,7 @@ class L3ExecutionCoordinator:
                 evidence,
             )
             external_calls = 0
+            request = replace(request, budget_date=job["budget_date"])
             try:
                 external_calls += 1
                 response = provider.generate(_provider_request(request, evidence))
@@ -458,8 +459,9 @@ class L3ExecutionCoordinator:
     ) -> None:
         estimated = _decimal(request.estimated_llm_cost)
         assert estimated is not None and actual_cost > estimated
-        budget_date = request.budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute("select budget_date from l3_execution_job where id=%s for update", (job_id,))
+            budget_date = cur.fetchone()[0]
             cur.execute(
                 """
                 insert into research_task_cost(
@@ -507,6 +509,8 @@ class L3ExecutionCoordinator:
                     L3_BUDGET_KEY,
                 ),
             )
+            if cur.rowcount != 1:
+                raise RuntimeError("daily L3 budget disappeared during overrun reconciliation")
             cur.execute(
                 """
                 update l3_execution_job
@@ -534,10 +538,18 @@ class L3ExecutionCoordinator:
         if actual is not None and (not actual.is_finite() or actual < 0):
             raise ValueError("L3 provider actual cost is invalid")
         estimated = _decimal(request.estimated_llm_cost)
-        if actual is None:
-            return
-        budget_date = request.budget_date or date.today()
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute("select budget_date,metadata from l3_execution_job where task_key=%s for update", (request.task_key,))
+            job = cur.fetchone()
+            if job is None:
+                raise RuntimeError("L3 reconciliation job missing")
+            budget_date, metadata = job
+            if (metadata or {}).get("budget_reconciled"):
+                return
+            if actual is None:
+                cur.execute("update l3_execution_job set metadata=metadata || %s where task_key=%s",
+                            (Jsonb({"budget_reconciled": True}), request.task_key))
+                return
             if estimated is None:
                 cur.execute(
                     """
@@ -560,6 +572,8 @@ class L3ExecutionCoordinator:
                 )
             if cur.rowcount != 1:
                 raise RuntimeError("daily L3 budget disappeared during reconciliation")
+            cur.execute("update l3_execution_job set metadata=metadata || %s where task_key=%s",
+                        (Jsonb({"budget_reconciled": True}), request.task_key))
             conn.commit()
 
     def _mark_completed(self, job_id: UUID, task_cost_id: UUID) -> None:
@@ -586,7 +600,7 @@ class L3ExecutionCoordinator:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                select id, status
+                select id, status, llm_cost, cost_currency, cost_basis
                 from research_task_cost
                 where task_key=%s
                 """,
@@ -595,7 +609,14 @@ class L3ExecutionCoordinator:
             cost = cur.fetchone()
             if cost is None:
                 return None
-            task_cost_id, status = cost
+            task_cost_id, status, llm_cost, currency, basis = cost
+            if status == "completed":
+                try:
+                    self._reconcile_completed_budget(request, TaskCost(
+                        api_cost=None, asr_cost=None, llm_cost=llm_cost,
+                        currency=currency, basis=basis))
+                except (psycopg.Error, RuntimeError):
+                    return None
             target = "completed" if status == "completed" else "failed"
             cur.execute(
                 """
