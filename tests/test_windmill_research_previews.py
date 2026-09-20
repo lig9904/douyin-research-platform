@@ -53,6 +53,7 @@ def test_asr_preview_never_loads_adapter_and_preserves_unknown_costs() -> None:
         "execute": False,
         "maximum_external_calls": 3,
         "estimated_total_cost": None,
+        "cost_basis": "unknown",
         "cost_currency": "CNY",
         "execution_ready": False,
         "sdk_retries": 0,
