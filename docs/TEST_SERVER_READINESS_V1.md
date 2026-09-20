@@ -120,12 +120,83 @@ scripts/test-server-evidence.py seal \
    ```
 
    `WINDMILL_BASE_URL` 必须是最终 `https://<测试 FQDN>`；`WINDMILL_INTERNAL_URL` 保持 Docker 内部地址，不能设成浏览器域名或 localhost。
-6. `docker-compose.test-server.yml` 用 `!reset []` 移除 PostgreSQL 和 Windmill 的直接端口，只由固定 digest 的 Nginx 暴露 80/443。证书目录只读挂载；代理 access log 仅记录无 query 的 `$uri`，不记录 Cookie、Authorization、请求体或请求头。
+6. 默认的 `docker-compose.test-server.yml` 用 `!reset []` 移除 PostgreSQL 和 Windmill 的直接端口，只由固定 digest 的 Nginx 暴露 80/443。证书目录只读挂载；代理 access log 仅记录无 query 的 `$uri`，不记录 Cookie、Authorization、请求体或请求头。
 7. 经人工复核渲染结果后再启动固定 digest 的 PostgreSQL、Windmill server、default worker、native worker 与 proxy，确认健康检查和两个数据库边界。
 
 输出与验收：浏览器只能经 `https://<测试 FQDN>` 访问；HTTP 明文入口重定向或拒绝、容器内部服务端口不公开、证书链与主机名匹配。记录实际 FQDN、证书颁发者、镜像 digest 与健康检查结果，但不记录私钥或密码。
 
 回滚：停止这次 Compose 项目并恢复到部署前已确认的镜像/配置版本；若尚未导入数据，只删除本次创建的测试专用资源。若已经写入测试数据，先保留备份和事件记录，不做未经确认的卷删除。
+
+### 外部反代变体：本机不运行 Nginx/TLS
+
+当 HTTPS、证书和公网入口由**另一台专用反代机器**负责时，使用
+`docker-compose.test-server-external-proxy.yml`，不要叠加默认的
+`docker-compose.test-server.yml`。该 Overlay 不创建 Nginx 或 TLS 容器；它移除
+PostgreSQL 所有宿主机端口，仅将 Windmill 固定发布到测试服务器的 RFC1918 私网
+IPv4 地址 `:8000`。它没有 `0.0.0.0` 或公网地址默认值，配置文件缺失绑定地址会
+在 Compose 渲染前失败。
+
+输入与责任边界：网络负责人提供测试服务器私网 IPv4、专用反代机器的私网源 IP
+和公开 FQDN；反代机器负责 HTTPS/TLS、证书更新和仅把流量转发到
+`<测试服务器私网IP>:8000`。测试服务器防火墙只允许该反代源 IP 访问 TCP 8000；
+不开放 80、443、5432，Docker 也不得映射 PostgreSQL。
+
+在复制受 Git 忽略的环境文件并替换所有占位值后，先以 `0600` 权限验证，再渲染和
+启动。以下命令不读取或显示 Secret 值：
+
+```bash
+cp .env.test-server-external-proxy.example .env.test-server-external-proxy
+chmod 600 .env.test-server-external-proxy
+scripts/test-server-external-proxy-validate.sh \
+  --env-file .env.test-server-external-proxy \
+  --project douyin-research-test
+
+docker compose -p douyin-research-test \
+  --env-file .env.test-server-external-proxy \
+  -f docker-compose.yml \
+  -f docker-compose.test-server-external-proxy.yml \
+  up -d postgres windmill_server windmill_worker windmill_worker_native
+```
+
+后续执行 `scripts/test-server-release.sh` 的备份、迁移、验证或恢复演练时，追加
+`--compose-overlay docker-compose.test-server-external-proxy.yml`；脚本只接受这两个
+仓库内已审阅的 Overlay 文件名，并会先重复执行外部反代配置校验。
+
+外部反代 profile 的完整数据库操作写法如下；`<backup-dir>` 只能使用同一脚本刚刚
+创建并验证过的归档。恢复演练仍只使用固定临时库，绝不覆盖当前测试库：
+
+```bash
+scripts/test-server-release.sh backup \
+  --env-file .env.test-server-external-proxy --project douyin-research-test \
+  --backup-root /srv/douyin-research-test/backups \
+  --compose-overlay docker-compose.test-server-external-proxy.yml
+
+TEST_SERVER_RESEARCH_MIGRATE=YES scripts/test-server-release.sh migrate \
+  --env-file .env.test-server-external-proxy --project douyin-research-test \
+  --backup-root /srv/douyin-research-test/backups \
+  --compose-overlay docker-compose.test-server-external-proxy.yml
+
+scripts/test-server-release.sh verify \
+  --env-file .env.test-server-external-proxy --project douyin-research-test \
+  --backup-root /srv/douyin-research-test/backups \
+  --compose-overlay docker-compose.test-server-external-proxy.yml
+
+TEST_SERVER_RESTORE_DRILL=YES scripts/test-server-release.sh restore-drill \
+  --env-file .env.test-server-external-proxy --project douyin-research-test \
+  --backup-root /srv/douyin-research-test/backups \
+  --compose-overlay docker-compose.test-server-external-proxy.yml \
+  <backup-dir>
+```
+
+验收时从反代机器验证 `/api/version` 的 HTTPS 路径，再在测试服务器确认只有
+Windmill 的 `私网IP:8000` 绑定、PostgreSQL 无宿主机绑定。`WINDMILL_BASE_URL`
+必须保持最终公开 `https://<FQDN>`，以保证浏览器跳转和回调 URL 正确；它不是
+测试服务器监听地址。现有含 Nginx 的 Overlay 仍保留给需要同机 TLS 终止的环境。
+仓库 CI 还会在 Linux runner 选择实际 RFC1918 地址、生成随机数据库密码并启动
+PostgreSQL、Windmill server/default/native worker；它以 Docker inspect 验证无 proxy、
+PostgreSQL 无宿主机端口以及 Windmill 唯一准确的 `私网IP:8000` 绑定，退出时删除
+该一次性 project 与卷。该烟测不配置 Provider，也不能替代反代源 IP 防火墙和真实
+HTTPS 路径验收。
 
 ### 门 B：数据库、迁移与 Windmill 同步
 

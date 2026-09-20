@@ -136,6 +136,9 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "ledger contains an unknown filename or changed SHA-256" in source
     assert "ledger is not a contiguous reviewed prefix" in source
     assert "filename text primary key, sha256 text not null" in source
+    assert "docker-compose.test-server-external-proxy.yml" in source
+    assert "reviewed test-server overlay filename" in source
+    assert "test-server-external-proxy-validate.sh" in source
 
 
 def test_release_script_is_executable() -> None:

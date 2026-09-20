@@ -4,6 +4,7 @@
 !.env.l3-local.example
 !.env.local-security.example
 !.env.test-server.example
+!.env.test-server-external-proxy.example
 __pycache__/
 *.pyc
 *.egg-info/

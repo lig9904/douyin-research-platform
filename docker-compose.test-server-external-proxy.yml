@@ -1,0 +1,18 @@
+# Test-server overlay for an externally managed TLS reverse proxy.
+#
+# The proxy machine terminates HTTPS and reaches this host over its private
+# network. This overlay deliberately does not create an Nginx/TLS container,
+# does not publish PostgreSQL, and only publishes Windmill on the explicitly
+# configured RFC1918 host address at TCP 8000. Validate the ignored env file
+# with scripts/test-server-external-proxy-validate.sh before `compose up`.
+services:
+  postgres:
+    ports: !reset []
+
+  windmill_server:
+    environment:
+      BASE_URL: ${WINDMILL_BASE_URL:?WINDMILL_BASE_URL is required}
+    # `!override` replaces the base loopback publisher rather than merging a
+    # second host binding for the same container port.
+    ports: !override
+      - "${TEST_SERVER_WINDMILL_BIND_HOST:?TEST_SERVER_WINDMILL_BIND_HOST must be an explicit private IPv4 address}:${TEST_SERVER_WINDMILL_PORT:-8000}:8000"
