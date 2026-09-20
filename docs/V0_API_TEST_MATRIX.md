@@ -115,12 +115,13 @@
   cursor、`search_id`、`backtrace` 或原始响应。
 - 随后在已登录 TikHub 后台核对供应商聚合明细：本批实际涉及的
   `get_user_daily_usage` 与 `calculate_price` 单价、基础费用均为 0。本次没有进入任何收费数据
-  endpoint，因此本批增量消费确认为 0；后台同日总费用包含此前已记录的其他测试，不能归给本批。
+  endpoint，后台未观察到本批新增费用。由于该页面按供应商日期聚合、没有本次 run 的独立账单
+  流水与时区归因，不能把聚合结果写成“本批增量消费精确确认为 0”。
 
-这次运行证明 SDK 2.1.1 能把当前上游限流映射为 `TikHubRateLimitError`，且本执行器不会重试。
-它没有记录 HTTP `Retry-After`；后台已确认本次失败发生在零价 `calculate_price`，但尚未证明收费
-数据 endpoint 遇到 429 时是否计费，因此 429 只从 PENDING 提升为 PARTIAL；Billboard 两页、
-Search 两页和 App V3 跨层关联仍未获得本批真实证据，原矩阵状态不变。
+这次运行证明 SDK 2.1.1 抛出 `TikHubRateLimitError` 后本执行器不会重试并会立即停止。日志没有
+记录实际 HTTP 状态或 `Retry-After`，因此不能把 SDK 异常名称直接写成已验证 HTTP 429，429
+继续保持 PENDING。后台只说明本次触达的账户接口是零价，尚未证明收费数据 endpoint 遇到限流
+时是否计费；Billboard 两页、Search 两页和 App V3 跨层关联也未获得本批真实证据。
 
 ## B. Billboard / 发现层
 
@@ -197,7 +198,7 @@ Search 两页和 App V3 跨层关联仍未获得本批真实证据，原矩阵�
 |---|---|---|
 | calculate_price | 每个生产endpoint的真实阶梯报价 | PARTIAL |
 | get_user_daily_usage | 与本地 external_api_call 对账 | PARTIAL |
-| 429 | 已确认 `TikHubRateLimitError`、零重试和失败即停；本次零价报价调用未收费，Retry-After / 收费数据接口是否计费仍未知 | PARTIAL |
+| 429 | SDK 已出现 `TikHubRateLimitError` 且执行器零重试、失败即停；实际 HTTP 状态、Retry-After、收费数据接口是否计费仍未验证 | PENDING |
 | 402/余额不足 | SDK异常类型、是否重试 | PENDING |
 | 5xx | SDK重试次数、实际退避 | PENDING |
 
