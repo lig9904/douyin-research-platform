@@ -61,3 +61,4 @@ def test_app_surface_keeps_paid_envelope_fixed_and_server_owned() -> None:
     assert "enrich_details: false" in ui
     assert "$res:f/content_research/research_db" in config
     assert "wmill==1.815.0" in lock
+    assert "workspace-dependencies-mode: manual" not in lock
