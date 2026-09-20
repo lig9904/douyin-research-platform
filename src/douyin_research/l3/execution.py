@@ -665,7 +665,7 @@ class L3ExecutionCoordinator:
             request.input_fingerprint,
             _decimal(request.estimated_llm_cost),
             request.cost_currency,
-            request.budget_date or date.today(),
+            request.budget_date or job["budget_date"],
             L3_BUDGET_KEY,
         )
         actual = (

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, timedelta
+from dataclasses import replace
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -395,7 +396,7 @@ def test_gate_and_budget_fail_before_evidence_or_provider() -> None:
     assert calls == []
 
 
-def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
+def test_complete_is_bounded_costed_redacted_and_replay_safe(monkeypatch) -> None:
     assert DSN
     _clear()
     video_id = _video(selected=True)
@@ -426,11 +427,20 @@ def test_complete_is_bounded_costed_redacted_and_replay_safe() -> None:
         provider_factory=lambda: provider,
     )
     replay_calls = []
+    class NextDay(date):
+        @classmethod
+        def today(cls):
+            return BUDGET_DATE + timedelta(days=1)
+    monkeypatch.setattr("douyin_research.l3.execution.date", NextDay)
     replay = coordinator.run(
-        request,
+        replace(request, budget_date=None),
         evidence_factory=lambda: replay_calls.append("evidence") or {},
         provider_factory=lambda: replay_calls.append("provider") or provider,
     )
+    with pytest.raises(ValueError, match="different L3 execution inputs"):
+        coordinator.run(replace(request, budget_date=NextDay.today()),
+            evidence_factory=lambda: pytest.fail("unexpected evidence read"),
+            provider_factory=lambda: pytest.fail("unexpected paid call"))
 
     assert result["status"] == "completed"
     assert result["external_calls"] == 1
