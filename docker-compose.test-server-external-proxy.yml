@@ -16,3 +16,10 @@ services:
     # second host binding for the same container port.
     ports: !override
       - "${TEST_SERVER_WINDMILL_BIND_HOST:?TEST_SERVER_WINDMILL_BIND_HOST must be an explicit private IPv4 address}:${TEST_SERVER_WINDMILL_PORT:-8000}:8000"
+
+  windmill_worker:
+    environment:
+      # An authenticated App runnable can synchronously dispatch one bounded
+      # child script. Keep a second execution slot so the child cannot starve
+      # behind its waiting parent on the small test server.
+      NUM_WORKERS: "2"
