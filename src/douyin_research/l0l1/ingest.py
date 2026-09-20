@@ -68,6 +68,7 @@ class L0L1Store:
         output_count: int | None = None,
         promoted_l1_count: int | None = None,
         api_cost: float | None = None,
+        cost_currency: str | None = None,
         summary: dict | None = None,
     ) -> None:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
@@ -80,6 +81,7 @@ class L0L1Store:
                     output_count=coalesce(%s,output_count),
                     promoted_l1_count=coalesce(%s,promoted_l1_count),
                     api_cost=coalesce(%s,api_cost),
+                    cost_currency=coalesce(%s,cost_currency),
                     summary=summary || %s
                 where id=%s
                 """,
@@ -89,6 +91,7 @@ class L0L1Store:
                     output_count,
                     promoted_l1_count,
                     api_cost,
+                    cost_currency,
                     Jsonb(summary or {}),
                     run_id,
                 ),
