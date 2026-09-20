@@ -46,3 +46,20 @@
 仍须真实验证两次计划执行、子任务正确路由、供应商轮询、结果入库及页面展示。
 
 供应商轮询失败时，即便持久化任务仍为 submitted/running，Worker 和轮询入口也将非空 `error_code` 视为本次运行失败，避免 Windmill 误显示成功。任务本身保留可恢复状态，后续调度仍使用原供应商任务引用，不重提转写；成功轮询后由协调器清除旧错误。
+
+### 独立发布调度
+
+`windmill/wmill.yaml` 保持 `includeSchedules: false`，常规 source sync 不发布计划，避免意外覆盖已有计划。以下命令只能在经 JumpServer 进入的服务器、使用已配置的 Windmill CLI 身份执行；本机文档记录不代表已执行。
+
+```sh
+cd /srv/douyin-research-test/app/windmill
+wmill schedule get f/content_research/analysis/poll_pending_asr --workspace test-research
+# 确认无同名计划，或已核对既有计划并保存其配置之后，再发布默认关闭的模板：
+wmill schedule push f/content_research/analysis/poll_pending_asr.schedule.yaml f/content_research/analysis/poll_pending_asr --workspace test-research
+wmill schedule get f/content_research/analysis/poll_pending_asr --workspace test-research
+# 确认脚本版本、双 Worker、固定配置与一次手动恢复通过后才启用：
+wmill schedule enable f/content_research/analysis/poll_pending_asr --workspace test-research
+wmill schedule get f/content_research/analysis/poll_pending_asr --workspace test-research
+```
+
+`schedule push` 会覆盖同名远端计划，不得盲目重跑覆盖正在工作的配置。部署应记录推送前后 cron、时区、script_path、enabled 和运行身份，随后观察两个真实计划任务完成。CLI 参数已由本地 1.815.0 帮助核验；真实发布仍待现场执行。

@@ -1,6 +1,7 @@
 summary: Submit or resume ASR for an approved private audio asset
 description: Paid ASR may occur. Fixed server configuration; no URLs or credentials accepted from caller. Existing tasks are resumed without resubmission.
 timeout: 300
+lock: '!inline f/content_research/analysis/run_reviewed_asr.script.lock'
 concurrent_limit: 1
 schema:
   type: object

@@ -60,7 +60,9 @@ def main(video_id: str, asset_id: str, review_version: str, resume_job_id: str |
             task_key = live_asr_task_key(video, request.source_fingerprint)
             if resume_id is not None:
                 saved = conn.execute("""select task_key,status from asr_execution_job
-                    where id=%s""", (resume_id,)).fetchone()
+                    where id=%s and provider=%s and provider_task_ref is not null
+                    and submission_count=1 and budget_key=%s""",
+                    (resume_id, VOLCENGINE_ASR_PROVIDER, ASR_BUDGET_KEY)).fetchone()
                 if saved is None or saved[0] != task_key or saved[1] not in {"submitted", "running", "completed"}:
                     raise RuntimeError("ASR resume identity or state changed")
                 if cfg["max_polls"] < 1:

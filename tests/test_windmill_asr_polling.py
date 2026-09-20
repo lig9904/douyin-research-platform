@@ -38,6 +38,9 @@ def test_resume_guard_never_creates_new_budget_or_calls_provider(monkeypatch, sa
         def __exit__(self, *args): pass
         def execute(self, sql, params):
             assert "where id=%s" in sql
+            assert "provider=%s" in sql and "provider_task_ref is not null" in sql
+            assert "submission_count=1" in sql and "budget_key=%s" in sql
+            assert params[1:] == (worker.VOLCENGINE_ASR_PROVIDER, worker.ASR_BUDGET_KEY)
             return SimpleNamespace(fetchone=lambda: saved)
     monkeypatch.setattr(worker.psycopg, "connect", lambda _: Conn())
     monkeypatch.setattr(worker, "LiveASRService", lambda _: pytest.fail("provider"))
@@ -113,3 +116,14 @@ def test_database_selector_excludes_unsubmitted_and_terminal_jobs():
     finally:
         with psycopg.connect(dsn) as conn:
             conn.execute("delete from source_video where id=%s", (video,))
+
+
+def test_polling_release_metadata_includes_pinned_runtime_dependencies():
+    workspace_lock = (ROOT.parents[2] / "wmill-lock.yaml").read_text()
+    for name in ("run_reviewed_asr", "poll_pending_asr"):
+        lock = (ROOT / f"{name}.script.lock").read_text()
+        metadata = (ROOT / f"{name}.script.yaml").read_text()
+        assert "# py: 3.13" in lock
+        assert "wmill==1.815.0" in lock and "psycopg-binary==3.3.6" in lock
+        assert f"!inline f/content_research/analysis/{name}.script.lock" in metadata
+        assert f"f/content_research/analysis/{name}:" in workspace_lock
