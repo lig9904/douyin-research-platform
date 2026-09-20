@@ -148,6 +148,11 @@ def test_external_proxy_validator_rejects_placeholder_example_and_accepts_bound_
     assert result.returncode == 2
     assert "RESEARCH_DB_PASSWORD is missing or still a placeholder" in result.stderr
 
+    no_docker_bin = tmp_path / "no-docker-bin"
+    no_docker_bin.mkdir()
+    unavailable_docker = no_docker_bin / "docker"
+    unavailable_docker.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    unavailable_docker.chmod(0o755)
     env_file.write_text(base_valid, encoding="utf-8")
     result = subprocess.run(
         [str(EXTERNAL_PROXY_VALIDATOR), "--env-file", str(env_file), "--skip-local-bind-check"],
@@ -155,7 +160,7 @@ def test_external_proxy_validator_rejects_placeholder_example_and_accepts_bound_
         text=True,
         capture_output=True,
         check=False,
-        env={**os.environ, "CI": "true", "PATH": "/usr/bin:/bin"},
+        env={**os.environ, "CI": "true", "PATH": f"{no_docker_bin}:{os.environ['PATH']}"},
     )
     assert result.returncode == 3
     assert "BLOCKED: a reachable Docker daemon" in result.stderr
