@@ -32,6 +32,7 @@ def test_external_proxy_overlay_has_no_local_tls_proxy_or_database_port() -> Non
     assert "0.0.0.0" not in source
     assert "proxy:" not in source
     assert "image: nginx" not in source.lower()
+    assert 'NUM_WORKERS: "2"' in source
     assert "TIKHUB_API_KEY" not in source
 
 

@@ -86,7 +86,7 @@ V1 可全部部署在同一台 Linux 主机。
 ## 5. 初始 Worker
 
 前期建议：
-- default worker: 1 replica，约 1 vCPU / 1–2GB RAM
+- default worker: 本地单任务环境 1 个执行槽；测试服 2 个执行槽，约 1–2 vCPU / 2–4GB RAM。第二个槽用于已登录 App 父任务同步等待受控子任务，避免父子任务在单槽队列中互相阻塞；它不放宽业务并发或付费调用上限
 - native worker: 1 replica
 - 后续根据排队情况增加 replicas
 
