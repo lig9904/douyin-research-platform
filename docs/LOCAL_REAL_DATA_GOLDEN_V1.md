@@ -6,9 +6,10 @@
 
 - 默认 `dry-run`：不读 Secret、不连数据库、不触网。
 - 实际运行只允许一页 `page=1`、最多 5 条视频、24 小时窗口。
-- 默认最多 2 次未缓存外部调用：榜单一次，加最多 5 条视频的批量详情一次。
+- 每批默认最多 2 次未缓存外部调用：榜单一次，加最多 5 条视频的批量详情一次。这不是每日两次上限，同一天允许再次运行独立批次。
 - SDK 和 REST transport 都设置零重试；异常即失败，不自动补发。
 - Provider 在每个未缓存调用前向 `daily_budget(tikhub, golden-local)` 预留一次；缓存命中不消耗配额。L0/L1 Runner 明确不再重复预留。
+- 每日账本持续累计请求和报价成本，默认 `max_requests=null`、`max_cost=null`；本批请求上限由独立计数执行，不清零每日历史使用量。显式传入金额上限时仍执行相应成本检查。
 - 视频唯一性使用既有 `(platform, platform_video_id)`；同一视频不会重复插入。每次运行仍保留独立 `pipeline_run` / `discovery_event` 审计记录。
 - Provider 原始响应仅保存在本机 PostgreSQL 的 `external_api_response` 以支持重放，绝不写进 Git、命令标准输出或文档。
 

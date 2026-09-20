@@ -51,9 +51,11 @@ def test_real_tikhub_golden_path_is_ledgered_and_queryable() -> None:
         assert cur.fetchone()[0] >= 1
         cur.execute(
             """
-            select used_requests from daily_budget
+            select max_requests, used_requests from daily_budget
             where budget_date=current_date and provider='tikhub' and budget_key=%s
             """,
             (GOLDEN_BUDGET_KEY,),
         )
-        assert cur.fetchone()[0] <= 2
+        max_requests, used_requests = cur.fetchone()
+        assert max_requests is None
+        assert used_requests >= result["uncached_call_count"]

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from types import SimpleNamespace
 
+import psycopg
 import pytest
 
 import douyin_research.l0l1.real_data as real_data
@@ -10,11 +12,16 @@ from douyin_research.l0l1.runner import DiscoverySource, L0L1Runner
 from douyin_research.l0l1.real_data import (
     GOLDEN_MAX_EXTERNAL_CALLS,
     GOLDEN_MAX_ITEMS,
+    _make_run_limited_before_external_call,
     make_plan,
     plan_dict,
 )
 from douyin_research.providers.endpoints import get_endpoint
+from douyin_research.providers.errors import ProviderBudgetError
 from douyin_research.providers.types import ProviderPage
+
+
+TEST_DSN = os.getenv("TEST_DATABASE_URL")
 
 
 def test_default_golden_plan_is_dry_run_and_hard_bounded() -> None:
@@ -79,12 +86,62 @@ def test_no_detail_plan_can_fit_one_external_call() -> None:
     assert plan.max_external_calls == 1
 
 
+def test_run_call_limit_is_independent_from_daily_ledger() -> None:
+    reserved = []
+    reserve = _make_run_limited_before_external_call(
+        reserve_daily_ledger=lambda spec: reserved.append(spec.key),
+        max_external_calls=2,
+    )
+    spec = get_endpoint("douyin.billboard.low_fan")
+
+    reserve(spec)
+    reserve(spec)
+    with pytest.raises(ProviderBudgetError, match="3>2"):
+        reserve(spec)
+
+    assert reserved == [spec.key, spec.key]
+
+
+def test_rejected_daily_reservation_does_not_consume_run_slot() -> None:
+    attempts = []
+
+    def ledger(spec):
+        attempts.append(spec.key)
+        if len(attempts) == 1:
+            raise ProviderBudgetError("configured daily ceiling")
+
+    reserve = _make_run_limited_before_external_call(
+        reserve_daily_ledger=ledger, max_external_calls=1,
+    )
+    spec = get_endpoint("douyin.billboard.low_fan")
+    with pytest.raises(ProviderBudgetError, match="configured daily ceiling"):
+        reserve(spec)
+    reserve(spec)
+    with pytest.raises(ProviderBudgetError, match="2>1"):
+        reserve(spec)
+    assert attempts == [spec.key, spec.key]
+
+
+@pytest.mark.parametrize("max_external_calls", [False, 0, 3, "2"])
+def test_run_call_limit_rejects_directly_constructed_invalid_plan(max_external_calls) -> None:
+    plan = replace(make_plan(dry_run=False), max_external_calls=max_external_calls)
+
+    with pytest.raises(ValueError, match="max_external_calls"):
+        real_data.run_live(
+            dsn="postgresql://invalid.invalid/research",
+            api_key="not-used",
+            plan=plan,
+            triggered_by="test",
+        )
+
+
 def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
     completions = []
+    configurations = []
 
     class Budget:
         def configure(self, **kwargs):
-            pass
+            configurations.append(kwargs)
 
         def make_before_external_call(self, **kwargs):
             return lambda _: None
@@ -115,6 +172,13 @@ def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
     monkeypatch.setattr(real_data, "L1Scorer", lambda _: None)
     monkeypatch.setattr(real_data, "L0L1Runner", Runner)
     result = real_data.run_live(dsn="test", api_key="test", plan=make_plan(dry_run=False), triggered_by="test")
+    assert configurations == [{
+        "provider": "tikhub",
+        "budget_key": "golden-local",
+        "max_requests": None,
+        "max_cost": None,
+        "cost_currency": "USD",
+    }]
     assert result["cached_call_count"] == 1
     assert result["uncached_call_count"] == 2
     assert completions[0][1]["api_cost"] == pytest.approx(0.051)
@@ -167,3 +231,66 @@ def test_provider_budget_mode_does_not_double_reserve_runner_calls() -> None:
 
     assert result.observations == 0
     assert budget.calls == []
+
+
+@pytest.mark.skipif(not TEST_DSN, reason="TEST_DATABASE_URL not configured")
+def test_two_same_day_golden_batches_keep_run_cap_and_accumulate_daily_ledger() -> None:
+    """Exercise the real ledger without a transport or provider call."""
+    assert TEST_DSN
+    with psycopg.connect(TEST_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "delete from daily_budget where provider='tikhub' and budget_key=%s",
+            (real_data.GOLDEN_BUDGET_KEY,),
+        )
+        conn.commit()
+
+    # Reproduce the observed stale row: it has already consumed its old
+    # two-request daily maximum before the next operator batch begins.
+    stale_budget = real_data.DailyBudgetGuard(TEST_DSN)
+    stale_budget.configure(
+        provider="tikhub", budget_key=real_data.GOLDEN_BUDGET_KEY,
+        max_requests=2, max_cost=0.1,
+    )
+    stale_budget.acquire(
+        provider="tikhub", budget_key=real_data.GOLDEN_BUDGET_KEY,
+        requests=2, estimated_cost=0.0,
+    )
+    # Two hooks model two independent operator batches.  Each gets a fresh
+    # two-call allowance while both write into the same durable day ledger.
+    spec = get_endpoint("douyin.billboard.low_fan")
+    first_batch = _make_run_limited_before_external_call(
+        reserve_daily_ledger=stale_budget.make_before_external_call(
+            provider="tikhub", budget_key=real_data.GOLDEN_BUDGET_KEY,
+        ),
+        max_external_calls=2,
+    )
+    second_batch = _make_run_limited_before_external_call(
+        reserve_daily_ledger=stale_budget.make_before_external_call(
+            provider="tikhub", budget_key=real_data.GOLDEN_BUDGET_KEY,
+        ),
+        max_external_calls=2,
+    )
+    for batch in (first_batch, second_batch):
+        # Mirror run_live's configuration step before every batch; it must
+        # remove the obsolete ceiling without resetting historical usage.
+        stale_budget.configure(
+            provider="tikhub", budget_key=real_data.GOLDEN_BUDGET_KEY,
+            max_requests=None, max_cost=None,
+        )
+        batch(spec)
+        batch(spec)
+        with pytest.raises(ProviderBudgetError, match="3>2"):
+            batch(spec)
+
+    with psycopg.connect(TEST_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """
+            select max_requests, max_cost, used_requests, spent_cost
+            from daily_budget
+            where budget_date=current_date and provider='tikhub' and budget_key=%s
+            """,
+            (real_data.GOLDEN_BUDGET_KEY,),
+        )
+        row = cur.fetchone()
+        assert row[:3] == (None, None, 6)
+        assert float(row[3]) == pytest.approx(4 * spec.unit_cost_usd)
