@@ -1,19 +1,27 @@
-"""Authenticated app dispatcher for the bounded TikHub golden intake."""
+# /// script
+# requires-python = "==3.12.*"
+# dependencies = [
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@c45d988cea43e8c5a28de64563af19cea4a46e37",
+#   "psycopg[binary]==3.3.6",
+# ]
+# ///
+
+"""Run the bounded intake in the authenticated app job itself."""
 
 from __future__ import annotations
 
 import json
 import os
 import re
-import time
 from typing import Any
 from urllib import parse, request
 
 
 CONFIRMATION = "RUN_TIKHUB_GOLDEN_PAID"
-SCRIPT_PATH = "f/content_research/collectors/manual_golden_intake"
 DB_RESOURCE = "$res:f/content_research/research_db"
 WRITER_ALLOWLIST_PATH = "f/content_research/research_action_writers"
+API_KEY_PATH = "f/content_research/tikhub_api_key"
+LOCK_NAME = "douyin_research:manual_golden_intake"
 
 
 def _api(method: str, endpoint: str, payload: dict[str, Any] | None = None) -> Any:
@@ -52,35 +60,36 @@ def _get_variable(path: str) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _run_child(args: dict[str, Any]) -> dict[str, Any]:
-    params = {}
-    if os.environ.get("WM_JOB_ID"):
-        params["parent_job"] = os.environ["WM_JOB_ID"]
-    if os.environ.get("WM_ROOT_FLOW_JOB_ID"):
-        params["root_job"] = os.environ["WM_ROOT_FLOW_JOB_ID"]
-    query = f"?{parse.urlencode(params)}" if params else ""
-    path = parse.quote(SCRIPT_PATH, safe="/")
-    job_id = _api("POST", f"w/{_workspace()}/jobs/run/p/{path}{query}", args)
-    if not isinstance(job_id, str) or not job_id:
-        raise RuntimeError("Windmill internal dispatch failed")
+def _run_intake(args: dict[str, Any], actor: str) -> dict[str, Any]:
+    import psycopg
+    from psycopg.conninfo import make_conninfo
+    from douyin_research.l0l1.real_data import make_plan, run_live
 
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        state = _api(
-            "GET",
-            f"w/{_workspace()}/jobs_u/completed/get_result_maybe/{parse.quote(job_id, safe='')}",
-        )
-        if isinstance(state, dict) and state.get("completed"):
-            if state.get("success") and isinstance(state.get("result"), dict):
-                return state["result"]
-            raise RuntimeError("TikHub golden intake failed")
-        time.sleep(0.5)
-    _api(
-        "POST",
-        f"w/{_workspace()}/jobs_u/queue/cancel/{parse.quote(job_id, safe='')}",
-        {"reason": "parent app timeout"},
-    )
-    raise TimeoutError("TikHub golden intake timed out")
+    plan = make_plan(dry_run=False, **{
+        key: value for key, value in args.items()
+        if key not in {"execute", "confirmation"}
+    })
+    path = parse.quote(DB_RESOURCE.removeprefix("$res:"), safe="/")
+    db = _api("GET", f"w/{_workspace()}/resources/get_value_interpolated/{path}")
+    dsn = make_conninfo(**{key: db[key] for key in
+        ("host", "port", "user", "password", "dbname", "sslmode") if key in db})
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("select pg_try_advisory_lock(hashtext(%s))", (LOCK_NAME,))
+        if not cur.fetchone()[0]:
+            raise RuntimeError("another manual golden intake is already running")
+        try:
+            api_key = _get_variable(API_KEY_PATH).strip()
+            if not api_key:
+                raise RuntimeError("TikHub secret is not configured")
+            result = run_live(dsn=dsn, api_key=api_key, plan=plan, triggered_by=actor)
+        finally:
+            cur.execute("select pg_advisory_unlock(hashtext(%s))", (LOCK_NAME,))
+    fields = ("source_count", "observations", "unique_platform_videos", "scored_videos",
+              "max_external_calls", "provider_call_count", "cached_call_count",
+              "uncached_call_count", "retry_count")
+    return {"status": "completed", "execute": True,
+            **{key: int(result[key]) for key in fields},
+            "maximum_cost_usd": plan.max_cost_usd, "raw_provider_payload_included": False}
 
 
 def _authorized_viewer(end_user_email: str | None, allowlist: str | None) -> str:
@@ -166,17 +175,14 @@ def main(
     if not execute:
         return {**request, "status": "preview", "external_calls": 0, "retry_count": 0}
 
-    _authorized_viewer(
+    actor = _authorized_viewer(
         os.environ.get("WM_END_USER_EMAIL"),
         _get_variable(WRITER_ALLOWLIST_PATH),
     )
-    # The child script owns the database resource, Secret read, advisory lock,
-    # budget gate, provider call and sanitized result. Windmill links this child
-    # to the app job so its authenticated end-user context is preserved.
-    child_request = {"db": DB_RESOURCE, **request}
-    if child_request["max_cost_usd"] is None:
-        child_request.pop("max_cost_usd")
-    result = _run_child(child_request)
-    if not isinstance(result, dict) or result.get("status") != "completed":
-        raise RuntimeError("TikHub golden intake failed")
-    return result
+    # Internal jobs/run requests do not inherit the app viewer. Keep execution
+    # and actor attribution in this app job; never accept an actor from the UI.
+    try:
+        return _run_intake(request, actor)
+    except Exception as error:
+        # Preserve an actionable error class without exposing provider payloads.
+        raise RuntimeError(f"TikHub golden intake failed ({type(error).__name__})") from None

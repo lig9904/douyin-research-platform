@@ -77,6 +77,18 @@ def test_persistent_cache_avoids_second_external_call() -> None:
     assert store.calls[1].metadata["cost_basis"] == "cache_zero"
 
 
+def test_batch_detail_fee_matches_provider_bill_and_cache_is_free():
+    store = MemoryProviderStore()
+    transport = FakeTransport()
+    provider = TikHubProvider(transport=transport, store=store)
+    provider.fetch_videos(["v1", "v2", "v3"])
+    provider.fetch_videos(["v1", "v2", "v3"])
+    assert len(transport.calls) == 1
+    assert store.calls[0].actual_cost == pytest.approx(0.05)
+    assert store.calls[0].metadata["price_source"] == "tikhub.usage_log"
+    assert store.calls[1].actual_cost == 0
+
+
 def test_low_fan_compact_billboard_schema_is_normalized() -> None:
     class CompactLowFanTransport:
         def call(self, spec, kwargs):

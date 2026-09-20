@@ -64,9 +64,11 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         sdk_method="fetch_multi_video_v2",
         request_style="json",
         cache_ttl_seconds=60 * 60,
-        unit_cost_usd=0.001,
-        price_source="tikhub.calculate_price",
-        pricing_version="verified-2026-09-20",
+        # Account usage log: one batch request cost USD 0.050 on 2026-09-20.
+        # The generic calculate_price base rate is not this endpoint's tariff.
+        unit_cost_usd=0.050,
+        price_source="tikhub.usage_log",
+        pricing_version="usage-log-2026-09-20",
     ),
     "douyin.app.user_posts": EndpointSpec(
         key="douyin.app.user_posts",

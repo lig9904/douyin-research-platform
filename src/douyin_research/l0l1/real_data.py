@@ -177,6 +177,12 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
     # Do not return raw provider payloads, video text, request IDs or secrets.
     cached_calls = sum(1 for call in provider_store.recorded_calls if call.cached)
     uncached_calls = sum(1 for call in provider_store.recorded_calls if not call.cached)
+    # The business run and provider ledger must use the same amount/currency.
+    runner.store.finish_run(
+        summary.run_id,
+        api_cost=sum(float(call.actual_cost or 0) for call in provider_store.recorded_calls),
+        cost_currency="USD",
+    )
     return {
         "run_id": str(summary.run_id),
         "platform": summary.platform,

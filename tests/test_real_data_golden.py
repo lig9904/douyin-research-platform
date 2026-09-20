@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -76,6 +77,45 @@ def test_no_detail_plan_can_fit_one_external_call() -> None:
     plan = make_plan(enrich_details=False, max_external_calls=1)
     assert plan.enrich_details is False
     assert plan.max_external_calls == 1
+
+
+def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
+    completions = []
+
+    class Budget:
+        def configure(self, **kwargs):
+            pass
+
+        def make_before_external_call(self, **kwargs):
+            return lambda _: None
+
+    class Store:
+        def finish_run(self, run_id, **kwargs):
+            completions.append((run_id, kwargs))
+
+    class Runner:
+        def __init__(self, **kwargs):
+            self.store = kwargs["store"]
+
+        def run(self, *args, **kwargs):
+            return SimpleNamespace(run_id="run-1", platform="douyin", source_count=1,
+                                   observations=3, unique_platform_videos=3, scores={})
+
+    calls = [SimpleNamespace(actual_cost=0.001, cached=False),
+             SimpleNamespace(actual_cost=0.050, cached=False),
+             SimpleNamespace(actual_cost=0, cached=True)]
+    monkeypatch.setattr(real_data, "DailyBudgetGuard", lambda _: Budget())
+    monkeypatch.setattr(real_data, "TikHubTransport", lambda *a, **kw: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(real_data, "_RecordingPostgresProviderStore", lambda _: SimpleNamespace(recorded_calls=calls))
+    monkeypatch.setattr(real_data, "TikHubDouyinProvider", lambda **kw: None)
+    monkeypatch.setattr(real_data, "L0L1Store", lambda _: Store())
+    monkeypatch.setattr(real_data, "L1Scorer", lambda _: None)
+    monkeypatch.setattr(real_data, "L0L1Runner", Runner)
+    result = real_data.run_live(dsn="test", api_key="test", plan=make_plan(dry_run=False), triggered_by="test")
+    assert result["cached_call_count"] == 1
+    assert result["uncached_call_count"] == 2
+    assert completions[0][1]["api_cost"] == pytest.approx(0.051)
+    assert completions[0][1]["cost_currency"] == "USD"
 
 
 def test_provider_budget_mode_does_not_double_reserve_runner_calls() -> None:

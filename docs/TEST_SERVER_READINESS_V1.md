@@ -154,11 +154,17 @@ IPv4 地址 `:8000`。它没有 `0.0.0.0` 或公网地址默认值，配置文�
 `<测试服务器私网IP>:8000`。测试服务器防火墙只允许该反代源 IP 访问 TCP 8000；
 不开放 80、443、5432，Docker 也不得映射 PostgreSQL。
 
-该 Overlay 固定启动两个相互隔离的 default worker 容器。研究台的受控黄金采集由
-App runnable 同步等待一个子任务，单 worker 会让子任务排在父任务后直至超时；
-Windmill CE v1.815.0 又会把普通（非 native）worker 的 `NUM_WORKERS>1` 自动回退为
-1，因此这里使用两个 Compose replica，而不是同容器并发。该副本数只解决父子任务
-饥饿。测试服人工黄金采集单次最多 5 条、2 次 TikHub 请求且零重试；按当前授权不设
+该 Overlay 固定启动两个相互隔离的 default worker 容器，供采集与页面查询并行使用。
+Windmill CE v1.815.0 会把普通（非 native）worker 的 `NUM_WORKERS>1` 自动回退为
+1，因此这里使用两个 Compose replica。黄金采集直接在已认证 App runnable 内执行，
+复用 `run_live`，不经内部 API 创建子任务：`parent_job` 只建立关联，并不会传递
+`WM_END_USER_EMAIL`。手动按钮使用 App viewer 检查权限及记录操作者；TikHub 调用本身
+仅使用服务器 API Key，采集核心不依赖网页登录。定时任务应使用任务执行身份记录来源；
+当前黄金验收入口仍为手动入口，不因本次修复自动启用定时任务。
+App 后端同时使用 PEP 723 的 `# /// script` 声明 Python 版本及依赖。
+在 CE v1.815.0 的无 app-script ID 执行路径中，传入的 inline lock 会被忽略；
+仅保存旁路 `.lock` 或旧式 `#requirements:` 注释不能证明运行时已加载依赖。
+测试服人工黄金采集单次最多 5 条、2 次 TikHub 请求且零重试；按当前授权不设
 固定金额上限，实际调用和费用仍进入只读账本。
 
 在复制受 Git 忽略的环境文件并替换所有占位值后，先以 `0600` 权限验证，再渲染和
