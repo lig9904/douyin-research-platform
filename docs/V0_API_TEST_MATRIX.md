@@ -88,7 +88,7 @@
 
 结论边界：作品翻页、评论翻页、跨页去重要求和评论回复已获得真实证据，评论回复由 PENDING 提升为 PARTIAL。由于仍是单账号/单作品小样本，且尚未进行删除/私密映射、更多账号分层、Ground Truth 准确性、429/5xx 和本地账单对账，相关能力均不标记 PASS，Issue #1 继续保持开放。
 
-## A5. 第四批计划：发现页、搜索页与详情批量关联（尚未运行）
+## A5. 第四批：发现页、搜索页与详情批量关联（真实限流后停止）
 
 - 代码与手动 GitHub Actions 只预置一个严格十调用计划：daily usage → 三个
   `calculate_price` 报价 → 低粉爆款榜两页 → 视频搜索两页 → App V3 批量详情 →
@@ -104,7 +104,24 @@
   不输出 key、request ID、账号/作品 ID、cursor 或名称；GitHub workflow 的 `always()` 清理
   仅作为纵深防御。
 
-本节是待执行方案，不构成实测证据；以下矩阵状态保持不变。
+2026-09-20 [GitHub Actions 首次运行](https://github.com/lig9904/douyin-research-platform/actions/runs/35490513314)：
+
+- 付费前安全测试全部通过，随后才向付费 step 注入 Secret；三个 Action 均固定 commit SHA。
+- 第 1 次 `get_user_daily_usage` 成功；第 2 次低粉爆款 `calculate_price` 成功，公开基础价
+  0.001、100 次/日总价 0.1，并返回 0%–50% 阶梯折扣。
+- 第 3 次、即视频搜索 `calculate_price` 遇到 `TikHubRateLimitError`。SDK 配置
+  `max_retries=0`，workflow 立即失败；第 4–10 次调用均未执行，禁止为补齐本批而自动重跑。
+- `always()` 清理步骤成功；日志中的 Secret 被遮蔽，且没有输出 request ID、作品/账号 ID、
+  cursor、`search_id`、`backtrace` 或原始响应。
+- 随后在已登录 TikHub 后台核对供应商聚合明细：本批实际涉及的
+  `get_user_daily_usage` 与 `calculate_price` 单价、基础费用均为 0。本次没有进入任何收费数据
+  endpoint，后台未观察到本批新增费用。由于该页面按供应商日期聚合、没有本次 run 的独立账单
+  流水与时区归因，不能把聚合结果写成“本批增量消费精确确认为 0”。
+
+这次运行证明 SDK 2.1.1 抛出 `TikHubRateLimitError` 后本执行器不会重试并会立即停止。日志没有
+记录实际 HTTP 状态或 `Retry-After`，因此不能把 SDK 异常名称直接写成已验证 HTTP 429，429
+继续保持 PENDING。后台只说明本次触达的账户接口是零价，尚未证明收费数据 endpoint 遇到限流
+时是否计费；Billboard 两页、Search 两页和 App V3 跨层关联也未获得本批真实证据。
 
 ## B. Billboard / 发现层
 
@@ -181,7 +198,7 @@
 |---|---|---|
 | calculate_price | 每个生产endpoint的真实阶梯报价 | PARTIAL |
 | get_user_daily_usage | 与本地 external_api_call 对账 | PARTIAL |
-| 429 | Retry-After / SDK异常类型 / 是否计费 | PENDING |
+| 429 | SDK 已出现 `TikHubRateLimitError` 且执行器零重试、失败即停；实际 HTTP 状态、Retry-After、收费数据接口是否计费仍未验证 | PENDING |
 | 402/余额不足 | SDK异常类型、是否重试 | PENDING |
 | 5xx | SDK重试次数、实际退避 | PENDING |
 
