@@ -61,12 +61,18 @@ for _ in $(seq 1 90); do
 done
 [[ -n "$server" && "$(docker inspect --format '{{.State.Health.Status}}' "$server")" == healthy ]] || { compose logs --no-color windmill_server >&2; exit 1; }
 for service in postgres windmill_server windmill_worker windmill_worker_native; do
-  container="$(compose ps -q "$service")"; [[ -n "$container" && "$(docker inspect --format '{{.State.Running}}' "$container")" == true ]] || { echo "ERROR: $service is not running." >&2; exit 1; }
+  mapfile -t containers < <(compose ps -q "$service")
+  [[ ${#containers[@]} -gt 0 ]] || { echo "ERROR: $service is not running." >&2; exit 1; }
+  for container in "${containers[@]}"; do
+    [[ "$(docker inspect --format '{{.State.Running}}' "$container")" == true ]] || { echo "ERROR: $service container $container is not running." >&2; exit 1; }
+  done
 done
+mapfile -t default_workers < <(compose ps -q windmill_worker)
+[[ ${#default_workers[@]} -eq 2 ]] || { echo "ERROR: expected exactly two isolated default worker replicas." >&2; exit 1; }
 ! compose ps --all --services | grep -Fxq proxy || { echo 'ERROR: external profile unexpectedly created proxy.' >&2; exit 1; }
 postgres="$(compose ps -q postgres)"
 [[ "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$postgres")" == null || "$(docker inspect --format '{{json .HostConfig.PortBindings}}' "$postgres")" == '{}' ]] || { echo 'ERROR: PostgreSQL has a host port binding.' >&2; exit 1; }
 docker inspect --format '{{json .NetworkSettings.Ports}}' "$server" | jq -e --arg host "$bind_host" '
   .["8000/tcp"] | length == 1 and .[0].HostIp == $host and .[0].HostPort == "8000"
 ' >/dev/null || { echo 'ERROR: Windmill does not have exactly one expected private :8000 binding.' >&2; exit 1; }
-echo "PASS: external-proxy smoke ran PostgreSQL and three Windmill services; no proxy/Provider; PostgreSQL unpublished; Windmill bound only to private :8000."
+echo "PASS: external-proxy smoke ran PostgreSQL, two default workers, one native worker and Windmill server; no proxy/Provider; PostgreSQL unpublished; Windmill bound only to private :8000."

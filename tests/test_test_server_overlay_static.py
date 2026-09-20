@@ -32,7 +32,9 @@ def test_external_proxy_overlay_has_no_local_tls_proxy_or_database_port() -> Non
     assert "0.0.0.0" not in source
     assert "proxy:" not in source
     assert "image: nginx" not in source.lower()
-    assert 'NUM_WORKERS: "2"' in source
+    assert "deploy:" in source
+    assert "replicas: 2" in source
+    assert "NUM_WORKERS:" not in source
     assert "TIKHUB_API_KEY" not in source
 
 
@@ -71,6 +73,7 @@ def test_external_proxy_linux_smoke_contract_is_provider_free() -> None:
     assert "TEST_SERVER_EXTERNAL_PROXY_STACK_SMOKE=YES" in source
     assert "ip -4 -o addr show scope global" in source
     assert "windmill_server windmill_worker windmill_worker_native" in source
+    assert "expected exactly two isolated default worker replicas" in source
     assert "HostConfig.PortBindings" in source
     assert '.["8000/tcp"] | length == 1' in source
     assert "TIKHUB" not in source and "VOLCENGINE" not in source
