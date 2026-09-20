@@ -27,7 +27,8 @@ def test_invalid_id_stops_before_configuration(monkeypatch):
 
 
 @pytest.mark.parametrize("status", ["submitted", "running", "completed", "failed", "reconciliation_required"])
-def test_worker_preserves_prior_date_and_reports_failure(monkeypatch, status):
+@pytest.mark.parametrize("existing", [True, False])
+def test_worker_preserves_prior_date_and_reports_failure(monkeypatch, status, existing):
     video, asset = uuid4(), uuid4()
     cfg = dict(api_key="secret", max_polls=1, max_daily_requests=None, max_daily_cost_cny=None)
     monkeypatch.setattr(worker, "_configuration", lambda: ("test", cfg,
@@ -44,10 +45,10 @@ def test_worker_preserves_prior_date_and_reports_failure(monkeypatch, status):
         def execute(self, sql, params):
             if sql.startswith("insert"):
                 writes.append(params)
-            return SimpleNamespace(fetchone=lambda: (prior_day,))
+            return SimpleNamespace(fetchone=lambda: (prior_day,) if existing else None)
     monkeypatch.setattr(worker.psycopg, "connect", lambda _: Conn())
     def run(req):
-        assert req.budget_date == prior_day
+        assert req.budget_date == (prior_day if existing else date.today())
         return {"status": status}
     monkeypatch.setattr(worker, "LiveASRService", lambda _: SimpleNamespace(run=run))
     if status in {"submitted", "running", "completed"}:
@@ -55,7 +56,11 @@ def test_worker_preserves_prior_date_and_reports_failure(monkeypatch, status):
     else:
         with pytest.raises(RuntimeError, match="inspect persisted"):
             worker.main(str(video), str(asset), "v1")
-    assert writes == []  # Never recreate or reset accounting for an existing job.
+    if existing:
+        assert writes == []  # Never recreate or reset accounting for an existing job.
+    else:
+        assert writes == [(date.today(), worker.VOLCENGINE_ASR_PROVIDER,
+            worker.ASR_BUDGET_KEY, None, None)]
 
 
 def test_unapproved_media_cannot_reach_budget_or_provider(monkeypatch):
