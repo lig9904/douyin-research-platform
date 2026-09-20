@@ -94,3 +94,30 @@ def test_unknown_collection_outcome_never_resubmits_or_promotes_old_l2(batch):
     assert len(collector.calls) == 2
     assert first.eligibility_run_id is None and second.promotion is None
     assert all(item.outcome == "reconciliation_required" for item in second.videos)
+
+
+def test_promotion_failure_is_visible_and_recovery_reuses_collection(batch):
+    source, a, b, quota, gate = batch
+    collector = Collector()
+    class FailingGate:
+        def promote(self, *args, **kwargs):
+            raise RuntimeError("private-supplier-detail")
+    service = CommentPipeline(DSN, collector=collector, feature_extractor=Extractor(),
+                              promotion_gate=FailingGate(), worker_identity="test-worker")
+    settings = CommentPipelineSettings(top_n=2, quota_date=date(2026, 9, 21), quota_key=quota)
+    with pytest.raises(RuntimeError, match="inspect persisted run") as caught:
+        service.run(source, settings=settings)
+    assert "private-supplier" not in str(caught.value)
+    with psycopg.connect(DSN) as conn:
+        failed_id, status, error = conn.execute(
+            "select id,status,error_summary from pipeline_run where run_type='comment_l2_l3_batch' and summary->>'source_run_id'=%s",
+            (str(source),)).fetchone()
+        assert status == "failed"
+        assert error == {"error_code": "comment_batch_orchestration_failed"}
+    service.promotion_gate = gate
+    recovered = service.run(source, settings=settings)
+    assert recovered.pipeline_run_id == failed_id
+    assert recovered.promotion.selected_count == 2
+    assert len(collector.calls) == 2
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select status,error_summary from pipeline_run where id=%s", (failed_id,)).fetchone() == ("success", None)
