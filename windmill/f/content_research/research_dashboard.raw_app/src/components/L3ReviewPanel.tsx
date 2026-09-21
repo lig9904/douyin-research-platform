@@ -164,7 +164,7 @@ export default function L3ReviewPanel({
         <h4>L3 审核与预算预览</h4>
         <Tag color="gold">仅预览</Tag>
       </div>
-      <p className="l3-review-copy">此处不会执行模型调用、创建任务或预占预算。L3 仍处于人工审核与准备度阶段。</p>
+      <p className="l3-review-copy">此面板用于保存审核与预览预算，不执行模型调用或预占预算。实际分析由独立任务执行，已完成结果在上方展示。</p>
 
       {error && <Alert className="l3-review-alert" type="error" showIcon message="L3 审核流程未完成" description={error} />}
       {notice && <Alert className="l3-review-alert" type="success" showIcon message={notice} />}
@@ -191,8 +191,8 @@ export default function L3ReviewPanel({
             className="l3-review-alert"
             type="warning"
             showIcon
-            message="本页只显示脱敏摘要"
-            description="逐字稿和其他正文必须在受控审核渠道查看；不会通过此页面或 Windmill 任务结果展示。"
+            message="本 L3 审核面板只显示脱敏摘要"
+            description="本 L3 审核候选的完整正文必须在受控审核渠道核对；此 L3 审核面板和审核任务结果仅展示摘要与指纹。已完成的转写可在独立转写面板查看。"
           />
           <Checkbox checked={reviewConfirmed} onChange={(event) => setReviewConfirmed(event.target.checked)} disabled={!!busy}>
             我已在受控渠道完成该指纹对应正文的隐私审核，并确认保存此审核记录。

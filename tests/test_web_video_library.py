@@ -248,6 +248,46 @@ def test_video_library_filters_and_detail() -> None:
     assert detail["source_url"] == "https://example.com/video-lib-1"
 
 
+def test_video_library_numeric_ranges_exclude_null_but_keep_reported_zero() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    module = load_backend()
+    resource = resource_from_dsn(DSN)
+    filters = {
+        "play_min": 0,
+        "play_max": 0,
+        "follower_min": 0,
+        "follower_max": 0,
+    }
+
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """
+            update metric_snapshot
+            set play_count=null, author_follower_count=null
+            where video_id=%s
+            """,
+            (video_id,),
+        )
+    missing = module.main(resource, **filters)
+    assert missing["total"] == 0
+    assert missing["items"] == []
+
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """
+            update metric_snapshot
+            set play_count=0, author_follower_count=0
+            where video_id=%s
+            """,
+            (video_id,),
+        )
+    reported_zero = module.main(resource, **filters)
+    assert reported_zero["total"] == 1
+    assert reported_zero["items"][0]["play_count"] == 0
+    assert reported_zero["items"][0]["author_follower_count"] == 0
+
+
 def test_video_library_query_and_pagination_empty_state() -> None:
     assert DSN
     clear_and_seed()
