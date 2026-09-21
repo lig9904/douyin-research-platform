@@ -48,3 +48,14 @@ https://api.volcengine.com/api-explorer?action=ListBillDetail&groupName=%E8%B4%A
 现有 `015_supplier_daily_spend.sql` 对余额消费、赠额消费及请求数均有 NOT NULL 约束，并要求费用非负；不能直接塞入火山应付/已付账单，也不能为缺失的请求数编造零。接入需要保留字段语义与缺失状态，并明确退款/调账处理；现有 TikHub 同步行为必须回归验证。
 
 首页 `supplierDailySpendFootnote` 当前把全部记录标为“账户总费用”，且只使用第一条记录的日期/时区。新增产品范围以及与 TikHub 不同的账期时区后，必须逐供应商显示范围、日期、时区，不能继续复用一个总脚注。首页摘要还只显示 provider，需增加产品标签，避免两个火山产品成为无法区分的金额。运维页调用次数已有 null 展示分支，可复用，但数据库和写入层仍需适配。
+
+## 脚注修复部署增量
+
+上述脚注问题已由 PR #114 修复并于 2026-09-21 部署：提交 `8f299dd1cbbcae7210cb80cde236cb0ab0187a45`，研究台应用版本 30 → 31。逐供应商展示账户范围、日期、时区、新鲜度和“当日累计，未终账”；不改费用金额，不代表火山日账已接入。产品标签与账单存储适配仍待后续接入。
+
+- 四项远端 CI 通过，独立复审通过；本地脚注断言、首页构建、视频预览初始零调用回归通过。
+- 使用 JumpServer，只发布研究台 raw app。部署前快照 `daily-period-before-8f299dd.json` 保留于服务器 evidence 目录，容器内以 0600 独占创建。
+- 原服务器处于 detached HEAD，普通 pull 未推进版本；实际核对后 fetch main 并切换到上述固定 SHA，再暂存发布，没有跳过提交检查。
+- 日志 `daily-period-stage-8f299dd.log`、`daily-period-publish-8f299dd.log`、`daily-period-postcheck-8f299dd.log`。发布与后置检查退出 0；版本 31，全部后端 runnables、policy、extra_perms 与发布前相同。
+- 真实 Chrome 首页读取到 `tikhub USD 0.319`，脚注为 `tikhub [default] · 2026-09-20（America/Los_Angeles） · 当日累计，未终账`。实际查看顶部截图，文字换行可见。该金额只是当时页面快照，不是最终账单；未同步第二个供应商，不把单供应商现场证据扩展为多供应商真实日账验收。
+- 无数据库迁移、容器重启、定时规则修改或供应商付费调用。按 webapp-testing 技能实际检查页面，不以发布成功替代可见结果。
