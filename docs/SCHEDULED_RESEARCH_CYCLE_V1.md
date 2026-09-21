@@ -49,3 +49,15 @@ UTC 02:13:54 读取 Windmill 数据库核验：任务 `01a0c1ac-dce4-e937-9bb8-5
 - 下一轮任务 `01a0c1ba-30d8-55b3-e539-fa4cb8dc6c13` 已在队列，scheduled_for 为 UTC 03:10、running=false。排队不算成功；仍缺第二个连续周期证据。
 
 本轮不是零外部调用：发现环节确有 2 次未缓存调用。媒体复用不能推导整轮免费；评论调用费用与供应商日账须另核对。
+
+## 第二个真实定时周期（UTC 03:10）
+
+UTC 03:10:51 直接读取服务器 Windmill 数据库：已核验的 schedule 任务
+`01a0c1ba-30d8-55b3-e539-fa4cb8dc6c13` 完成状态 success，直属四个步骤全部 success。
+
+- 发现 run_id `086f41b1-1710-415c-88d9-928e8c9af8a9`，completed，external_calls=1。
+- 评论 run_id `f6f1bb08-43e1-4c3e-a9f9-ea1ef66adb42`，completed，source_run_id 精确匹配发现批次；video_count=1、selected_count=0。
+- 媒体选择回显同一评论批次，仅选择视频 `4ffa7104-293c-43e0-bf5a-596537cd3cf1`。
+- 媒体 run_id `df0c96b2-6238-48a6-b00d-0b608580472e`，completed、reused=true、external_paid_calls=0；复用资产 `0e4a6754-0fe8-4032-b96b-4f705088c2b4` 与 `f1be0ba9-8d7f-463c-a81f-8fe9d10824e8`。
+
+至此两个连续小时 schedule 周期均有实际成功及批次绑定证据。只证明发现→评论/L2→媒体的连续执行，不代表完整 ASR/L3 无人值守验收、整轮免费、费用终账或失败恢复验收。
