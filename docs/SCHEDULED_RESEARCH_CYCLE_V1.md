@@ -25,3 +25,16 @@ Windmill 持久化每一步结果和任务状态，因此可追溯源批次、�
 ## 验收证据要求
 
 每周期保留 Windmill flow job ID、schedule trigger、发现 run_id、评论 run_id、各媒体 asset_id 与复用标记、外部调用和实际供应商日账更新时间。至少两周期证明绑定一致、无重复付费；分别检查失败/空批次/锁争用，不把空队列 ASR 轮询当作研究业务周期。
+
+## 2026-09-21 首次服务器执行检查点
+
+部署代码 `f07f58377d380b1019e719ae4163822b062ad4f9`（PR #96）。首次 flow push 错将 YAML 文件作为目录，CLI 解析失败；改为 `.flow` 目录后发布成功，原失败日志保留。
+
+- Windmill flow：`01a0c1a5-473b-16c7-5ec6-1fb03494949f`，UTC 01:47:09 创建，数据库状态 `success`，触发类型 `webhook`，不是定时周期。
+- 发现批次：`e5b403a6-b191-45da-a10f-6ef2bd0959b9`。配置最多 3 条、24 小时；实际返回并评分 2 条，外部调用 2、缓存命中 0、SDK 重试 0。
+- 评论批次：`cf206a7b-c01b-4b0c-aa8a-8d4793c199ee`，成功，明确回显上述发现批次，video_count=2、selected_count=1。
+- 媒体选择返回同一评论批次和两个内部视频 ID。媒体运行 `756608f5-d37d-4c58-9ccc-2e3309542617`、`6fc97611-f513-47db-84b8-27f22cf9a2c6` 均 completed、reused=true、external_paid_calls=0。
+- 原始运行日志在测试服务器 `/srv/douyin-research-test/evidence/cycle-first-20260921.log`。上述结果经服务器数据库读取核对；尚未据此核算评论请求费用或最新供应商日账。
+- 正常小时计划已创建并由 CLI 确认 enabled；沿用模板每小时 UTC 第 10 分钟，无加速测试频率。两个真实 schedule 周期仍待观察，不把启用成功当作连续执行验收。
+
+本检查点不代表 ASR/L3 自动派发、信息充分性、恢复/回滚或 V1 最终验收通过。
