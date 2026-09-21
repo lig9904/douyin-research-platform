@@ -45,3 +45,8 @@ jobs:
 
       - name: Compile Windmill Python backends
         run: python -m compileall -q backend
+
+      - name: Verify transcript rendering and unknown costs
+        run: |
+          npx esbuild tests/ASRTranscriptPanel.test.tsx --bundle --platform=node --outfile=/tmp/asr-panel-test.cjs --log-level=warning
+          node /tmp/asr-panel-test.cjs

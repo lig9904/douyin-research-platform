@@ -15,6 +15,7 @@ import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
 import ASRMediaReviewPanel from './src/components/ASRMediaReviewPanel'
+import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTranscriptPanel'
 import MetricTimeline from './src/components/MetricTimeline'
 import PlatformIcon from './src/components/PlatformIcon'
 import {
@@ -69,6 +70,7 @@ type VideoItem = {
     published_at?: string | null
   }[]
   l3_analysis?: L3Analysis | null
+  asr_transcript?: ASRTranscript | null
 }
 
 type L3Analysis = {
@@ -917,6 +919,7 @@ export default function VideoLibrary({
                     />
 
                     <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />
+                    <ASRTranscriptPanel transcript={detail.asr_transcript} />
 
                     <section className="detail-section">
                       <div className="detail-section-head">

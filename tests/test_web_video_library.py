@@ -174,6 +174,39 @@ def clear_and_seed() -> str:
     return str(video_id)
 
 
+def test_video_library_completed_transcript_is_bound_and_unknown_cost_stays_null() -> None:
+    from douyin_research.l2.transcripts import TaskCost, TranscriptEvidence, TranscriptEvidenceStore
+
+    assert DSN
+    video_id = clear_and_seed()
+    backend = load_backend()
+    resource = resource_from_dsn(DSN)
+    assert backend.main(resource, selected_video_id=video_id)["detail"]["asr_transcript"] is None
+    with psycopg.connect(DSN) as conn:
+        conn.execute("update source_video set research_level=2 where id=%s", (video_id,))
+    record = TranscriptEvidenceStore(DSN).ingest(
+        video_id, task_key="transcript-ui-test",
+        evidence=TranscriptEvidence(
+            asr_provider="volcengine-doubao-asr", model_id="bigmodel", model_revision="2.0",
+            engine_version="volc.seedasr.auc", source_fingerprint="view-input-v1",
+            text="字" * 12001, audio_duration_ms=28723, quality_status="usable",
+        ),
+        cost=TaskCost(api_cost=None, asr_cost=None),
+    )
+    result = backend.main(resource, selected_video_id=video_id)["detail"]["asr_transcript"]
+    assert result["text"] == "字" * 12000 and result["truncated"] is True
+    assert result["cost"]["asr_cost"] is None and result["cost"]["total_cost"] is None
+    assert result["cost"]["basis"] == "unknown"
+    assert result["provider"] == "volcengine-doubao-asr"
+    assert "source_fingerprint" not in result and "metadata" not in result
+    with psycopg.connect(DSN) as conn:
+        conn.execute("update research_task_cost set input_fingerprint='other' where id=%s", (record.task_cost_id,))
+    assert backend.main(resource, selected_video_id=video_id)["detail"]["asr_transcript"] is None
+    with psycopg.connect(DSN) as conn:
+        conn.execute("update research_task_cost set input_fingerprint='view-input-v1',status='failed' where id=%s", (record.task_cost_id,))
+    assert backend.main(resource, selected_video_id=video_id)["detail"]["asr_transcript"] is None
+
+
 def test_video_library_filters_and_detail() -> None:
     assert DSN
     video_id = clear_and_seed()
