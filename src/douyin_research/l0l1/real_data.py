@@ -29,6 +29,7 @@ GOLDEN_BUDGET_KEY = "golden-local"
 GOLDEN_MAX_ITEMS = 5
 GOLDEN_MAX_EXTERNAL_CALLS = 2
 GOLDEN_RUN_VERSION = "golden-local-v1"
+_DETAIL_STRATEGIES = frozenset(("batch50", "cost_aware"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,28 @@ class _RecordingPostgresProviderStore(PostgresProviderStore):
         super().record_call(call)
 
 
+def _call_limit_for_strategy(detail_strategy: str) -> int:
+    """Return the run-local call cap for a supported detail strategy."""
+    if not isinstance(detail_strategy, str) or detail_strategy not in _DETAIL_STRATEGIES:
+        raise ValueError("detail_strategy must be batch50 or cost_aware")
+    return (
+        GOLDEN_MAX_EXTERNAL_CALLS
+        if detail_strategy == "batch50"
+        else GOLDEN_MAX_ITEMS + 1
+    )
+
+
+def _validate_non_boolean_int(name: str, value: Any, *, minimum: int, maximum: int) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not minimum <= value <= maximum
+    ):
+        raise ValueError(
+            f"{name} must be a non-boolean integer between {minimum} and {maximum}"
+        )
+
+
 def make_plan(
     *,
     dry_run: bool = True,
@@ -73,26 +96,27 @@ def make_plan(
     detail_strategy: str = "batch50",
 ) -> GoldenIntakePlan:
     """Validate a conservative one-page collection plan before touching a secret."""
-    if not 1 <= max_items <= GOLDEN_MAX_ITEMS:
-        raise ValueError(f"max_items must be between 1 and {GOLDEN_MAX_ITEMS}")
+    _validate_non_boolean_int("max_items", max_items, minimum=1, maximum=GOLDEN_MAX_ITEMS)
+    call_limit = _call_limit_for_strategy(detail_strategy)
     detail_requests = plan_video_fetches(
         [str(i) for i in range(max_items)], strategy=detail_strategy,
     )
     needed_calls = 1 + (len(detail_requests) if enrich_details else 0)
     if max_external_calls is None:
         max_external_calls = needed_calls
-    call_limit = GOLDEN_MAX_EXTERNAL_CALLS if detail_strategy == "batch50" else GOLDEN_MAX_ITEMS + 1
-    if not 1 <= max_external_calls <= call_limit:
-        raise ValueError(
-            f"max_external_calls must be between 1 and {call_limit}"
-        )
+    _validate_non_boolean_int(
+        "max_external_calls", max_external_calls, minimum=1, maximum=call_limit,
+    )
     if max_external_calls < needed_calls:
         raise ValueError(
             f"max_external_calls must be at least {needed_calls} when "
             f"enrich_details={enrich_details}"
         )
     if max_cost_usd is not None and (
-        not math.isfinite(max_cost_usd) or max_cost_usd < 0
+        isinstance(max_cost_usd, bool)
+        or not isinstance(max_cost_usd, (int, float))
+        or not math.isfinite(max_cost_usd)
+        or max_cost_usd < 0
     ):
         raise ValueError("max_cost_usd must be finite and non-negative or None")
     if page != 1:
@@ -126,6 +150,7 @@ def _make_run_limited_before_external_call(
     *,
     reserve_daily_ledger: Callable[[EndpointSpec], None],
     max_external_calls: int,
+    detail_strategy: str = "batch50",
 ) -> Callable[[EndpointSpec], None]:
     """Combine the per-run call envelope with the unlimited daily ledger.
 
@@ -135,15 +160,10 @@ def _make_run_limited_before_external_call(
     small in-process counter the exact limit for the current execution while
     the delegated hook continues to atomically record daily request/cost use.
     """
-    if (
-        isinstance(max_external_calls, bool)
-        or not isinstance(max_external_calls, int)
-        or not 1 <= max_external_calls <= GOLDEN_MAX_EXTERNAL_CALLS
-    ):
-        raise ValueError(
-            "max_external_calls must be a non-boolean integer between 1 and "
-            f"{GOLDEN_MAX_EXTERNAL_CALLS}"
-        )
+    call_limit = _call_limit_for_strategy(detail_strategy)
+    _validate_non_boolean_int(
+        "max_external_calls", max_external_calls, minimum=1, maximum=call_limit,
+    )
     reserved_calls = 0
 
     def reserve(spec: EndpointSpec) -> None:
@@ -177,15 +197,29 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         raise ValueError("TikHub API key is required")
     # ``GoldenIntakePlan`` is public and frozen but can still be constructed
     # directly; re-check the paid-call envelope before changing its ledger.
-    if (
-        isinstance(plan.max_external_calls, bool)
-        or not isinstance(plan.max_external_calls, int)
-        or not 1 <= plan.max_external_calls <= GOLDEN_MAX_EXTERNAL_CALLS
-    ):
+    _validate_non_boolean_int(
+        "max_items", plan.max_items, minimum=1, maximum=GOLDEN_MAX_ITEMS,
+    )
+    call_limit = _call_limit_for_strategy(plan.detail_strategy)
+    _validate_non_boolean_int(
+        "max_external_calls", plan.max_external_calls, minimum=1, maximum=call_limit,
+    )
+    detail_requests = plan_video_fetches(
+        [str(i) for i in range(plan.max_items)], strategy=plan.detail_strategy,
+    )
+    needed_calls = 1 + (len(detail_requests) if plan.enrich_details else 0)
+    if plan.max_external_calls < needed_calls:
         raise ValueError(
-            "max_external_calls must be a non-boolean integer between 1 and "
-            f"{GOLDEN_MAX_EXTERNAL_CALLS}"
+            f"max_external_calls must be at least {needed_calls} when "
+            f"enrich_details={plan.enrich_details}"
         )
+    if plan.max_cost_usd is not None and (
+        isinstance(plan.max_cost_usd, bool)
+        or not isinstance(plan.max_cost_usd, (int, float))
+        or not math.isfinite(plan.max_cost_usd)
+        or plan.max_cost_usd < 0
+    ):
+        raise ValueError("max_cost must be finite and non-negative or None")
 
     budget = DailyBudgetGuard(dsn)
     budget.configure(
@@ -209,6 +243,7 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
                 provider="tikhub", budget_key=GOLDEN_BUDGET_KEY
             ),
             max_external_calls=plan.max_external_calls,
+            detail_strategy=plan.detail_strategy,
         ),
         detail_strategy=plan.detail_strategy,
     )

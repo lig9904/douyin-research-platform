@@ -51,7 +51,9 @@ def normalize_video_observations(
     data = validated.get("data")
     seen: set[str] = set()
     observations: list[VideoObservation] = []
-    for obj in _walk_dicts(data):
+    # Filter/verification entries identify rejected requests, not video details.
+    # Visiting them first can also hide a real detail with the same aweme_id.
+    for obj in _walk_dicts(data, excluded_keys=frozenset({"filter_list", "verification_filter_list"})):
         aweme_id = _as_str(obj.get("aweme_id"))
         low_fan_id = (
             _as_str(obj.get("item_id"))
@@ -304,14 +306,15 @@ def extract_pagination(payload: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
+def _walk_dicts(value: Any, *, excluded_keys: frozenset[str] = frozenset()) -> Iterable[dict[str, Any]]:
     if isinstance(value, dict):
         yield value
-        for child in value.values():
-            yield from _walk_dicts(child)
+        for key, child in value.items():
+            if key not in excluded_keys:
+                yield from _walk_dicts(child, excluded_keys=excluded_keys)
     elif isinstance(value, list):
         for child in value:
-            yield from _walk_dicts(child)
+            yield from _walk_dicts(child, excluded_keys=excluded_keys)
     elif isinstance(value, str):
         stripped = value.strip()
         if stripped.startswith(("{", "[")):
@@ -320,7 +323,7 @@ def _walk_dicts(value: Any) -> Iterable[dict[str, Any]]:
             except json.JSONDecodeError:
                 return
             if parsed != value:
-                yield from _walk_dicts(parsed)
+                yield from _walk_dicts(parsed, excluded_keys=excluded_keys)
 
 
 def _first_str(obj: dict[str, Any], *keys: str) -> str | None:
