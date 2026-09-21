@@ -2,6 +2,22 @@
 
 日期：2026-09-21。范围：现有浏览器 JumpServer 会话中的服务器操作与数据库只读核验。不是最终 V1 验收。
 
+## 最新现场检查点（UTC 2026-09-21 07:19）
+
+PR #118/#119 已合并，测试服务器代码已固定到主线合并提交 `4337f873cfd7d19417f095b5002473cdc5da5f91`。本轮按“停计划 → 备份 → 发布兼容脚本 → 迁移 → 手动同步 → 发布页面 → 页面核验 → 恢复计划”完成 TikHub 范围化日账上线；所有日志位于 `/srv/douyin-research-test/evidence/`，不含 Secret。
+
+- 发布前 `sync_daily_spend` 计划为每小时、`Etc/UTC`；暂停后数据库确认 `enabled=false`。旧账期 2026-09-20 保持 USD 0.321000、44 次请求、27 次付费。
+- 备份 `/srv/douyin-research-test/backups/20260921T070109Z` 由独立校验器返回 `BACKUP_VALID`；发布脚本随后自动创建迁移前备份 `20260921T070527Z`。首次误用 release `verify` 子命令的退出 2 原样保留，它检查迁移契约而不是归档有效性，未改变服务状态。
+- Windmill 日账脚本及非空依赖锁已发布；脚本固定兼容提交 `ce8ae1c4c3358e0064daee45a0dd35540025a6e6`，并在 019 字段缺失时于供应商请求前拒绝执行。迁移 019 退出 0，迁移台账和 23 项约束核验通过，旧快照未被覆盖。
+- 一次真实手动 TikHub 同步成功：账期 2026-09-21、USD 0.002000、3 次请求、2 次付费，范围 `default / account_total / 账户总费用`，`billing_finality=preliminary`，原始供应商载荷未持久化。
+- 研究台 raw app 由版本 31 升至 32，15 个 runnable 身份集合和 `extra_perms` 不变。Windmill 只为两个已修改后端重新生成 content hash；归一化后 policy 语义完全一致，没有扩大资源权限。
+- Chrome 真实页面核验：首页显示 `tikhub · 账户总费用 USD 0.002` 及 `tikhub [default / 账户总费用] · 2026-09-21（America/Los_Angeles） · 当日累计，未终账`；运行与成本页显示同一金额、3（付费 2）、当前账期累计、未终账。历史 2026-09-20 行仍显示 USD 0.321、44（付费 27）和“历史末次累计（未终账）”。
+- 计划已恢复为 `enabled=true`，cron `0 0 * * * *`，时区 `Etc/UTC`。本轮没有创建第二个同路径计划、没有重启容器、没有在应用服务器部署 Nginx。
+
+关键证据：`daily-bill-backup-verify-4337f87.log`、`daily-bill-script-publish-4337f87.log`、`daily-bill-migrate-4337f87.log`、`daily-bill-manual-sync-4337f87.log`、`daily-bill-app-before-4337f87.json`、`daily-bill-app-after-4337f87.json`、`daily-bill-app-compare-4337f87.log`、`daily-bill-app-policy-diff-4337f87.log`、`daily-bill-schedule-enable-4337f87.log`。
+
+边界：以上完成 TikHub 日账迁移和可见页面验收，不代表火山账单 transport/只读身份已接入，也不替代新增候选持续产出、服务器受控失败恢复、MinIO 丢失对象恢复、应用回滚和最终用户业务验收。
+
 ## 最新现场检查点（北京时间 2026-09-21 08:45 后）
 
 PR #93/#94 已合并且发布至 `e1fe1ec43e0a09f9ce0200cb5c83a9536da304a3`。中文版提示的第二次真实 L3 completed，估算 0.004996 CNY；旧英文结果保留，重放 external_calls=0。页面实际核对七栏目为中文并遵守该样本的缺失证据边界，但信息价值仍不足，不代表可用研究报告或完整 V1 验收。完整部署、数据库、页面和重放证据见 [L3 质量复验](L3_QUALITY_RETEST_2026-09-21.md)。本次未启用自动 L3 分发、未做恢复/回滚、未接入火山实际日账。
