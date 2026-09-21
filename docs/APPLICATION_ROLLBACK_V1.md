@@ -39,10 +39,37 @@
 6. 将步骤 1 保存的当前内容重新发布，核对内容摘要及浏览器读路径恢复；仅恢复本次停用且原本启用的计划。核验运行任务状态，确认没有演练新增付费提交或丢失数据。
 7. 保存回退及恢复两个方向的证据，报告实际不可用时间。任一方向失败都不得声明演练通过；优先用保存的当前内容恢复服务，不覆盖数据库。
 
-## 仍未验收
+## 验收边界
 
-尚未执行上述版本切换、浏览器复验和恢复当前版本；数据库隔离恢复、MinIO 实物校验不能替代这些步骤。
-数据库真正切换、对象丢失恢复、完整权限/配置重建是不同范围，不由本应用回滚自动授权或证明。
+本文件后续记录的演练只覆盖研究台 Raw App 内容回退和恢复，不包含数据库版本切换、对象丢失恢复或完整配置/权限重建。这些是独立恢复范围，不能由本应用回滚结果代替。
+
+## 版本 32 → 31 的错误发布路径拦截（2026-09-21）
+
+执行前检查 `f/content_research/%` 无运行中任务。Windmill 历史界面显示活动版本 32，选择版本 31 后执行“使用该版本重新部署”，界面仅将 31 的内容恢复为编辑草稿，并提示 `App restored from previous deployment`；历史活动版本仍为 32，证明尚未发布。
+
+随后通过普通应用部署对话框尝试发布，Windmill 明确拒绝：目标是 Raw App，使用其他类型端点会转换值并可能导致应用无法工作。没有生成版本 33，活动版本保持 32。该拦截证明普通 App 发布路径不适用于本应用，是一次有效的发布边界检查，不是回滚成功证据。
+
+随后改用服务器容器内与服务一致的 Windmill CLI 1.815.0 和已有 0600 CLI profile；未新建、导出或打印 Token，未修改数据库，也未执行全工作区同步。
+
+## Raw App 实际回退与恢复（2026-09-21）
+
+执行窗口内再次确认 `f/content_research/%` 运行中任务为 0。以 Git 提交 `8f299dd1cbbcae7210cb80cde236cb0ab0187a45` 生成版本 31 的完整 raw app 源，以服务器当前提交 `555537f0aa9aff2706522906de9e398e946ee75e` 生成版本 32 源；两个目录均通过 `wmill app lint`，包含 15 个 backend runnable 且前端构建成功。
+
+仅对 `f/content_research/research_dashboard` 执行两次 `wmill app push`：
+
+1. 原版本 31 内容发布为新历史版本 33。浏览器实际验证首页、视频库、合并指标、私有视频签名读取、真实 ASR、真实 L3 和每日费用读路径；没有执行黄金采集、审核写入、ASR 或模型调用。
+2. 原版本 32 内容随后发布为新历史版本 34。数据库比较 `app_version.value::text` 得到 `v31_eq_v33=true`、`v32_eq_v34=true`，活动版本数组末项为 34。浏览器再次验证首页的“账户总费用”范围、视频详情、私有播放器、ASR、L3 和运行/费用页面。
+
+受控证据位于服务器 `/srv/douyin-research-test/evidence/`，均为 0600：
+
+- `application-rollback-current-before.json`
+- `application-rollback-after-v31.json`
+- `application-rollback-after-v32.json`
+- `application-rollback-push-v31.log`
+- `application-rollback-push-v32.log`
+- `application-rollback-version-equality-20260921.log`
+
+容器和 `/srv` 中的演练源码、profile 副本、构建依赖及错误复制的 CLI 符号链接均已按精确路径清理；服务器既有 profile 保留未动。由此，研究台应用 32 → 31 → 32 的 Raw App 回滚与恢复演练通过，当前活动版本 34 的内容与原版本 32 完全一致。该结论仍不扩展为数据库、MinIO、IAM 或真实供应商故障恢复通过。
 
 ## 真实数据库只读兼容性检查（2026-09-21）
 
