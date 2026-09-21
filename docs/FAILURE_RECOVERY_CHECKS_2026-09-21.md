@@ -35,4 +35,17 @@ PR #116 已在 Linux 与真实 PostgreSQL 的 CI 中通过（完整套件 886 pa
 - 脚本不创建或删除数据库、不加载供应商密钥、不停止 Worker。建库、加载 schema/迁移和核验后删库必须另外按用户授权执行；不得对运行库执行测试的 `_clear()`。
 - 服务器执行时临时报告目录通过 `TMPDIR` 放在 `/srv` 的 500G 盘。原始日志保存在服务器 evidence 目录。
 
-本入口及 CI 不代表服务器调度恢复验收通过。专用临时库的服务器执行授权已请求；尚未执行。后续仍需明确区分进程/数据库恢复、Windmill 调度唤醒和真实供应商恢复证据。
+本入口及 CI 不代表服务器调度恢复验收通过。后续仍需明确区分进程/数据库恢复、Windmill 调度唤醒和真实供应商恢复证据。
+
+## 测试服务器隔离执行（2026-09-21）
+
+经用户确认，在测试服务器新建精确目标库 `test_server_asr_failure_drill`，加载 `db/schema.sql` 及迁移 001–019。测试使用官方镜像 `ghcr.io/astral-sh/uv:python3.14-bookworm-slim`，实际拉取 digest 为 `sha256:7cf77f594be8042dab6daa9fe326f90962252268b4f120a7f5dcccce4d947e6c1`，运行时为 CPython 3.14.2；代码目录只读挂载，依赖安装及临时报告均位于 `/srv`。
+
+固定入口实际只选择两项进程终止测试，结果为 `2 passed, 14 deselected`，并输出：
+
+- `ISOLATED_ASR_PROCESS_DRILL_PASSED: synthetic provider; not scheduler recovery`
+- `ASR_DRILL_DATABASE_CLEANED`
+
+执行后再次检查专用数据库已不存在。最终日志为服务器 `/srv/douyin-research-test/evidence/asr-failure-drill-20260921.log`，权限 0600。四次未进入业务测试的启动失败分别保存在同目录的 `asr-failure-drill-startup-20260921.log`、`asr-failure-drill-readonly-startup-20260921.log`、`asr-failure-drill-uv-flag-startup-20260921.log` 和 `asr-failure-drill-pytest-startup-20260921.log`，均为 0600；对应临时运行目录已按精确路径清理。
+
+这证明测试服务器上所测 ASR 进程终止与数据库恢复语义成立，并且演练库和临时运行目录已清理。它仍不证明 Windmill 调度自动唤醒、真实供应商任务恢复或网络不确定结果的自动对账；这些边界不得合并成“完整故障恢复已通过”。

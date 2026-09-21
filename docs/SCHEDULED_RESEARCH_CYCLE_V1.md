@@ -65,3 +65,18 @@ UTC 03:10:51 直接读取服务器 Windmill 数据库：已核验的 schedule �
 至此两个连续小时 schedule 周期均有实际成功及批次绑定证据。只证明发现→评论/L2→媒体的连续执行，不代表完整 ASR/L3 无人值守验收、整轮免费、费用终账或失败恢复验收。
 
 以上两个小时周期属于旧版行为：第二周期对既有视频再次进入评论/媒体复用链路，正是新版 `new_candidate` 持久化门控和六小时节奏要消除的重复工作。保留该记录作为变更前证据，不将其描述为新版已验收。
+
+## 新版六小时计划恢复（2026-09-21）
+
+测试服务器已将普通变量 `f/content_research/scheduled_golden_settings` 固定为 `{"max_items":5,"date_window_hours":72}`，并恢复流程 `f/content_research/flows/scheduled_research_cycle` 的计划：
+
+- cron：`0 10 */6 * * *`
+- 时区：`Etc/UTC`
+- enabled：`true`
+- 下一任务：`01a0c310-376c-478a-170d-0d71f402e2c5`
+- `scheduled_for`：UTC 2026-09-21 12:10（北京时间 20:10）
+- 核验时 `running=false`
+
+在启用前完成两次手动新逻辑验证：任务 `01a0c30b-70fc-c551-80f7-fec0e0c4fce2` 仅让一个本批新增候选进入评论/媒体；紧接着任务 `01a0c30d-9e16-a70e-6a3c-ff1f4cbf77fa` 返回 `new_candidate_count=0`，评论和媒体均跳过，`external_calls=0`。这证明即时重放不会让既有视频重复进入下游；下一任务已经正确生成。
+
+计划启用及下一任务生成不等于下一周期已成功。到点后仍须核对该 job 的实际完成状态、父子批次绑定、外部调用数和媒体复用，再将“新版自动周期”记为实际生效；音频及正文审核仍不会由此计划自动批准。
