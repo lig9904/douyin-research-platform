@@ -868,17 +868,36 @@ create table if not exists supplier_daily_spend (
   billing_date date not null,
   cost_currency text not null,
   billing_timezone text not null,
-  total_cost numeric not null check (total_cost >= 0),
-  balance_cost numeric not null check (balance_cost >= 0),
-  free_credit_cost numeric not null check (free_credit_cost >= 0),
-  total_requests integer not null check (total_requests >= 0),
-  paid_requests integer not null check (paid_requests >= 0 and paid_requests <= total_requests),
+  bill_scope_key text not null default 'account',
+  scope_kind text not null default 'account_total'
+    check (scope_kind in ('account_total', 'product_subset')),
+  scope_label text not null default '账户总费用',
+  total_cost numeric not null,
+  balance_cost numeric check (balance_cost >= 0),
+  free_credit_cost numeric check (free_credit_cost >= 0),
+  payable_cost numeric,
+  paid_cost numeric,
+  unpaid_cost numeric,
+  total_requests integer,
+  paid_requests integer,
+  billing_finality text not null default 'preliminary'
+    check (billing_finality in ('preliminary', 'final')),
+  source_warning text,
   fetched_at timestamptz not null,
-  primary key (provider, account_scope, billing_date, cost_currency)
+  check ((total_requests is null and paid_requests is null) or
+         (total_requests is not null and paid_requests is not null and
+          total_requests >= 0 and paid_requests >= 0 and paid_requests <= total_requests)),
+  check ((scope_kind = 'account_total' and bill_scope_key = 'account') or
+         (scope_kind = 'product_subset' and bill_scope_key like 'product:%' and length(bill_scope_key) > 8)),
+  check ((payable_cost is null and paid_cost is null and unpaid_cost is null) or
+         (payable_cost is not null and paid_cost is not null and unpaid_cost is not null)),
+  check (payable_cost is null or total_cost = payable_cost),
+  check (source_warning is null or length(source_warning) between 1 and 1000),
+  primary key (provider, account_scope, bill_scope_key, billing_date, cost_currency)
 );
 
 comment on table supplier_daily_spend is
-  'Supplier-reported daily cost snapshots. They are not allocated to individual API calls.';
+  'Supplier-reported daily bill snapshots by explicit account or product scope. Not per-request allocation.';
 
 -- Only confirmed private objects belong here. No delivery URLs or credentials.
 create table if not exists media_asset (

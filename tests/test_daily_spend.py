@@ -119,13 +119,14 @@ def test_fetch_failure_does_not_expose_supplier_response_text():
 
 def test_schema_and_windmill_contract_keep_one_daily_snapshot_not_per_call_allocation():
     schema = open("db/schema.sql", encoding="utf-8").read()
-    migration = open("db/migrations/015_supplier_daily_spend.sql", encoding="utf-8").read()
+    migration = open("db/migrations/019_supplier_daily_bill_scope.sql", encoding="utf-8").read()
     script = open("windmill/f/content_research/collectors/sync_daily_spend.py", encoding="utf-8").read()
     metadata = open("windmill/f/content_research/collectors/sync_daily_spend.script.yaml", encoding="utf-8").read()
+    assert "create table if not exists supplier_daily_spend" in schema
     for source in (schema, migration):
-        assert "create table if not exists supplier_daily_spend" in source
-        assert "primary key (provider, account_scope, billing_date, cost_currency)" in source
+        assert "primary key (provider, account_scope, bill_scope_key, billing_date, cost_currency)" in source
         assert "paid_requests <= total_requests" in source
+        assert "product_subset" in source
     assert 'API_KEY_PATH = "f/content_research/tikhub_api_key"' in script
     import re
 

@@ -21,8 +21,11 @@ type Operations = {
 
 type SupplierDailySpend = {
   provider: string; account_scope: string; billing_date: string
+  bill_scope_key: string; scope_kind: 'account_total' | 'product_subset'; scope_label: string
   cost_currency: string; billing_timezone: string; total_cost?: number | null
+  payable_cost?: number | null; paid_cost?: number | null; unpaid_cost?: number | null
   total_requests?: number | null; paid_requests?: number | null; fetched_at?: string | null
+  billing_finality: 'preliminary' | 'final'; source_warning?: string | null
   period_status: 'current_accumulating' | 'prior_snapshot'
   freshness_status: 'fresh' | 'stale'
 }
@@ -50,6 +53,11 @@ function attemptText(row: Operations['api_calls'][number]) {
 }
 
 function supplierAmount(row: SupplierDailySpend) {
+  if (row.payable_cost !== null && row.payable_cost !== undefined) {
+    const paid = row.paid_cost === null || row.paid_cost === undefined ? '待核验' : value(row.paid_cost)
+    const unpaid = row.unpaid_cost === null || row.unpaid_cost === undefined ? '待核验' : value(row.unpaid_cost)
+    return `应付 ${value(row.payable_cost)} / 已付 ${paid} / 未付 ${unpaid} ${row.cost_currency}`
+  }
   return row.total_cost === null || row.total_cost === undefined
     ? '金额待供应商核验'
     : `${value(row.total_cost)} ${row.cost_currency}`
@@ -131,17 +139,17 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
         <div className="card"><span>已记账任务</span><strong>{value(data?.task_total)}</strong><small>任务列表按创建时间分页</small></div>
       </div>
       <section className="card operations-section"><h2>供应商每日实际费用</h2>
-        <p className="operations-supplier-note">账户总费用，不按页面的平台筛选；按供应商账期和币种分别展示，不跨币种相加。当前账期是累计值，最终以供应商结算页为准。</p>
+        <p className="operations-supplier-note">按供应商声明的账户或产品范围展示，不按页面的平台筛选；不同范围和币种不合并。当前账期是累计值，最终以供应商结算页为准。</p>
         {data?.supplier_daily_spend.status !== 'available' ? (
           <Alert type="warning" showIcon message="供应商日费用未同步" description={data?.supplier_daily_spend.message || '暂无可显示的实际费用；不会用 0 替代。'} />
         ) : <>
           {data.supplier_daily_spend.today.some((row) => row.freshness_status === 'stale') && <Alert type="warning" showIcon message="供应商当日费用可能过期" description="最近同步时间超过 2 小时，请检查供应商费用同步任务。" />}
-          <Table size="small" rowKey={(row) => `${row.provider}-${row.account_scope}-${row.billing_date}-${row.cost_currency}`} pagination={false} dataSource={data.supplier_daily_spend.records} columns={[
+          <Table size="small" rowKey={(row) => `${row.provider}-${row.account_scope}-${row.bill_scope_key}-${row.billing_date}-${row.cost_currency}`} pagination={false} dataSource={data.supplier_daily_spend.records} columns={[
             { title: '账期日期', dataIndex: 'billing_date' },
-            { title: '供应商 / 账户', render: (_, row) => `${row.provider} · ${row.account_scope}` },
-            { title: '实际费用', render: (_, row) => supplierAmount(row) },
+            { title: '供应商 / 账单范围', render: (_, row) => `${row.provider} · ${row.account_scope} · ${row.scope_label}` },
+            { title: '供应商当日金额', render: (_, row) => supplierAmount(row) },
             { title: '调用次数', render: (_, row) => row.total_requests === null || row.total_requests === undefined ? '次数待供应商核验' : `${value(row.total_requests)}（付费 ${row.paid_requests === null || row.paid_requests === undefined ? '待核验' : value(row.paid_requests)}）` },
-            { title: '账期状态', render: (_, row) => <Tag color={row.period_status === 'current_accumulating' ? 'blue' : 'default'}>{supplierPeriod(row)}</Tag> },
+            { title: '账期状态', render: (_, row) => <><Tag color={row.period_status === 'current_accumulating' ? 'blue' : 'default'}>{supplierPeriod(row)}</Tag><Tag color={row.source_warning ? 'warning' : row.billing_finality === 'final' ? 'green' : 'default'}>{row.source_warning ? '供应商警告' : row.billing_finality === 'final' ? '已终账' : '未终账'}</Tag></> },
             { title: '供应商时区', dataIndex: 'billing_timezone' },
             { title: '最后同步', render: (_, row) => <span>{time(row.fetched_at)}{row.period_status === 'prior_snapshot' ? <Tag>采集快照</Tag> : row.freshness_status === 'stale' ? <Tag color="warning">可能过期</Tag> : <Tag color="green">已同步</Tag>}</span> },
           ]} />

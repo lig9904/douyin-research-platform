@@ -39,6 +39,18 @@ https://api.volcengine.com/api-explorer?action=ListBillDetail&groupName=%E8%B4%A
 
 验收状态：**来源和真实页面已核验；自动同步、服务器部署及研究台展示尚未完成。**
 
+## 数据契约实现增量
+
+迁移 019 和离线解析器已实现，等待 PR 审查及服务器发布：
+
+- 日账唯一键增加明确的 `bill_scope_key`。TikHub 沿用账户汇总；火山按 API 返回的 Product code 每个产品一行，中文名称只作显示标签。
+- 分开保存应付、已付、未付；`total_cost` 是该声明范围的有符号账单金额，支持退款或调账。缺失调用次数保持 NULL。
+- `billing_finality` 只接受 preliminary/final；final 只能由供应商明确事实传入。筛选降级 Warning 独立处理，解析即失败且不覆盖既有有效快照。
+- 解析结果必须覆盖全部指定产品、日期和 CNY 币种一致，并要求 `Total` 与已收集列表数量相等；空列表、缺页、产品 code/name 映射歧义均不写零。
+- 研究台后端及页面已适配产品范围和三类金额。签名、分页 transport、只读身份及计划尚未实现，Ark/ASR API Key 不参与账单认证。
+
+验证：从旧 schema 写入现有 TikHub USD 0.319 快照后应用迁移 019，金额、请求数和账户范围均保留；另一个一次性 PostgreSQL 运行 37 项费用/首页/运行台测试全部通过，两个临时库均已删除。完整本地测试通过，前端构建及账期显示断言通过。
+
 ## 测试服配置盘点
 
 通过 JumpServer 调用既有 Windmill 的变量与资源列表，仅输出匹配项的路径和类型，未读取/输出密钥值。匹配 `volc|ark|asr|bill|access_key` 的变量只有 `ark_api_key`、`asr_worker_config`；匹配火山/账单名称的资源为空。该盘点说明现有命名配置未提供专用 billing 凭据，不推断所有未知命名 Secret 的内容。

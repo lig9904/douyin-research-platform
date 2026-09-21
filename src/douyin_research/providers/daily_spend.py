@@ -33,14 +33,22 @@ class DailySpendError(RuntimeError):
 class SupplierDailySpend:
     provider: str
     account_scope: str
+    bill_scope_key: str
+    scope_kind: str
+    scope_label: str
     billing_date: date
     cost_currency: str
     billing_timezone: str
     total_cost: Decimal
-    balance_cost: Decimal
-    free_credit_cost: Decimal
-    total_requests: int
-    paid_requests: int
+    balance_cost: Decimal | None
+    free_credit_cost: Decimal | None
+    payable_cost: Decimal | None
+    paid_cost: Decimal | None
+    unpaid_cost: Decimal | None
+    total_requests: int | None
+    paid_requests: int | None
+    billing_finality: str
+    source_warning: str | None
     fetched_at: datetime
 
 
@@ -120,14 +128,22 @@ def parse_tikhub_daily_usage(
     return SupplierDailySpend(
         provider=TIKHUB_PROVIDER,
         account_scope=account_scope.strip(),
+        bill_scope_key="account",
+        scope_kind="account_total",
+        scope_label="账户总费用",
         billing_date=_billing_date(data.get("date"), observed_at),
         cost_currency=TIKHUB_CURRENCY,
         billing_timezone=timezone_name.strip(),
         total_cost=_amount(data.get("usage")),
         balance_cost=_amount(data.get("balance_usage")),
         free_credit_cost=_amount(data.get("free_credit_usage")),
+        payable_cost=None,
+        paid_cost=None,
+        unpaid_cost=None,
         total_requests=total_requests,
         paid_requests=paid_requests,
+        billing_finality="preliminary",
+        source_warning=None,
         fetched_at=observed_at,
     )
 
@@ -168,29 +184,44 @@ def fetch_tikhub_daily_usage(
 def upsert_supplier_daily_spend(dsn: str, snapshot: SupplierDailySpend) -> bool:
     """Write a daily snapshot, preserving a newer observation if it exists."""
 
+    if snapshot.source_warning:
+        raise DailySpendError("supplier daily spend contains a warning and was not stored")
+
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
             """
             insert into supplier_daily_spend (
-              provider, account_scope, billing_date, cost_currency, billing_timezone,
-              total_cost, balance_cost, free_credit_cost, total_requests, paid_requests, fetched_at
-            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            on conflict (provider, account_scope, billing_date, cost_currency) do update set
+              provider, account_scope, bill_scope_key, scope_kind, scope_label,
+              billing_date, cost_currency, billing_timezone, total_cost,
+              balance_cost, free_credit_cost, payable_cost, paid_cost, unpaid_cost,
+              total_requests, paid_requests, billing_finality, source_warning, fetched_at
+            ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            on conflict (provider, account_scope, bill_scope_key, billing_date, cost_currency) do update set
+              scope_kind = excluded.scope_kind,
+              scope_label = excluded.scope_label,
               billing_timezone = excluded.billing_timezone,
               total_cost = excluded.total_cost,
               balance_cost = excluded.balance_cost,
               free_credit_cost = excluded.free_credit_cost,
+              payable_cost = excluded.payable_cost,
+              paid_cost = excluded.paid_cost,
+              unpaid_cost = excluded.unpaid_cost,
               total_requests = excluded.total_requests,
               paid_requests = excluded.paid_requests,
+              billing_finality = excluded.billing_finality,
+              source_warning = excluded.source_warning,
               fetched_at = excluded.fetched_at
             where supplier_daily_spend.fetched_at <= excluded.fetched_at
             returning fetched_at
             """,
             (
-                snapshot.provider, snapshot.account_scope, snapshot.billing_date,
+                snapshot.provider, snapshot.account_scope, snapshot.bill_scope_key,
+                snapshot.scope_kind, snapshot.scope_label, snapshot.billing_date,
                 snapshot.cost_currency, snapshot.billing_timezone, snapshot.total_cost,
-                snapshot.balance_cost, snapshot.free_credit_cost, snapshot.total_requests,
-                snapshot.paid_requests, snapshot.fetched_at,
+                snapshot.balance_cost, snapshot.free_credit_cost, snapshot.payable_cost,
+                snapshot.paid_cost, snapshot.unpaid_cost, snapshot.total_requests,
+                snapshot.paid_requests, snapshot.billing_finality,
+                snapshot.source_warning, snapshot.fetched_at,
             ),
         )
         wrote = cur.fetchone() is not None
