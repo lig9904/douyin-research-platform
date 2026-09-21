@@ -51,7 +51,7 @@ class L0L1Runner:
         self.provider_reserves_budget = provider_reserves_budget
 
     def run(self, sources: list[DiscoverySource], *, enrich_details: bool = True,
-            triggered_by: str = "system") -> RunSummary:
+            triggered_by: str = "system", enrich_new_only: bool = False) -> RunSummary:
         run_id = self.store.create_run(
             "l0l1_discovery",
             "v1.0.0",
@@ -103,14 +103,22 @@ class L0L1Runner:
                     key = f"{item.video.platform}:{item.video.platform_video_id}"
                     unique_platform_ids[key] = item
 
-            if enrich_details and new_platform_video_ids:
+            detail_platform_video_ids = (
+                new_platform_video_ids
+                if enrich_new_only
+                else {
+                    item.video.platform_video_id
+                    for item in unique_platform_ids.values()
+                }
+            )
+            if enrich_details and detail_platform_video_ids:
                 # Existing videos still retain this run's discovery and metric
                 # evidence, but detail enrichment is paid and only useful for
                 # candidates newly introduced to the research corpus.
                 ids = [
                     item.video.platform_video_id
                     for item in unique_platform_ids.values()
-                    if item.video.platform_video_id in new_platform_video_ids
+                    if item.video.platform_video_id in detail_platform_video_ids
                 ]
                 if not self.provider_reserves_budget:
                     planner = getattr(self.provider, "plan_videos", None)
@@ -147,6 +155,7 @@ class L0L1Runner:
                 summary={"source_count": len(sources), "llm_calls": 0,
                          "platform": self.provider.platform_name,
                          "enrich_details": enrich_details,
+                         "enrich_new_only": enrich_new_only,
                          "new_candidate_count": len(new_video_ids),
                          "detail_enriched_count": detail_enriched_count},
             )

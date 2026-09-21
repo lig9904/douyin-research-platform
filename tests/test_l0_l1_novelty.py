@@ -94,7 +94,7 @@ class _Budget:
         raise AssertionError("provider-reserved mode must not use legacy budget calls")
 
 
-def _run(new_platform_ids: set[str]):
+def _run(new_platform_ids: set[str], *, enrich_new_only: bool = True):
     store = _Store(new_platform_ids=new_platform_ids)
     provider = _Provider()
     summary = L0L1Runner(
@@ -103,7 +103,10 @@ def _run(new_platform_ids: set[str]):
         scorer=_Scorer(store),
         budget=_Budget(),
         provider_reserves_budget=True,
-    ).run([DiscoverySource("low_fan", "golden_low_fan", "72h-page-1")])
+    ).run(
+        [DiscoverySource("low_fan", "golden_low_fan", "72h-page-1")],
+        enrich_new_only=enrich_new_only,
+    )
     return summary, store, provider
 
 
@@ -126,3 +129,13 @@ def test_all_existing_discovery_skips_paid_detail_enrichment() -> None:
     assert provider.detail_batches == []
     assert store.flags == (store.run_id, set())
     assert store.finished["summary"]["detail_enriched_count"] == 0
+
+
+def test_manual_default_still_enriches_existing_videos() -> None:
+    summary, store, provider = _run(set(), enrich_new_only=False)
+
+    assert summary.new_candidate_count == 0
+    assert provider.detail_batches == [["old", "new"]]
+    assert store.flags == (store.run_id, set())
+    assert store.finished["summary"]["enrich_new_only"] is False
+    assert store.finished["summary"]["detail_enriched_count"] == 2

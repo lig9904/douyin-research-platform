@@ -58,6 +58,7 @@ def test_force_refresh_is_explicit_in_golden_plan() -> None:
         ({"max_external_calls": 1}, "at least 2"),
         ({"page": 2}, "page=1"),
         ({"date_window_hours": 25}, "date_window_hours"),
+        ({"novel_candidates_only": 1}, "novel_candidates_only"),
         ({"max_cost_usd": -0.001}, "max_cost_usd"),
         ({"max_cost_usd": True}, "max_cost_usd"),
         ({"max_cost_usd": float("nan")}, "max_cost_usd"),
@@ -185,6 +186,7 @@ def test_run_call_limit_rejects_directly_constructed_invalid_plan(max_external_c
         replace(make_plan(dry_run=False), detail_strategy="unknown"),
         replace(make_plan(dry_run=False), max_external_calls=False),
         replace(make_plan(dry_run=False), max_external_calls="2"),
+        replace(make_plan(dry_run=False), novel_candidates_only=1),
         replace(make_plan(dry_run=False), max_external_calls=3),
         replace(
             make_plan(dry_run=False, max_items=3, detail_strategy="cost_aware"),

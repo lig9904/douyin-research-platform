@@ -47,6 +47,7 @@ class GoldenIntakePlan:
     retry_count: int
     force_refresh: bool
     detail_strategy: str = "batch50"
+    novel_candidates_only: bool = False
 
 
 class _RecordingPostgresProviderStore(PostgresProviderStore):
@@ -94,6 +95,7 @@ def make_plan(
     enrich_details: bool = True,
     force_refresh: bool = False,
     detail_strategy: str = "batch50",
+    novel_candidates_only: bool = False,
 ) -> GoldenIntakePlan:
     """Validate a conservative one-page collection plan before touching a secret."""
     _validate_non_boolean_int("max_items", max_items, minimum=1, maximum=GOLDEN_MAX_ITEMS)
@@ -126,6 +128,8 @@ def make_plan(
         raise ValueError("golden intake only permits page=1")
     if date_window_hours not in {1, 24, 72, 168}:
         raise ValueError("date_window_hours must be one of 1, 24, 72, 168")
+    if type(novel_candidates_only) is not bool:
+        raise ValueError("novel_candidates_only must be boolean")
     return GoldenIntakePlan(
         dry_run=dry_run,
         max_items=max_items,
@@ -138,6 +142,7 @@ def make_plan(
         retry_count=0,
         force_refresh=force_refresh,
         detail_strategy=detail_strategy,
+        novel_candidates_only=novel_candidates_only,
     )
 
 
@@ -220,6 +225,8 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         or plan.max_cost_usd < 0
     ):
         raise ValueError("max_cost must be finite and non-negative or None")
+    if type(plan.novel_candidates_only) is not bool:
+        raise ValueError("novel_candidates_only must be boolean")
 
     budget = DailyBudgetGuard(dsn)
     budget.configure(
@@ -274,6 +281,7 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
             ],
             enrich_details=plan.enrich_details,
             triggered_by=triggered_by,
+            enrich_new_only=plan.novel_candidates_only,
         )
     finally:
         transport.close()
