@@ -354,6 +354,20 @@ cmd_restore_drill() (
   [[ "$research_verified" == '1|1|1|1|1|1|1' ]] || { echo 'ERROR: restored research database owner or key-object verification failed.' >&2; exit 1; }
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
+  local business_sql business_result business_summary
+  business_sql="$(python3 "$ROOT_DIR/scripts/test-server-restored-business-sql.py")"
+  business_result="$(research_query "$RESTORE_DATABASE" "$business_sql")"
+  business_summary="$(printf '%s\n' "$business_result" | python3 -c '
+import json,sys
+rows=[line.removeprefix("RESTORED_BUSINESS_SQL ").strip() for line in sys.stdin if line.startswith("RESTORED_BUSINESS_SQL ")]
+if len(rows)!=1:
+    raise SystemExit("ERROR: missing unique restored business audit summary")
+result=json.loads(rows[0])
+print("RESTORED_BUSINESS_AUDIT "+json.dumps(result,sort_keys=True,separators=(",",":")))
+if result.get("status")!="business_chain_present" or result.get("v1_release_accepted") is not False:
+    raise SystemExit("ERROR: restored business association audit did not pass")
+')"
+  printf '%s\n' "$business_summary"
   cleanup
   remaining="$(admin_query postgres "select exists(select 1 from pg_database where datname in ('${RESTORE_DATABASE}', '${RESTORE_WINDMILL_DATABASE}'))")"
   [[ "$remaining" == f ]] || { echo 'ERROR: fixed temporary restore database remains after cleanup.' >&2; exit 1; }
