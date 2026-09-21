@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
@@ -464,6 +468,91 @@ def test_process_interruption_after_submit_requires_reconciliation(monkeypatch) 
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from transcript where video_id=%s", (video_id,)).fetchone() == (0,)
         assert conn.execute("select count(*) from research_task_cost where task_key=%s", (request.task_key,)).fetchone() == (0,)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="requires POSIX process kill semantics")
+@pytest.mark.parametrize("crash_point", ["before_save", "during_poll"])
+def test_sigkill_subprocess_preserves_no_resubmit_boundary(tmp_path, crash_point) -> None:
+    """Kill only a disposable child, with real DB state and no supplier network."""
+    assert DSN
+    _clear()
+    video_id = _video(key=f"sigkill-{crash_point}")
+    _budget()
+    marker = tmp_path / "provider-events.txt"
+    child_code = '''
+import os, runpy, signal, sys
+from pathlib import Path
+ns = runpy.run_path(sys.argv[1])
+marker = Path(sys.argv[3])
+def record(event):
+    with marker.open("a") as stream:
+        stream.write(event + "\\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+def die(*args):
+    os.kill(os.getpid(), signal.SIGKILL)
+class Provider(ns["FakeProvider"]):
+    def submit(self, request):
+        record("submit")
+        return super().submit(request)
+    def poll(self, task_ref):
+        record("poll:" + task_ref)
+        die()
+provider = Provider(ns["ASRProviderState"](
+    status="submitted", provider_task_ref="synthetic-hard-exit-task"))
+coordinator = ns["ASRExecutionCoordinator"](ns["DSN"])
+if sys.argv[4] == "before_save":
+    coordinator._apply_state = die
+request = ns["_request"](sys.argv[2], execute=True,
+    confirmation=ns["ASR_CONFIRMATION"], max_polls=1)
+coordinator.run(request, provider_factory=lambda: provider)
+raise AssertionError("child must terminate at the selected crash point")
+'''
+    child = subprocess.run(
+        [sys.executable, "-c", child_code, str(Path(__file__).resolve()),
+         str(video_id), str(marker), crash_point],
+        capture_output=True, timeout=30, check=False,
+    )
+    # A timeout or import failure must not count as successful fault injection.
+    assert child.returncode == -signal.SIGKILL
+    events = marker.read_text().splitlines()
+    assert events.count("submit") == 1
+    request = _request(video_id, execute=True, confirmation=ASR_CONFIRMATION, max_polls=1)
+    with psycopg.connect(DSN) as conn:
+        persisted = conn.execute(
+            "select status,submission_count,provider_task_ref from asr_execution_job where task_key=%s",
+            (request.task_key,),
+        ).fetchone()
+    if crash_point == "before_save":
+        assert events == ["submit"]
+        assert persisted == ("submitting", 1, None)
+        result = ASRExecutionCoordinator(DSN).run(
+            request, provider_factory=lambda: pytest.fail("uncertain submission must not retry"))
+        assert result["status"] == "reconciliation_required"
+        assert result["external_calls"] == 0
+        with psycopg.connect(DSN) as conn:
+            assert conn.execute("select count(*) from transcript where video_id=%s", (video_id,)).fetchone() == (0,)
+        return
+    assert events == ["submit", "poll:synthetic-hard-exit-task"]
+    assert persisted == ("submitted", 1, "synthetic-hard-exit-task")
+    completed = ASRProviderState(
+        status="completed", provider_task_ref="synthetic-hard-exit-task", evidence=_evidence(),
+        cost=TaskCost(api_cost=None, asr_cost=None, llm_cost=Decimal("0"), currency="CNY", basis="unknown"),
+    )
+    provider = FakeProvider(None, [completed])
+    recovered = ASRExecutionCoordinator(DSN).run(request, provider_factory=lambda: provider)
+    assert recovered["status"] == "completed"
+    assert recovered["submission_count"] == 1
+    assert provider.submit_calls == []
+    assert provider.poll_calls == ["synthetic-hard-exit-task"]
+    replay = ASRExecutionCoordinator(DSN).run(
+        request, provider_factory=lambda: pytest.fail("completed task must not call provider"))
+    assert replay["external_calls"] == 0
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from transcript where video_id=%s", (video_id,)).fetchone() == (1,)
+        assert conn.execute(
+            "select status,total_cost,cost_basis from research_task_cost where task_key=%s", (request.task_key,),
+        ).fetchone() == ("completed", None, "unknown")
 
 
 def test_submit_failure_is_not_retried_and_unknown_actual_cost_stays_null() -> None:
