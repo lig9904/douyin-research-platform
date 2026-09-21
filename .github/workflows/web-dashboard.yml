@@ -50,3 +50,6 @@ jobs:
         run: |
           npx esbuild tests/ASRTranscriptPanel.test.tsx --bundle --platform=node --outfile=/tmp/asr-panel-test.cjs --log-level=warning
           node /tmp/asr-panel-test.cjs
+
+      - name: Verify private video preview starts without an external request
+        run: node tests/run-video-preview.mjs

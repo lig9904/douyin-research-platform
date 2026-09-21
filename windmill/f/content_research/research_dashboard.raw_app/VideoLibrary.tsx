@@ -15,6 +15,7 @@ import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
 import ASRMediaReviewPanel from './src/components/ASRMediaReviewPanel'
+import VideoMediaPreview from './src/components/VideoMediaPreview'
 import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTranscriptPanel'
 import MetricTimeline from './src/components/MetricTimeline'
 import PlatformIcon from './src/components/PlatformIcon'
@@ -784,15 +785,7 @@ export default function VideoLibrary({
                       <h2>▣ 视频详情</h2>
                     </div>
 
-                    <div className="detail-preview">
-                      <div className="detail-preview-bg">
-                        <span className="detail-preview-play">▶</span>
-                        <div className="detail-preview-caption">
-                          <strong>{detail.platform === 'douyin' ? '抖音视频' : '原平台视频'}</strong>
-                          <small>媒体预览暂未接入，保留当前固定预览区域</small>
-                        </div>
-                      </div>
-                    </div>
+                    <VideoMediaPreview key={`video-${detail.id}`} videoId={detail.id} />
 
                     <h3 className="detail-title">{detail.title}</h3>
 
