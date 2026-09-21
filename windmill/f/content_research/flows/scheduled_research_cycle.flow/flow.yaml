@@ -10,14 +10,14 @@ value:
     - id: discovery
       summary: Discover, enrich, score and persist a fixed small batch
       stop_after_if:
-        expr: result.status === 'deferred' || result.scored_videos === 0
+        expr: result.status === 'deferred' || result.new_candidate_count === 0 || result.scored_videos === 0
         skip_if_stopped: true
       value:
         type: script
         path: f/content_research/collectors/scheduled_golden_intake
         input_transforms: {}
     - id: comments
-      summary: Collect comments and persist L2 for this discovery batch
+      summary: Collect comments and persist L2 only for new candidates in this discovery batch
       value:
         type: script
         path: f/content_research/collectors/process_comment_batch

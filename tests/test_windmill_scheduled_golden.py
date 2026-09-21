@@ -38,6 +38,7 @@ def _success_result():
         "source_count": 2,
         "observations": 3,
         "unique_platform_videos": 2,
+        "new_candidate_count": 1,
         "scored_videos": 2,
         "provider_call_count": 2,
         "cached_call_count": 0,
@@ -82,6 +83,7 @@ def test_main_uses_service_identity_not_end_user_and_returns_aggregate_run(monke
         assert kwargs["triggered_by"] == "scheduled-worker"
         plan = kwargs["plan"]
         assert plan.enrich_details is True and plan.force_refresh is False
+        assert plan.novel_candidates_only is True
         assert plan.max_external_calls == 2 and plan.max_cost_usd is None
         assert plan.detail_strategy == "batch50" and plan.retry_count == 0
         return _success_result()
@@ -92,7 +94,8 @@ def test_main_uses_service_identity_not_end_user_and_returns_aggregate_run(monke
     assert result == {
         "status": "completed", "run_id": _success_result()["run_id"],
         "source_count": 2, "observations": 3, "unique_platform_videos": 2,
-        "scored_videos": 2, "provider_call_count": 2, "cached_call_count": 0,
+        "new_candidate_count": 1, "scored_videos": 2,
+        "provider_call_count": 2, "cached_call_count": 0,
         "uncached_call_count": 2, "external_calls": 2,
         "sdk_retries": 0, "raw_provider_payload_included": False,
     }
@@ -186,6 +189,15 @@ def test_summary_requires_exact_non_boolean_call_counts(result) -> None:
         module._safe_summary(result, module.UUID(_success_result()["run_id"]))
 
 
+def test_summary_rejects_novelty_count_above_unique_batch() -> None:
+    module = load_module()
+    with pytest.raises(RuntimeError, match="invalid summary"):
+        module._safe_summary(
+            {**_success_result(), "new_candidate_count": 3},
+            module.UUID(_success_result()["run_id"]),
+        )
+
+
 @pytest.mark.parametrize("identity", ["worker" + chr(10) + "other", "worker" + chr(9) + "other"])
 def test_worker_identity_rejects_control_characters(identity) -> None:
     module = load_module()
@@ -218,8 +230,12 @@ def test_pipeline_run_must_be_successful_douyin_l0l1_discovery(monkeypatch, row)
 
 def test_source_declares_fixed_dependency_and_no_public_main_parameters() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
+    lock = SCRIPT.with_suffix(".script.lock").read_text(encoding="utf-8")
+    import re
+    commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", source).group(1)
     assert '# requires-python = "==3.13.*"' in source
-    assert "@e1fe1ec43e0a09f9ce0200cb5c83a9536da304a3" in source
+    assert commit == "e32581b9f771ea75a4d53f579df1f83dac60521a"
+    assert f"douyin-research-platform@{commit}" in lock
     assert "def main() -> dict[str, object]:" in source
     assert "WM_END_USER_EMAIL" not in source
     assert "max_retries" not in source

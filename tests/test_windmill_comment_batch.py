@@ -88,9 +88,14 @@ def test_execution_uses_server_identity_and_closes_transport(monkeypatch, outcom
     monkeypatch.setattr(worker, "CommentCollector", lambda **kwargs: None)
     def pipeline(dsn, collector, worker_identity):
         seen["actor"] = worker_identity
-        return SimpleNamespace(run=lambda *args, **kwargs: SimpleNamespace(
-            pipeline_run_id=uuid4(), videos=[SimpleNamespace(outcome=outcome)],
-            promotion=SimpleNamespace(selected_count=1)))
+        def run(*args, **kwargs):
+            seen["new_candidates_only"] = kwargs["settings"].new_candidates_only
+            return SimpleNamespace(
+                pipeline_run_id=uuid4(),
+                videos=[SimpleNamespace(outcome=outcome)],
+                promotion=SimpleNamespace(selected_count=1),
+            )
+        return SimpleNamespace(run=run)
     monkeypatch.setattr(worker, "CommentPipeline", pipeline)
     if outcome == "success":
         result = worker.main(str(uuid4()))
@@ -99,7 +104,11 @@ def test_execution_uses_server_identity_and_closes_transport(monkeypatch, outcom
     else:
         with pytest.raises(RuntimeError, match="inspect persisted"):
             worker.main(str(uuid4()))
-    assert seen == {"actor": "fixed/comments", "closed": True}
+    assert seen == {
+        "actor": "fixed/comments",
+        "new_candidates_only": True,
+        "closed": True,
+    }
 
 
 @pytest.mark.parametrize("policy", [{}, {"max_requests": True, "max_cost_usd": None, "max_l3_items": 3},
