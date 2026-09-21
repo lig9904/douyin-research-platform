@@ -126,6 +126,32 @@ def test_empty_restore_db_is_explicitly_insufficient_not_a_v1_pass() -> None:
     assert result["v1_release_accepted"] is False
 
 
+@pytest.mark.parametrize("statement,value,message", [
+    ("show transaction_read_only", "off", "read-only"),
+    ("select current_database()", "douyin_research", "not connected"),
+])
+def test_runtime_guards_close_connection_before_business_queries(statement, value, message) -> None:
+    class GuardCursor(FakeCursor):
+        def fetchone(self):
+            return (value,) if self._last == statement else super().fetchone()
+
+    cursor = GuardCursor()
+    connection = FakeConnection(cursor)
+    with pytest.raises(audit_module.AuditError, match=message):
+        audit_module.audit(_dsn(), connect=lambda *_args, **_kwargs: connection)
+    assert connection.closed
+    assert not any("count(" in query for query in cursor.queries)
+
+
+def test_missing_table_closes_connection_without_partial_report() -> None:
+    cursor = FakeCursor(missing_table=True)
+    connection = FakeConnection(cursor)
+    with pytest.raises(audit_module.AuditError, match="missing"):
+        audit_module.audit(_dsn(), connect=lambda *_args, **_kwargs: connection)
+    assert connection.closed
+    assert not any("count(" in query for query in cursor.queries)
+
+
 def test_full_chain_requires_completed_costs_and_completed_analysis() -> None:
     normalized = " ".join(audit_module.FULL_CHAIN_SQL.split())
     assert "asr_cost.status='completed'" in normalized
