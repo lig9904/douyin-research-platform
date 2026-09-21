@@ -344,12 +344,12 @@ cmd_restore_drill() (
     'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec pg_restore -U "$RESEARCH_DB_USER" --no-owner --no-privileges -d "$1"' \
     bash "$RESTORE_DATABASE" < "$backup_dir/research.dump"
   compose exec -T postgres pg_restore -U "$postgres_user" --no-owner --no-privileges -d "$RESTORE_WINDMILL_DATABASE" < "$backup_dir/windmill.dump"
-  source_counts="$(research_query "$research_database" "select (select count(*) from source_video) || '|' || (select count(*) from collection) || '|' || (select count(*) from collection_item)")"
+  source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" research)"
   restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from source_video) || '|' || (select count(*) from collection) || '|' || (select count(*) from collection_item)")"
-  [[ "$source_counts" == "$restored_counts" ]] || { echo 'ERROR: restore-drill key-table counts do not match the source database.' >&2; exit 1; }
-  windmill_source_counts="$(admin_query "$windmill_database" "select (select count(*) from workspace) || '|' || (select count(*) from usr)")"
+  [[ "$source_counts" == "$restored_counts" ]] || { echo 'ERROR: restore-drill key-table counts do not match the backup archive.' >&2; exit 1; }
+  windmill_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/windmill.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" windmill)"
   windmill_restored_counts="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (select count(*) from workspace) || '|' || (select count(*) from usr)")"
-  [[ "$windmill_source_counts" == "$windmill_restored_counts" ]] || { echo 'ERROR: Windmill restore-drill key-table counts do not match the source database.' >&2; exit 1; }
+  [[ "$windmill_source_counts" == "$windmill_restored_counts" ]] || { echo 'ERROR: Windmill restore-drill key-table counts do not match the backup archive.' >&2; exit 1; }
   research_verified="$(research_query "$RESTORE_DATABASE" "select (to_regclass('public.schema_migrations') is not null)::int || '|' || (to_regclass('public.source_video') is not null)::int || '|' || (to_regclass('public.collection') is not null)::int || '|' || (to_regclass('public.collection_item') is not null)::int || '|' || (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || ((select count(*) from pg_tables where schemaname='public' and tablename in ('source_video','collection','collection_item','saved_research_filter','research_user_action','schema_migrations') and tableowner=current_user)=6)::int")"
   [[ "$research_verified" == '1|1|1|1|1|1|1' ]] || { echo 'ERROR: restored research database owner or key-object verification failed.' >&2; exit 1; }
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
