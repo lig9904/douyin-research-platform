@@ -264,6 +264,9 @@ jobs:
             --env-file .env.test-server --project test-server-release-ci \
             --backup-root "$PWD/work/release-ci-backups")"
           backup_dir="${backup_output#BACKUP }"
+          # A live database can legitimately grow after the backup snapshot.
+          "${compose[@]}" exec -T postgres psql -U postgres -d douyin_research -v ON_ERROR_STOP=1 \
+            -c "insert into source_video(platform,platform_video_id) values ('douyin','ci-after-backup')"
           TEST_SERVER_RESTORE_DRILL=YES scripts/test-server-release.sh restore-drill \
             --env-file .env.test-server --project test-server-release-ci \
             --backup-root "$PWD/work/release-ci-backups" "$backup_dir"
