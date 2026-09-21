@@ -52,6 +52,7 @@ type VideoItem = {
   collect_count?: number | null
   author_follower_count?: number | null
   metric_captured_at?: string | null
+  metric_source_kind?: 'billboard' | 'detail' | 'other' | null
   priority: number
   follower_efficiency?: number | null
   sources: string[]
@@ -838,6 +839,7 @@ export default function VideoLibrary({
                       <div className="detail-section-head">
                         <h4>数据表现</h4>
                         <span>更新于 {formatFullDate(detail.metric_captured_at)}</span>
+                        <span>当前快照来源：{detail.metric_source_kind === 'billboard' ? '榜单' : detail.metric_source_kind === 'detail' ? '详情' : '其他 / 未标注'}</span>
                       </div>
                       <div className="detail-metrics">
                         {[

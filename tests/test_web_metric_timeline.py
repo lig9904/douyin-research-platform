@@ -76,6 +76,16 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
         assert 'private-endpoint' not in str(result)
         assert result["excluded_fields"] == ["provider", "source_endpoint", "observation_key", "raw_metrics"]
         assert not {"provider", "source_endpoint", "observation_key", "raw_metrics"} & set(result["items"][0])
+        library = _backend("get_video_library.py")
+        detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
+        assert detail["metric_source_kind"] == "billboard"
+        assert detail["play_count"] == 100
+        with psycopg.connect(DSN) as conn:
+            conn.execute("update metric_snapshot set captured_at=now() where video_id=%s and source_endpoint='douyin.app.multi_video_v2'", (video_id,))
+        detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
+        assert detail["metric_source_kind"] == "detail"
+        assert detail["play_count"] == 0
+        assert "source_endpoint" not in detail
     finally:
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
             cur.execute("delete from source_video where id=%s", (video_id,))
