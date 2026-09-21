@@ -897,11 +897,13 @@ export default function VideoLibrary({
                             </div>
                           ))}
                           <div className="l3-cost-row">
+                            <strong>本次 L3 任务费用</strong>
                             <span>API {formatCost(detail.l3_analysis.cost.api_cost, detail.l3_analysis.cost.currency)}</span>
                             <span>ASR {formatCost(detail.l3_analysis.cost.asr_cost, detail.l3_analysis.cost.currency)}</span>
                             <span>LLM {formatCost(detail.l3_analysis.cost.llm_cost, detail.l3_analysis.cost.currency)}</span>
-                            <strong>合计 {formatCost(detail.l3_analysis.cost.total_cost, detail.l3_analysis.cost.currency)}</strong>
+                            <strong>本任务合计 {formatCost(detail.l3_analysis.cost.total_cost, detail.l3_analysis.cost.currency)}</strong>
                           </div>
+                          <p className="muted">仅统计本次 L3 任务，不含此前采集、媒体处理或独立转写费用；此处 ASR 为 0 不代表上游转写免费。转写费用见下方转写结果；对应供应商日账已接入时，以其日账为准，未接入或未知不等于免费。</p>
                           <p className="l3-disclaimer">
                             {detail.l3_analysis.output.mechanism_hypotheses_are_inferences
                               ? '机制假设属于基于有限证据的模型推断。'
