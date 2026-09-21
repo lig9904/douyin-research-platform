@@ -52,7 +52,8 @@ type VideoItem = {
   collect_count?: number | null
   author_follower_count?: number | null
   metric_captured_at?: string | null
-  metric_source_kind?: 'billboard' | 'detail' | 'other' | null
+  metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'other' | null
+  metric_provenance?: Record<string, { source_kind: string; captured_at: string }>
   priority: number
   follower_efficiency?: number | null
   sources: string[]
@@ -838,8 +839,7 @@ export default function VideoLibrary({
                     <section className="detail-section">
                       <div className="detail-section-head">
                         <h4>数据表现</h4>
-                        <span>更新于 {formatFullDate(detail.metric_captured_at)}</span>
-                        <span>当前快照来源：{detail.metric_source_kind === 'billboard' ? '榜单' : detail.metric_source_kind === 'detail' ? '详情' : '其他 / 未标注'}</span>
+                        <span>合并数据 · 最近字段更新 {formatFullDate(detail.metric_captured_at)}</span>
                       </div>
                       <div className="detail-metrics">
                         {[
@@ -865,7 +865,17 @@ export default function VideoLibrary({
                       </div>
                     </section>
 
-                    <MetricTimeline videoId={detail.id} />
+                    <details key={`metric-evidence-${detail.id}`}>
+                      <summary>查看合并依据与指标历史</summary>
+                      <p className="muted">播放量、账号粉丝优先采用榜单记录；其余指标采用最新非缺失记录。保留真实零值，各字段时间可能不同。</p>
+                      {Object.entries(detail.metric_provenance || {}).map(([field, evidence]) => (
+                        <p key={field} className="muted">
+                          {({play_count:'播放量', like_count:'点赞', comment_count:'评论', share_count:'分享', collect_count:'收藏', author_follower_count:'账号粉丝'} as Record<string,string>)[field] || field}
+                          ：{evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '详情' : '其他'} · {formatFullDate(evidence.captured_at)}
+                        </p>
+                      ))}
+                      <MetricTimeline videoId={detail.id} />
+                    </details>
 
                     <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">

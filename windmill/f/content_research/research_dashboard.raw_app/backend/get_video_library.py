@@ -194,16 +194,7 @@ def main(
 
     base_cte = """
     with latest_metric as (
-      select distinct on (video_id)
-        video_id, play_count, like_count, comment_count, share_count,
-        collect_count, author_follower_count, captured_at,
-        case
-          when source_endpoint='douyin.billboard.low_fan' then 'billboard'
-          when source_endpoint in ('douyin.app.multi_video_v2','douyin.app.multi_video','douyin.app.one_video','douyin.app.video_statistics','douyin.app.multi_video_statistics') then 'detail'
-          else 'other'
-        end as metric_source_kind
-      from metric_snapshot
-      order by video_id, captured_at desc, id desc
+      select * from merged_video_metric
     ),
     latest_score as (
       select distinct on (video_id)
@@ -292,6 +283,7 @@ def main(
               m.author_follower_count,
               m.captured_at as metric_captured_at,
               m.metric_source_kind,
+              m.metric_provenance,
               coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,
               case when coalesce(m.author_follower_count,0) > 0
                 then round(
@@ -346,6 +338,7 @@ def main(
                   m.author_follower_count,
                   m.captured_at as metric_captured_at,
                   m.metric_source_kind,
+                  m.metric_provenance,
                   coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,
                   case when coalesce(m.author_follower_count,0) > 0
                     then round(

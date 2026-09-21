@@ -220,11 +220,10 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
             conn,
             """
             with latest_metric as (
-              select distinct on (m.video_id)
+              select
                 m.video_id, m.play_count, m.like_count, m.comment_count,
                 m.share_count, m.author_follower_count, m.captured_at
-              from metric_snapshot m
-              order by m.video_id, m.captured_at desc, m.id desc
+              from merged_video_metric m
             ),
             latest_score as (
               select distinct on (s.video_id)

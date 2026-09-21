@@ -78,13 +78,16 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
         assert not {"provider", "source_endpoint", "observation_key", "raw_metrics"} & set(result["items"][0])
         library = _backend("get_video_library.py")
         detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
-        assert detail["metric_source_kind"] == "billboard"
+        assert detail["metric_source_kind"] == "merged"
         assert detail["play_count"] == 100
         with psycopg.connect(DSN) as conn:
             conn.execute("update metric_snapshot set captured_at=now() where video_id=%s and source_endpoint='douyin.app.multi_video_v2'", (video_id,))
         detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
-        assert detail["metric_source_kind"] == "detail"
-        assert detail["play_count"] == 0
+        assert detail["metric_source_kind"] == "merged"
+        assert detail["play_count"] == 100
+        assert detail["like_count"] == 11
+        assert detail["metric_provenance"]["play_count"]["source_kind"] == "billboard"
+        assert detail["metric_provenance"]["like_count"]["source_kind"] == "detail"
         assert "source_endpoint" not in detail
     finally:
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
