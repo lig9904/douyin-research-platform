@@ -12,6 +12,11 @@ def test_copy_rows_not_field_values_or_escaped_newlines():
     assert module.counts(lines.splitlines(True), ('source_video','collection')) == '2|0'
 
 
+def test_unselected_quoted_table_data_cannot_spoof_target_header():
+    lines = 'COPY custom."OddName" (value) FROM stdin;\nCOPY public.source_video (id) FROM stdin;\n\\.\nCOPY public.source_video (id) FROM stdin;\n1\n\\.\n'
+    assert module.counts(lines.splitlines(True), ('source_video',)) == '1'
+
+
 @pytest.mark.parametrize('value', ['', 'COPY public.source_video (id) FROM stdin;\n1\n',
     'COPY public.source_video (id) FROM stdin;\n\\.\nCOPY public.source_video (id) FROM stdin;\n\\.\n'])
 def test_missing_truncated_duplicate_fail_closed(value):

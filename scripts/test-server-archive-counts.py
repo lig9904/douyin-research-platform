@@ -15,8 +15,10 @@ def counts(lines, tables):
                 found[current] += 1
             continue
         match = re.fullmatch(r'COPY public\.([a-z_]+) \(.*\) FROM stdin;\r?\n?', line)
-        if match:
-            current = match[1]
+        if re.fullmatch(r'COPY .* FROM stdin;\r?\n?', line):
+            # Skip every COPY body, including quoted names and other schemas.
+            # Its data must never be reinterpreted as a selected table header.
+            current = match[1] if match else '__unselected_copy__'
             if current in tables:
                 if current in found:
                     raise ValueError('duplicate COPY section')
