@@ -16,6 +16,7 @@ import AppShell, { type ResearchView } from './AppShell'
 import GlobalSearch from './src/components/GlobalSearch'
 import OperationsOverview from './src/components/OperationsOverview'
 import PlatformIcon from './src/components/PlatformIcon'
+import { supplierDailySpendFootnote } from './src/dailySpendDisplay'
 
 type Platform = {
   key: string
@@ -151,14 +152,6 @@ function supplierDailySpendSummary(spend?: Overview['supplier_daily_spend']) {
       ? `${item.provider} 待核验`
       : `${item.provider} ${item.cost_currency} ${Number(amount).toFixed(3)}`
   }).join('；')
-}
-
-function supplierDailySpendFootnote(spend?: Overview['supplier_daily_spend']) {
-  if (!spend || spend.status !== 'available') return spend?.message || '等待供应商账单同步'
-  if (!spend.today.length) return '账户总费用 · 尚无供应商当前账期记录'
-  const stale = spend.today.some((item) => item.freshness_status === 'stale')
-  const record = spend.today[0]
-  return `账户总费用 · ${record.billing_date}（${record.billing_timezone}）${stale ? ' · 更新可能过期' : ''}`
 }
 
 function priorityTone(score: number) {
