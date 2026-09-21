@@ -29,3 +29,29 @@
 使用相同依赖版本；部署时仍须核对实际依赖安装和应用 policy。
 `wmill-lock.yaml` 使用官方 `generate-metadata rehash` 命令仅针对本应用离线刷新，
 没有手写哈希、访问服务端或执行全工作区同步。
+
+## 测试服务器已部署与页面证据（2026-09-21）
+
+PR #111 独立复审通过，4 项 CI（两项前端、两项含 PostgreSQL 的后端测试）均成功，
+合并提交 `db0aef2cb610085fe3a6ed06350b7077db07c319`。通过 JumpServer 发布该提交的
+单一 raw app，退出 0，活动应用从 29 更新为 30。没有全工作区同步、数据库迁移或容器重启。
+
+服务器 evidence 目录保留 `video-preview-before-app-20260921.json`（0600、独占创建）及
+`video-preview-publish-db0aef2.log`、`video-preview-postcheck-db0aef2-v2.log`。
+核对结果：应用 ID/path、extra_perms、publisher 执行模式不变；已有全部 runnables
+逐项相同，仅新增 `video_media_preview` 且 lock 非空。已有 triggerables_v2 不变，新入口
+`allow_user_resources=[]`。首次检查误将预期新增 triggerables_v2 判为差异，原失败日志保留；
+后续精确比较通过，没有为修复探针重复发布。
+
+真实 Chrome 研究台验证：
+
+- 73 秒新候选点击加载后，video 元数据为 1024×576、73.142993 秒、readyState=4、error=null。
+- 点击播放后 currentTime 实际推进到 13.851488，paused=false；随后暂停。
+- 点击刷新后签名链接发生变化，视频重新 readyState=4、error=null；链接内容未打印。
+- 切换到尚无视频资产的另一候选，DOM 中 video 数量变为 0，旧播放器已移除。
+- 为该无媒体候选点击加载，明确显示“尚无已入库视频，请先完成媒体处理”，未伪造成功。
+- 返回原候选重新加载成功，实际查看页面截图确认右侧显示视频画面与原生控件，不再是占位区。
+
+本轮按 webapp-testing 的实际页面证据验收，未代用户勾选音频审核，也未调用 ASR/L3。
+已验证手动刷新；尚未等待完整 5 分钟后主动触发过期失败，不能将刷新成功冒充到期故障恢复。
+应用回滚演练、用户最终业务验收仍是独立未完成项。
