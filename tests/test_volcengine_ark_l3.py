@@ -8,6 +8,8 @@ import pytest
 
 from douyin_research.l3.execution import L3ProviderRequest
 from douyin_research.providers.volcengine_ark_l3 import (
+    ARK_L3_SYSTEM_PROMPT,
+    ARK_L3_SYSTEM_PROMPT_VERSION,
     RECOMMENDED_ARK_MODEL_FAMILY,
     VOLCENGINE_ARK_BASE_URL,
     VOLCENGINE_ARK_SUBMIT_PATH,
@@ -53,6 +55,26 @@ def test_body_is_strict_non_streaming_and_never_contains_credentials() -> None:
     assert body["temperature"] == 0 and body["stream"] is False
     assert body["response_format"]["json_schema"]["strict"] is True
     assert "Authorization" not in repr(body) and "api_key" not in repr(body).lower()
+
+
+def test_system_prompt_is_versioned_chinese_and_requires_missing_evidence_boundaries() -> None:
+    body = ark_request_body(provider(), request())
+    system_message = body["messages"][0]
+
+    assert ARK_L3_SYSTEM_PROMPT_VERSION == "ark-l3-evidence-boundary-zh-hans-v2-2026-09-21"
+    assert system_message == {"role": "system", "content": ARK_L3_SYSTEM_PROMPT}
+    for required_boundary in (
+        "标准简体中文",
+        "JSON 键、任务标识和版本标识保持原样",
+        "数值评论统计不是评论原文",
+        "无法判断用户语义、认同、人物关系、标签或观点",
+        "未提供对照证据，无法比较类似视频或案例",
+        "画面、镜头、节奏、视觉原创性或新颖性",
+        "无法推断推荐规则、完播率或推荐权重",
+        "未提供目标 IP 或适配约束，信息不足",
+        "limitations 必须逐项列出上述缺失证据和推断边界",
+    ):
+        assert required_boundary in ARK_L3_SYSTEM_PROMPT
 
 
 def test_generate_is_permanently_fail_closed() -> None:

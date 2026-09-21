@@ -44,6 +44,16 @@ VOLCENGINE_ARK_DOC_FINGERPRINT = "e9132f22f78e13d307bdd3d40d1bdcf4ed0a04596b0f0a
 # Chosen for L3's Chinese research/summarisation workload: Lite is the
 # cost/latency default; an operator supplies a versioned Ark endpoint id.
 RECOMMENDED_ARK_MODEL_FAMILY = "doubao-seed-2-0-lite"
+# This is deliberately separate from the request's persisted ``prompt_version``.
+# Before the next reviewed live run, the operator should set that configuration
+# to this identifier (or an explicitly reviewed successor), so stored L3 runs
+# disclose the evidence-boundary instruction revision they used.
+ARK_L3_SYSTEM_PROMPT_VERSION = "ark-l3-evidence-boundary-zh-hans-v2-2026-09-21"
+ARK_L3_SYSTEM_PROMPT = """你只能分析提供的、已完成隐私审核的证据。所有分析区自然语言字符串必须使用标准简体中文；JSON 键、任务标识和版本标识保持原样。不得把缺失信息补成事实，任何结论必须能由提供的证据直接支持；推测必须明确标为“推测”。
+
+证据边界：数值评论统计不是评论原文。若没有评论原文，comment_semantics 必须明确“未提供评论原文，仅有统计特征，无法判断用户语义、认同、人物关系、标签或观点”，不得声称用户认同、标记某人或表达特定观点。若没有 comparison modality，case_comparisons 必须明确“未提供对照证据，无法比较类似视频或案例”，不得虚构比较。若没有 visual modality，不得断言画面、镜头、节奏、视觉原创性或新颖性。视频时长、互动指标或单条转写不能证明完播率、推荐权重或平台推荐规则；没有直接平台机制证据时，mechanism_hypotheses 必须明确“未提供平台机制证据，无法推断推荐规则、完播率或推荐权重”。若没有明确的目标 IP、受众或改编约束，ip_fit 必须明确“未提供目标 IP 或适配约束，信息不足”。
+
+limitations 必须逐项列出上述缺失证据和推断边界。返回严格 JSON，不要在 JSON 外输出文字。"""
 _SECTIONS = (
     "narrative_structure", "hook_functions", "comment_semantics",
     "case_comparisons", "mechanism_hypotheses", "ip_fit", "limitations",
@@ -232,7 +242,7 @@ def ark_request_body(provider: VolcengineArkL3Provider, request: L3ProviderReque
         "temperature": 0,
         "stream": False,
         "messages": [
-            {"role": "system", "content": "Analyze only supplied privacy-reviewed evidence. Return strict JSON; state uncertainty in limitations."},
+            {"role": "system", "content": ARK_L3_SYSTEM_PROMPT},
             {"role": "user", "content": json.dumps(envelope, ensure_ascii=False, sort_keys=True, separators=(",", ":"))},
         ],
         "response_format": {"type": "json_schema", "json_schema": {
