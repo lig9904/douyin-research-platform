@@ -164,6 +164,16 @@ def test_credentials_are_required_private_json_and_not_embedded_in_errors(tmp_pa
     assert "actual-secret" not in str(caught.value)
 
 
+def test_credentials_reject_symlink_even_when_target_is_private(tmp_path: Path) -> None:
+    credentials = tmp_path / "credentials.json"
+    credentials.write_text(json.dumps({"accessKey": "access", "secretKey": "secret"}))
+    credentials.chmod(0o600)
+    link = tmp_path / "credentials-link.json"
+    link.symlink_to(credentials)
+    with pytest.raises(drill.DrillError, match="credentials_file_invalid"):
+        drill.load_credentials(link)
+
+
 def test_cli_requires_explicit_execute_before_loading_credentials(monkeypatch, capsys) -> None:
     monkeypatch.setattr(drill, "load_credentials", lambda _: pytest.fail("credentials must not load"))
     assert drill.main(["--endpoint", "https://minio.example.test", "--bucket", "private", "--credentials-file", "x"]) == 2
@@ -186,7 +196,29 @@ def test_cli_hides_sdk_and_credential_failures(monkeypatch, capsys) -> None:
     assert "not-for-output" not in output
 
 
-@pytest.mark.parametrize("endpoint", ["ftp://s3.example.test", "https://user:pass@s3.example.test", "https://s3.example.test/path", "https://s3.example.test/?q=1"])
+def test_cli_reports_partial_cleanup_object_states(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(drill, "load_credentials", lambda _: ("access", "secret"))
+    monkeypatch.setattr(drill, "_client", lambda **_kwargs: object())
+
+    def fail(*_args, **_kwargs):
+        raise drill.DrillError(
+            "object_delete_failed",
+            cleanup="partial",
+            object_states={"target": "absent", "snapshot": "present"},
+        )
+
+    monkeypatch.setattr(drill, "run_drill", fail)
+    result = drill.main([
+        "--execute", "--endpoint", "https://minio.example.test", "--bucket", "private",
+        "--credentials-file", "credentials.json",
+    ])
+    output = json.loads(capsys.readouterr().err)
+    assert result == 1
+    assert output["cleanup"] == "partial"
+    assert output["object_states"] == {"target": "absent", "snapshot": "present"}
+
+
+@pytest.mark.parametrize("endpoint", ["http://s3.example.test", "ftp://s3.example.test", "https://user:pass@s3.example.test", "https://s3.example.test/path", "https://s3.example.test/?q=1"])
 def test_endpoint_rejects_embedded_credentials_and_rewrites(endpoint: str) -> None:
     with pytest.raises(drill.DrillError, match="endpoint_invalid"):
         drill._validate_endpoint(endpoint)

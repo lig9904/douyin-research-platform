@@ -65,7 +65,7 @@ def _is_missing(error: BaseException) -> bool:
 
 def _validate_endpoint(value: str) -> str:
     parsed = urlsplit(value)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    if parsed.scheme != "https" or not parsed.netloc:
         raise DrillError("endpoint_invalid")
     if parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}:
         raise DrillError("endpoint_invalid")
@@ -82,17 +82,28 @@ def load_credentials(path: str | Path) -> tuple[str, str]:
     """Read only the MinIO access/secret pair without disclosing either value."""
 
     candidate = Path(path)
+    descriptor: int | None = None
     try:
-        metadata = candidate.lstat()
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        before = candidate.lstat()
+        if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
             raise DrillError("credentials_file_invalid")
-        if metadata.st_mode & 0o077:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(candidate, flags)
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise DrillError("credentials_file_invalid")
+        if opened.st_mode & 0o077:
             raise DrillError("credentials_file_permissions_invalid")
-        value = json.loads(candidate.read_text(encoding="utf-8"))
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = None
+            value = json.load(handle)
     except DrillError:
         raise
     except Exception:
         raise DrillError("credentials_file_invalid") from None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     if not isinstance(value, dict):
         raise DrillError("credentials_file_invalid")
     access, secret = value.get("accessKey"), value.get("secretKey")
@@ -263,7 +274,7 @@ def _client(*, endpoint: str, access_key: str, secret_key: str, region: str):
         region_name=region,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
-        use_ssl=endpoint.startswith("https://"),
+        use_ssl=True,
         config=Config(
             signature_version="s3v4",
             connect_timeout=5,
