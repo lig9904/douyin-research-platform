@@ -25,6 +25,22 @@
 不能当作数据库集成通过。修正后的服务器存档重放、有效详情覆盖率和业务路由切换仍待验收。
 不对同一个过滤样本反复付费重试。
 
+### 合并后服务器存档重放
+
+PR #108 已合并为 `4bd8cbdfee1a5a9e681a473a7b19ef3be16e9900`，两项
+provider-tests CI 均通过（含 PostgreSQL）。服务器仓库快进到该版本，只复制源码到
+500G 盘的独立检验目录，未发布 Windmill 脚本、页面或变更定时策略。
+
+通过 PostgreSQL SELECT 将响应 #19 管道传入 Worker 中的新解析器；未读取 API Key、
+未调用供应商、未写入业务表。依赖使用 uv 离线缓存；导入完成后将 Python socket 构造
+替换为拒绝函数，再运行解析断言。输出 `STORED_DETAIL_REPLAY_VALID`，退出码 0，
+`observations=0`。日志：
+`/srv/douyin-research-test/evidence/stored-detail-replay-20260921-v2.log`。
+
+首次探针在导入依赖前替换 socket，导致 psycopg/SSL 导入失败，未进入解析；原失败日志
+`stored-detail-replay-20260921.log` 保留。调整的是探针初始化顺序，不是业务代码。
+此次证明真实过滤响应不再产生假详情；不证明单条接口有效字段覆盖，也不代表运行脚本已部署。
+
 ## 采集输入与输出
 
 - `plan_video_fetches(ids, purpose="detail", strategy="cost_aware")` 去重并校验 ID，返回纯计划，不访问网络。
