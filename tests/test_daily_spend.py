@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+import importlib.util
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import httpx
@@ -18,6 +20,15 @@ from douyin_research.providers.daily_spend import (
 
 OBSERVED_AT = datetime(2026, 9, 20, 8, 30, tzinfo=timezone.utc)
 DSN = os.getenv("TEST_DATABASE_URL")
+
+
+def _load_sync_script():
+    path = Path("windmill/f/content_research/collectors/sync_daily_spend.py")
+    spec = importlib.util.spec_from_file_location("sync_daily_spend_contract", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
 def _payload(**data_overrides):
@@ -134,8 +145,21 @@ def test_schema_and_windmill_contract_keep_one_daily_snapshot_not_per_call_alloc
         r'git\+https://github\.com/lig9904/douyin-research-platform@[0-9a-f]{40}"',
         script,
     )
+    assert "@ce8ae1c4c3358e0064daee45a0dd35540025a6e6" in script
+    for field in ("bill_scope_key", "scope_kind", "scope_label", "billing_finality"):
+        assert f'"{field}"' in script
+    assert "supplier daily spend scope migration is not ready" in script
     assert "REPLACE_WITH_DEPLOYED_COMMIT_SHA" not in script
     assert "concurrent_limit: 1" in metadata
+
+
+def test_windmill_sync_refuses_old_schema_before_supplier_call():
+    script = _load_sync_script()
+    with pytest.raises(RuntimeError, match="scope migration is not ready"):
+        script._require_scoped_schema({"bill_scope_key", "scope_kind"})
+    script._require_scoped_schema(
+        {"bill_scope_key", "scope_kind", "scope_label", "billing_finality"}
+    )
 
 
 def test_hourly_schedule_is_explicitly_enabled_after_deployment_preflight():

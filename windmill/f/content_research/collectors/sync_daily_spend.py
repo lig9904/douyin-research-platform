@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.12.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@3dc7c8bd3bb921f97060f135fbb154a52bcb46db",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@ce8ae1c4c3358e0064daee45a0dd35540025a6e6",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -25,6 +25,12 @@ from douyin_research.providers.daily_spend import (
 
 API_KEY_PATH = "f/content_research/tikhub_api_key"
 LOCK_NAME = "douyin_research:sync_tikhub_daily_spend"
+REQUIRED_DAILY_SPEND_COLUMNS = {
+    "bill_scope_key",
+    "scope_kind",
+    "scope_label",
+    "billing_finality",
+}
 
 
 class postgresql(TypedDict):
@@ -53,11 +59,24 @@ def _windmill_variable(path: str) -> str:
     return wmill.get_variable(path)
 
 
+def _require_scoped_schema(columns: set[str]) -> None:
+    if not REQUIRED_DAILY_SPEND_COLUMNS.issubset(columns):
+        raise RuntimeError("supplier daily spend scope migration is not ready")
+
+
 def _preflight(dsn: str) -> None:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("select to_regclass('supplier_daily_spend')")
         if cur.fetchone()[0] is None:
             raise RuntimeError("supplier daily spend schema is not ready")
+        cur.execute(
+            "select attname from pg_attribute "
+            "where attrelid = to_regclass('supplier_daily_spend') "
+            "and attnum > 0 and not attisdropped"
+        )
+        columns = {row[0] for row in cur.fetchall()}
+        # Refuse before calling the supplier when migration 019 is not yet active.
+        _require_scoped_schema(columns)
 
 
 @contextmanager
@@ -92,11 +111,15 @@ def main(db: postgresql, account_scope: str = "default") -> dict[str, object]:
         "status": "completed",
         "provider": snapshot.provider,
         "account_scope": snapshot.account_scope,
+        "bill_scope_key": snapshot.bill_scope_key,
+        "scope_kind": snapshot.scope_kind,
+        "scope_label": snapshot.scope_label,
         "billing_date": snapshot.billing_date.isoformat(),
         "cost_currency": snapshot.cost_currency,
         "total_cost": str(snapshot.total_cost),
         "total_requests": snapshot.total_requests,
         "paid_requests": snapshot.paid_requests,
+        "billing_finality": snapshot.billing_finality,
         "fetched_at": snapshot.fetched_at.isoformat(),
         "snapshot_written": wrote,
         "raw_provider_payload_included": False,
