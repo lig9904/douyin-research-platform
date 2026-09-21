@@ -1,0 +1,9 @@
+summary: Discover and score an operator-configured scheduled Douyin batch
+description: Fixed service identity and settings; no browser user dependency. Cached responses are reused; paid calls have zero retries and no amount cap. Shares the manual intake lock.
+timeout: 900
+concurrent_limit: 1
+lock: '!inline f/content_research/collectors/scheduled_golden_intake.script.lock'
+schema:
+  type: object
+  properties: {}
+  additionalProperties: false

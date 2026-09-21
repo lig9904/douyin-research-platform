@@ -1,0 +1,11 @@
+summary: Select persisted successful L2 videos for private media preparation
+description: Read-only batch linkage. No URLs, credentials, paid calls or approval creation.
+timeout: 60
+lock: '!inline f/content_research/collectors/select_cycle_media.script.lock'
+schema:
+  type: object
+  properties:
+    comment_run_id:
+      type: string
+  required:
+    - comment_run_id
