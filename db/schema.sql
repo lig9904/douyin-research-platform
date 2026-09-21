@@ -959,3 +959,13 @@ select video_id,
     'source_kind',source_kind,'captured_at',captured_at
   )) as metric_provenance
 from selected group by video_id;
+
+-- Preserve access for the existing default local reviewer, without creating roles.
+do $$
+begin
+  if exists(select 1 from pg_roles where rolname='l3_local_reviewer') then
+    if has_table_privilege('l3_local_reviewer','public.metric_snapshot','SELECT') then
+      grant select on public.merged_video_metric to l3_local_reviewer;
+    end if;
+  end if;
+end $$;
