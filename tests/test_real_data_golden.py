@@ -226,7 +226,8 @@ def test_run_live_accepts_cost_aware_three_details_plus_discovery(monkeypatch) -
 
         def run(self, *args, **kwargs):
             return SimpleNamespace(run_id="run-cost-aware", platform="douyin", source_count=1,
-                                   observations=0, unique_platform_videos=0, scores={})
+                                   observations=0, unique_platform_videos=0, scores={},
+                                   new_candidate_count=0)
 
     monkeypatch.setattr(real_data, "DailyBudgetGuard", lambda _: Budget())
     monkeypatch.setattr(real_data, "TikHubTransport", lambda *a, **kw: SimpleNamespace(close=lambda: None))
@@ -275,7 +276,8 @@ def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
 
         def run(self, *args, **kwargs):
             return SimpleNamespace(run_id="run-1", platform="douyin", source_count=1,
-                                   observations=3, unique_platform_videos=3, scores={})
+                                   observations=3, unique_platform_videos=3, scores={},
+                                   new_candidate_count=3)
 
     calls = [SimpleNamespace(estimated_cost=0.001, actual_cost=None, cached=False,
                              metadata={"billing_status": "estimated", "http_attempt_count": 1}),
@@ -322,6 +324,9 @@ def test_provider_budget_mode_does_not_double_reserve_runner_calls() -> None:
             return "run-1"
 
         def ingest(self, *args, **kwargs):
+            return SimpleNamespace(new_video_ids=[], new_platform_video_ids=[])
+
+        def set_new_candidate_flags(self, *args, **kwargs):
             return None
 
         def finish_run(self, *args, **kwargs):

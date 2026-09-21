@@ -306,6 +306,7 @@ def run_live(*, dsn: str, api_key: str, plan: GoldenIntakePlan, triggered_by: st
         "source_count": summary.source_count,
         "observations": summary.observations,
         "unique_platform_videos": summary.unique_platform_videos,
+        "new_candidate_count": summary.new_candidate_count,
         "scored_videos": len(summary.scores),
         "budget_key": GOLDEN_BUDGET_KEY,
         "max_external_calls": plan.max_external_calls,

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from douyin_research.l2.comment_pipeline import CommentPipeline, CommentPipelineSettings
 from douyin_research.l2.promotion import L3PromotionGate
@@ -56,6 +57,38 @@ class Extractor:
         if video == self.fail:
             raise ValueError("synthetic extraction failure")
         return SimpleNamespace(snapshot_id=str(uuid4()), evidence_fingerprint=f"feature-{video}")
+
+
+def test_scheduled_subset_collects_only_run_bound_new_candidates(batch):
+    source, a, b, quota, gate = batch
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            "update pipeline_run_item set metadata=%s where run_id=%s and entity_id=%s",
+            (Jsonb({"new_candidate": True}), source, a),
+        )
+        conn.execute(
+            "update pipeline_run_item set metadata=%s where run_id=%s and entity_id=%s",
+            (Jsonb({"new_candidate": False}), source, b),
+        )
+    collector = Collector()
+    service = CommentPipeline(
+        DSN,
+        collector=collector,
+        feature_extractor=Extractor(),
+        promotion_gate=gate,
+        worker_identity="scheduled-test-worker",
+    )
+    result = service.run(
+        source,
+        settings=CommentPipelineSettings(
+            top_n=2,
+            quota_date=date(2026, 9, 21),
+            quota_key=quota,
+            new_candidates_only=True,
+        ),
+    )
+    assert collector.calls == [str(a)]
+    assert [item.video_id for item in result.videos] == [a]
 
 
 def test_recovery_creates_complete_immutable_eligibility_without_recollection(batch):

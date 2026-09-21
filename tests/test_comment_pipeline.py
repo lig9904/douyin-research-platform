@@ -44,6 +44,7 @@ def test_constructor_uses_controlled_nonempty_worker_identity() -> None:
         (CommentPipelineSettings(top_n=1, min_score=101), "min_score"),
         (CommentPipelineSettings(top_n=1, comment_count=0), "comment_count"),
         (CommentPipelineSettings(top_n=1, max_pages=11), "max_pages"),
+        (CommentPipelineSettings(top_n=1, new_candidates_only=1), "new_candidates_only"),
     ],
 )
 def test_settings_are_bounded_before_any_database_or_provider_work(settings, message) -> None:
@@ -75,6 +76,11 @@ def test_promotion_changes_preserve_collection_key_but_collection_changes_do_not
     changed = replace(base, top_n=5, min_score=80, quota_date=date(2026, 9, 22), quota_key="other")
     assert _settings_fingerprint(source, COMMENT_PIPELINE_RULE_VERSION, changed) == fingerprint
     assert _settings_fingerprint(source, COMMENT_PIPELINE_RULE_VERSION, replace(base, max_items=30)) != fingerprint
+    assert _settings_fingerprint(
+        source,
+        COMMENT_PIPELINE_RULE_VERSION,
+        replace(base, new_candidates_only=True),
+    ) != fingerprint
 
 
 def test_eligibility_binds_successful_set_and_feature_evidence_not_order():

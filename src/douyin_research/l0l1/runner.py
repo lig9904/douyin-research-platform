@@ -31,6 +31,7 @@ class RunSummary:
     observations: int
     unique_platform_videos: int
     scores: dict[Any, float]
+    new_candidate_count: int = 0
 
 
 class L0L1Runner:
@@ -59,6 +60,9 @@ class L0L1Runner:
         )
         observation_count = 0
         unique_platform_ids: dict[str, VideoObservation] = {}
+        new_video_ids: set[Any] = set()
+        new_platform_video_ids: set[str] = set()
+        detail_enriched_count = 0
         try:
             for source in sources:
                 if not self.provider_reserves_budget:
@@ -80,7 +84,7 @@ class L0L1Runner:
                     item.video.platform_video_id: idx
                     for idx, item in enumerate(items, start=1)
                 }
-                self.store.ingest(
+                ingested = self.store.ingest(
                     items,
                     DiscoveryContext(
                         run_id=run_id,
@@ -92,13 +96,22 @@ class L0L1Runner:
                         ranks=ranks,
                     ),
                 )
+                new_video_ids.update(ingested.new_video_ids)
+                new_platform_video_ids.update(ingested.new_platform_video_ids)
                 observation_count += len(items)
                 for item in items:
                     key = f"{item.video.platform}:{item.video.platform_video_id}"
                     unique_platform_ids[key] = item
 
-            if enrich_details and unique_platform_ids:
-                ids = [item.video.platform_video_id for item in unique_platform_ids.values()]
+            if enrich_details and new_platform_video_ids:
+                # Existing videos still retain this run's discovery and metric
+                # evidence, but detail enrichment is paid and only useful for
+                # candidates newly introduced to the research corpus.
+                ids = [
+                    item.video.platform_video_id
+                    for item in unique_platform_ids.values()
+                    if item.video.platform_video_id in new_platform_video_ids
+                ]
                 if not self.provider_reserves_budget:
                     planner = getattr(self.provider, "plan_videos", None)
                     request_count = (len(planner(ids)) if planner is not None else
@@ -110,6 +123,7 @@ class L0L1Runner:
                     )
                 details = self.provider.fetch_videos(ids)
                 self._validate_platform(details)
+                detail_enriched_count = len(details)
                 self.store.ingest(
                     details,
                     DiscoveryContext(
@@ -124,6 +138,7 @@ class L0L1Runner:
                 )
 
             scores = self.scorer.score_run(run_id)
+            self.store.set_new_candidate_flags(run_id, new_video_ids)
             self.store.finish_run(
                 run_id,
                 input_count=observation_count,
@@ -131,7 +146,9 @@ class L0L1Runner:
                 promoted_l1_count=len(scores),
                 summary={"source_count": len(sources), "llm_calls": 0,
                          "platform": self.provider.platform_name,
-                         "enrich_details": enrich_details},
+                         "enrich_details": enrich_details,
+                         "new_candidate_count": len(new_video_ids),
+                         "detail_enriched_count": detail_enriched_count},
             )
             return RunSummary(
                 run_id=run_id,
@@ -140,6 +157,7 @@ class L0L1Runner:
                 observations=observation_count,
                 unique_platform_videos=len(unique_platform_ids),
                 scores=scores,
+                new_candidate_count=len(new_video_ids),
             )
         except Exception as exc:
             self.store.finish_run(
