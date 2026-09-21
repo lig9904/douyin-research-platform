@@ -70,6 +70,7 @@ class CommentPipelineSettings:
     max_pages: int = 1
     max_items: int = 20
     sample_reason: str = "top"
+    new_candidates_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,7 +151,10 @@ class CommentPipeline:
             lock_cur.execute("select pg_advisory_lock(%s)", (lock_key,))
             run_id: UUID | None = None
             try:
-                source_videos, platform = self._load_and_validate_source(source_id)
+                source_videos, platform = self._load_and_validate_source(
+                    source_id,
+                    new_candidates_only=settings.new_candidates_only,
+                )
                 # Do not silently take the first 20: omitted source videos must
                 # never become eligible by an old L2 state.
                 if len(source_videos) > MAX_BATCH_VIDEOS:
@@ -229,7 +233,12 @@ class CommentPipeline:
             finally:
                 lock_cur.execute("select pg_advisory_unlock(%s)", (lock_key,))
 
-    def _load_and_validate_source(self, source_run_id: UUID) -> tuple[list[_SourceVideo], str]:
+    def _load_and_validate_source(
+        self,
+        source_run_id: UUID,
+        *,
+        new_candidates_only: bool = False,
+    ) -> tuple[list[_SourceVideo], str]:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
@@ -247,8 +256,13 @@ class CommentPipeline:
                 raise ValueError("source must be a successful L0/L1 discovery run")
             if not declared_platform:
                 raise ValueError("source L0/L1 run must declare a platform")
+            novelty_clause = (
+                "and coalesce((i.metadata->>'new_candidate')::boolean,false)"
+                if new_candidates_only
+                else ""
+            )
             cur.execute(
-                """
+                f"""
                 select v.id, v.platform_video_id, v.platform
                 from pipeline_run_item i
                 join source_video v on v.id=i.entity_id
@@ -256,6 +270,7 @@ class CommentPipeline:
                   and i.entity_type='video'
                   and i.stage='L1'
                   and i.outcome='scored'
+                  {novelty_clause}
                 order by v.id
                 """,
                 (source_run_id,),
@@ -614,6 +629,8 @@ def _validate_settings(settings: CommentPipelineSettings) -> None:
         raise ValueError("max_items must be between 1 and 100")
     if not settings.sample_reason or len(settings.sample_reason) > 128:
         raise ValueError("sample_reason is required and must be bounded")
+    if type(settings.new_candidates_only) is not bool:
+        raise ValueError("new_candidates_only must be boolean")
 
 
 def _as_uuid(value: UUID | str, name: str) -> UUID:
@@ -632,6 +649,10 @@ def _settings_fingerprint(source_run_id: UUID, rule_version: str, settings: Comm
         "max_items": settings.max_items,
         "sample_reason": settings.sample_reason,
     }
+    # Preserve the historical manual fingerprint exactly.  Only the new
+    # scheduled-only subset mode gets a distinct collection key.
+    if settings.new_candidates_only:
+        payload["new_candidates_only"] = True
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

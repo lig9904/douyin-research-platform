@@ -19,7 +19,7 @@ def test_flow_binds_persisted_batches_and_runs_media_serially_without_cloud_subm
     flow = (ROOT / "windmill/f/content_research/flows/scheduled_research_cycle.flow/flow.yaml").read_text()
     for fragment in (
         "concurrent_limit: 1", "properties: {}", "additionalProperties: false",
-        "expr: result.status === 'deferred' || result.scored_videos === 0", "skip_if_stopped: true",
+        "expr: result.status === 'deferred' || result.new_candidate_count === 0 || result.scored_videos === 0", "skip_if_stopped: true",
         "source_run_id:\n            type: javascript\n            expr: results.discovery.run_id",
         "comment_run_id:\n            type: javascript\n            expr: results.comments.run_id",
         "expr: results.media_selection.video_ids", "expr: flow_input.iter.value",
@@ -30,6 +30,8 @@ def test_flow_binds_persisted_batches_and_runs_media_serially_without_cloud_subm
     schedule = (ROOT / "windmill/f/content_research/flows/scheduled_research_cycle.schedule.yaml").read_text()
     for fragment in ("enabled: false", "is_flow: true", "args: {}", "timezone: Etc/UTC"):
         assert fragment in schedule
+    assert 'schedule: "0 10 */6 * * *"' in schedule
+    assert 'schedule: "0 10 * * * *"' not in schedule
 
 
 @pytest.fixture

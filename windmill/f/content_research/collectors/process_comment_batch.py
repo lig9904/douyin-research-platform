@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@c56376a646038f264c552576f1f43d18d66d6026",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@e32581b9f771ea75a4d53f579df1f83dac60521a",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -86,7 +86,17 @@ def _preflight(dsn, source, settings):
         row = conn.execute("select run_type,status,platform from pipeline_run where id=%s", (source,)).fetchone()
         if row != ("l0l1_discovery", "success", "douyin"):
             raise ValueError("successful Douyin discovery batch required")
-        count = conn.execute("select count(*) from pipeline_run_item where run_id=%s and entity_type='video' and stage='L1' and outcome='scored'", (source,)).fetchone()[0]
+        novelty_clause = (
+            " and coalesce((metadata->>'new_candidate')::boolean,false)"
+            if getattr(settings, "new_candidates_only", False)
+            else ""
+        )
+        count = conn.execute(
+            "select count(*) from pipeline_run_item where run_id=%s "
+            "and entity_type='video' and stage='L1' and outcome='scored'"
+            + novelty_clause,
+            (source,),
+        ).fetchone()[0]
         if not 1 <= count <= 20:
             raise ValueError("discovery batch must contain 1 to 20 scored videos")
         _prepare_day(conn, settings, _daily_policy())
@@ -123,7 +133,14 @@ class _SafeTransport:
 def main(source_run_id: str) -> dict:
     source = UUID(source_run_id)
     dsn, actor, settings = _configuration()
-    settings = replace(settings, quota_date=date.today())
+    # This entrypoint is schedule-owned.  Manual collection keeps the core
+    # default (all scored items); unattended work is restricted to candidates
+    # first inserted by the bound discovery run.
+    settings = replace(
+        settings,
+        quota_date=date.today(),
+        new_candidates_only=True,
+    )
     _preflight(dsn, source, settings)
     import wmill
     transport = None

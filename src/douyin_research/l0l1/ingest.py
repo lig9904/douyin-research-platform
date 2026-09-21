@@ -29,6 +29,8 @@ class DiscoveryContext:
 @dataclass(slots=True)
 class IngestResult:
     video_ids: list[UUID]
+    new_video_ids: list[UUID]
+    new_platform_video_ids: list[str]
     new_videos: int
     discovery_inserted: int
     metric_inserted: int
@@ -105,6 +107,8 @@ class L0L1Store:
     ) -> IngestResult:
         observations = list(observations)
         video_ids: list[UUID] = []
+        new_video_ids: list[UUID] = []
+        new_platform_video_ids: list[str] = []
         new_videos = 0
         discovery_inserted = 0
         metric_inserted = 0
@@ -119,6 +123,9 @@ class L0L1Store:
                 video_id, inserted = self._upsert_video(cur, obs, account_id, context)
                 new_videos += int(inserted)
                 video_ids.append(video_id)
+                if inserted:
+                    new_video_ids.append(video_id)
+                    new_platform_video_ids.append(obs.video.platform_video_id)
 
                 self._upsert_lineage(cur, "video", video_id, context.provider)
 
@@ -222,10 +229,46 @@ class L0L1Store:
 
         return IngestResult(
             video_ids=list(dict.fromkeys(video_ids)),
+            new_video_ids=list(dict.fromkeys(new_video_ids)),
+            new_platform_video_ids=list(dict.fromkeys(new_platform_video_ids)),
             new_videos=new_videos,
             discovery_inserted=discovery_inserted,
             metric_inserted=metric_inserted,
         )
+
+    def set_new_candidate_flags(
+        self,
+        run_id: UUID,
+        new_video_ids: Iterable[UUID],
+    ) -> None:
+        """Bind scheduled novelty to this immutable discovery run.
+
+        Every L1 item remains scored evidence.  The explicit flag lets a
+        scheduled downstream worker select only entities first inserted by
+        this run, without changing manual replay behavior or relying on wall
+        clock comparisons.
+        """
+        identifiers = list(dict.fromkeys(new_video_ids))
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                update pipeline_run_item
+                set metadata=metadata || %s
+                where run_id=%s and entity_type='video' and stage='L1'
+                """,
+                (Jsonb({"new_candidate": False}), run_id),
+            )
+            if identifiers:
+                cur.execute(
+                    """
+                    update pipeline_run_item
+                    set metadata=metadata || %s
+                    where run_id=%s and entity_type='video' and stage='L1'
+                      and entity_id=any(%s)
+                    """,
+                    (Jsonb({"new_candidate": True}), run_id, identifiers),
+                )
+            conn.commit()
 
     def _upsert_account(self, cur, obs: VideoObservation, context: DiscoveryContext) -> UUID:
         account = obs.account

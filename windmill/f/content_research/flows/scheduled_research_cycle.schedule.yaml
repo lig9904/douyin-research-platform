@@ -1,5 +1,5 @@
-summary: Hourly small-batch research evidence preparation
-schedule: "0 10 * * * *"
+summary: Six-hour novel-candidate research evidence preparation
+schedule: "0 10 */6 * * *"
 timezone: Etc/UTC
 script_path: f/content_research/flows/scheduled_research_cycle
 is_flow: true

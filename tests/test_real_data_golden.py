@@ -58,6 +58,7 @@ def test_force_refresh_is_explicit_in_golden_plan() -> None:
         ({"max_external_calls": 1}, "at least 2"),
         ({"page": 2}, "page=1"),
         ({"date_window_hours": 25}, "date_window_hours"),
+        ({"novel_candidates_only": 1}, "novel_candidates_only"),
         ({"max_cost_usd": -0.001}, "max_cost_usd"),
         ({"max_cost_usd": True}, "max_cost_usd"),
         ({"max_cost_usd": float("nan")}, "max_cost_usd"),
@@ -185,6 +186,7 @@ def test_run_call_limit_rejects_directly_constructed_invalid_plan(max_external_c
         replace(make_plan(dry_run=False), detail_strategy="unknown"),
         replace(make_plan(dry_run=False), max_external_calls=False),
         replace(make_plan(dry_run=False), max_external_calls="2"),
+        replace(make_plan(dry_run=False), novel_candidates_only=1),
         replace(make_plan(dry_run=False), max_external_calls=3),
         replace(
             make_plan(dry_run=False, max_items=3, detail_strategy="cost_aware"),
@@ -226,7 +228,8 @@ def test_run_live_accepts_cost_aware_three_details_plus_discovery(monkeypatch) -
 
         def run(self, *args, **kwargs):
             return SimpleNamespace(run_id="run-cost-aware", platform="douyin", source_count=1,
-                                   observations=0, unique_platform_videos=0, scores={})
+                                   observations=0, unique_platform_videos=0, scores={},
+                                   new_candidate_count=0)
 
     monkeypatch.setattr(real_data, "DailyBudgetGuard", lambda _: Budget())
     monkeypatch.setattr(real_data, "TikHubTransport", lambda *a, **kw: SimpleNamespace(close=lambda: None))
@@ -275,7 +278,8 @@ def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):
 
         def run(self, *args, **kwargs):
             return SimpleNamespace(run_id="run-1", platform="douyin", source_count=1,
-                                   observations=3, unique_platform_videos=3, scores={})
+                                   observations=3, unique_platform_videos=3, scores={},
+                                   new_candidate_count=3)
 
     calls = [SimpleNamespace(estimated_cost=0.001, actual_cost=None, cached=False,
                              metadata={"billing_status": "estimated", "http_attempt_count": 1}),
@@ -322,6 +326,9 @@ def test_provider_budget_mode_does_not_double_reserve_runner_calls() -> None:
             return "run-1"
 
         def ingest(self, *args, **kwargs):
+            return SimpleNamespace(new_video_ids=[], new_platform_video_ids=[])
+
+        def set_new_candidate_flags(self, *args, **kwargs):
             return None
 
         def finish_run(self, *args, **kwargs):

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@e1fe1ec43e0a09f9ce0200cb5c83a9536da304a3",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@e32581b9f771ea75a4d53f579df1f83dac60521a",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -102,6 +102,7 @@ def _scheduled_plan(raw: object):
         max_external_calls=2,
         max_cost_usd=None,
         detail_strategy="batch50",
+        novel_candidates_only=True,
     )
 
 
@@ -136,6 +137,7 @@ def _safe_summary(result: Mapping[str, Any], run_id: UUID) -> dict[str, object]:
         "source_count",
         "observations",
         "unique_platform_videos",
+        "new_candidate_count",
         "scored_videos",
         "provider_call_count",
         "cached_call_count",
@@ -149,6 +151,11 @@ def _safe_summary(result: Mapping[str, Any], run_id: UUID) -> dict[str, object]:
         raise RuntimeError("scheduled golden intake returned an invalid summary")
     if counts["provider_call_count"] != (
         counts["cached_call_count"] + counts["uncached_call_count"]
+    ):
+        raise RuntimeError("scheduled golden intake returned an invalid summary")
+    if (
+        counts["new_candidate_count"] > counts["unique_platform_videos"]
+        or counts["scored_videos"] > counts["unique_platform_videos"]
     ):
         raise RuntimeError("scheduled golden intake returned an invalid summary")
     return {
