@@ -663,7 +663,7 @@ export default function VideoLibrary({
                         <th>评论</th>
                         <th>分享</th>
                         <th>粉丝数</th>
-                        <th>互动效率</th>
+                        <th>互动效率（合并估算）</th>
                         <th>优先级</th>
                         <th>研究层级</th>
                         <th>状态</th>
@@ -852,7 +852,7 @@ export default function VideoLibrary({
                             detail.follower_efficiency == null
                               ? '—'
                               : `${Number(detail.follower_efficiency).toFixed(1)}%`,
-                            '互动效率',
+                            '互动效率（合并估算）',
                           ],
                           [priorityText(Number(detail.priority || 0)), '优先级'],
                           [`L${detail.research_level}`, '研究层级'],

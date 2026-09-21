@@ -89,6 +89,10 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
         assert detail["metric_provenance"]["play_count"]["source_kind"] == "billboard"
         assert detail["metric_provenance"]["like_count"]["source_kind"] == "detail"
         assert "source_endpoint" not in detail
+        filtered = library.main(_resource(), query='timeline fixture', play_min=100, play_max=100)
+        merged_item = next(item for item in filtered['items'] if item['id'] == str(video_id))
+        assert merged_item['play_count'] == detail['play_count']
+        assert merged_item['metric_provenance'] == detail['metric_provenance']
     finally:
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
             cur.execute("delete from source_video where id=%s", (video_id,))
