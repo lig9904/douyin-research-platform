@@ -38,3 +38,14 @@ Windmill 持久化每一步结果和任务状态，因此可追溯源批次、�
 - 正常小时计划已创建并由 CLI 确认 enabled；沿用模板每小时 UTC 第 10 分钟，无加速测试频率。两个真实 schedule 周期仍待观察，不把启用成功当作连续执行验收。
 
 本检查点不代表 ASR/L3 自动派发、信息充分性、恢复/回滚或 V1 最终验收通过。
+
+## 首个真实定时周期（UTC 02:10）
+
+UTC 02:13:54 读取 Windmill 数据库核验：任务 `01a0c1ac-dce4-e937-9bb8-5685c842fc4e` 的 trigger_kind 为 schedule，完成状态 success。下列子步骤按 parent_job 精确关联，不以时间邻近推断归属。
+
+- 发现 run_id `9fdfb15d-cbe2-40b8-8f46-119df79efc90`：1 条视频、1 条评分，外部调用 2，缓存命中 0，重试 0。
+- 评论 run_id `a3352419-f2f2-4366-92e6-58e843027852`：成功，source_run_id 匹配上述发现批次，video_count=1、selected_count=0；没有强迫晋级 L3。
+- 媒体选择匹配同一评论批次，仅选中 `4ffa7104-293c-43e0-bf5a-596537cd3cf1`。媒体运行 `187063d7-020b-4bd1-bffd-4a76e585ead5` completed、reused=true、external_paid_calls=0，复用既有两个对象。
+- 下一轮任务 `01a0c1ba-30d8-55b3-e539-fa4cb8dc6c13` 已在队列，scheduled_for 为 UTC 03:10、running=false。排队不算成功；仍缺第二个连续周期证据。
+
+本轮不是零外部调用：发现环节确有 2 次未缓存调用。媒体复用不能推导整轮免费；评论调用费用与供应商日账须另核对。
