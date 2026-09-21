@@ -247,6 +247,23 @@ jobs:
             --env-file .env.test-server --project test-server-release-ci \
             --backup-root "$PWD/work/release-ci-backups")"
           backup_dir="${backup_output#BACKUP }"
+          if TEST_SERVER_RESTORE_DRILL=YES scripts/test-server-release.sh restore-drill \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups" "$backup_dir" >work/restore-empty.out 2>&1; then
+            echo "empty business chain unexpectedly passed restore audit" >&2
+            exit 1
+          fi
+          grep -Fq "restored business association audit did not pass" work/restore-empty.out
+          remaining="$("${compose[@]}" exec -T postgres psql -At -U postgres -d postgres -c \
+            "select count(*) from pg_database where datname in ('test_server_research_restore','test_server_windmill_restore')")"
+          test "$remaining" = 0
+          "${compose[@]}" exec -T postgres psql -U postgres -d douyin_research -v ON_ERROR_STOP=1 \
+            < tests/fixtures/restored_business_chain.sql
+          sleep 1
+          backup_output="$(scripts/test-server-release.sh backup \
+            --env-file .env.test-server --project test-server-release-ci \
+            --backup-root "$PWD/work/release-ci-backups")"
+          backup_dir="${backup_output#BACKUP }"
           TEST_SERVER_RESTORE_DRILL=YES scripts/test-server-release.sh restore-drill \
             --env-file .env.test-server --project test-server-release-ci \
             --backup-root "$PWD/work/release-ci-backups" "$backup_dir"

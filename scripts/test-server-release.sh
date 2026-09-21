@@ -365,6 +365,7 @@ if len(rows)!=1:
 result=json.loads(rows[0])
 print("RESTORED_BUSINESS_AUDIT "+json.dumps(result,sort_keys=True,separators=(",",":")))
 if result.get("status")!="business_chain_present" or result.get("v1_release_accepted") is not False:
+    print("RESTORED_BUSINESS_AUDIT "+json.dumps(result,sort_keys=True,separators=(",",":")), file=sys.stderr)
     raise SystemExit("ERROR: restored business association audit did not pass")
 ')"
   printf '%s\n' "$business_summary"
