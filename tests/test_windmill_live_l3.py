@@ -21,7 +21,7 @@ SPEC.loader.exec_module(worker)
 def test_worker_release_lock_matches_pinned_core_and_python():
     lock = PATH.with_suffix(".script.lock").read_text()
     metadata = PATH.with_suffix(".script.yaml").read_text()
-    revision = "fe801f7fd922f54bf8f4e4d36693bea8137d6024"
+    revision = "e33b56c11359e41e1ceee3957391ef3ef59e3478"
     assert revision in lock and revision in PATH.read_text()
     assert "# py: 3.13" in lock and "wmill==1.815.0" in lock
     assert "!inline f/content_research/analysis/run_reviewed_l3.script.lock" in metadata
