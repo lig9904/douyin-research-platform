@@ -77,7 +77,7 @@ SELECT format('GRANT USAGE ON SCHEMA public TO %I', :'reviewer_user')
 \gexec
 
 SELECT format(
-  'GRANT SELECT ON TABLE public.source_video, public.research_promotion_decision, public.video_comment_feature_snapshot, public.transcript, public.metric_snapshot, public.analysis_run, public.research_task_cost, public.daily_budget TO %I',
+  'GRANT SELECT ON TABLE public.source_video, public.research_promotion_decision, public.video_comment_feature_snapshot, public.transcript, public.metric_snapshot, public.merged_video_metric, public.analysis_run, public.research_task_cost, public.daily_budget TO %I',
   :'reviewer_user'
 )
 \gexec

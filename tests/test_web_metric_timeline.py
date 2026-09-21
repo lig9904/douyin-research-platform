@@ -56,11 +56,11 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
                       video_id, provider, source_endpoint, observation_key,
                       play_count, like_count, comment_count, share_count,
                       collect_count, raw_metrics, captured_at
-                    ) values (%s, 'private-provider', 'private-endpoint', %s,
+                    ) values (%s, 'private-provider', %s, %s,
                       %s, %s, %s, %s, %s, '{"private":"never return"}'::jsonb,
                       now() - (%s || ' hours')::interval)
                     """,
-                    (video_id, f"{observation_prefix}-{index}", 100 + index, 10 + index, index, index, index, hours),
+                    (video_id, ('douyin.billboard.low_fan', 'douyin.app.multi_video_v2', 'private-endpoint')[index], f"{observation_prefix}-{index}", (100, 0, None)[index], 10 + index, index, index, index, hours),
                 )
             conn.commit()
 
@@ -71,8 +71,28 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
         assert result["page_size"] == 10
         assert result["total"] == 3
         assert len(result["items"]) == 3
+        assert [item['source_kind'] for item in result['items']] == ['billboard', 'detail', 'other']
+        assert [item['play_count'] for item in result['items']] == [100, 0, None]
+        assert 'private-endpoint' not in str(result)
         assert result["excluded_fields"] == ["provider", "source_endpoint", "observation_key", "raw_metrics"]
         assert not {"provider", "source_endpoint", "observation_key", "raw_metrics"} & set(result["items"][0])
+        library = _backend("get_video_library.py")
+        detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
+        assert detail["metric_source_kind"] == "merged"
+        assert detail["play_count"] == 100
+        with psycopg.connect(DSN) as conn:
+            conn.execute("update metric_snapshot set captured_at=now() where video_id=%s and source_endpoint='douyin.app.multi_video_v2'", (video_id,))
+        detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
+        assert detail["metric_source_kind"] == "merged"
+        assert detail["play_count"] == 100
+        assert detail["like_count"] == 11
+        assert detail["metric_provenance"]["play_count"]["source_kind"] == "billboard"
+        assert detail["metric_provenance"]["like_count"]["source_kind"] == "detail"
+        assert "source_endpoint" not in detail
+        filtered = library.main(_resource(), query='timeline fixture', play_min=100, play_max=100)
+        merged_item = next(item for item in filtered['items'] if item['id'] == str(video_id))
+        assert merged_item['play_count'] == detail['play_count']
+        assert merged_item['metric_provenance'] == detail['metric_provenance']
     finally:
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
             cur.execute("delete from source_video where id=%s", (video_id,))

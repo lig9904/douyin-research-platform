@@ -124,10 +124,9 @@ def main(
       group by account_id
     ),
     latest_video_metric as (
-      select distinct on (video_id)
+      select
         video_id, play_count, like_count, comment_count, share_count, captured_at
-      from metric_snapshot
-      order by video_id, captured_at desc, id desc
+      from merged_video_metric
     ),
     latest_video_score as (
       select distinct on (video_id)
@@ -453,10 +452,9 @@ def main(
                 conn,
                 """
                 with latest_metric as (
-                  select distinct on (video_id)
+                  select
                     video_id, play_count, like_count, comment_count, share_count, captured_at
-                  from metric_snapshot
-                  order by video_id, captured_at desc, id desc
+                  from merged_video_metric
                 ),
                 latest_score as (
                   select distinct on (video_id)

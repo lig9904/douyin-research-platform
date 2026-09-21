@@ -56,11 +56,10 @@ class CanonicalResearchQueries:
             cur.execute(
                 """
                 with latest_metric as (
-                  select distinct on (video_id)
+                  select
                     video_id, play_count, like_count, comment_count, share_count,
                     captured_at
-                  from metric_snapshot
-                  order by video_id, captured_at desc, id desc
+                  from merged_video_metric
                 )
                 select
                   v.id::text as video_id,

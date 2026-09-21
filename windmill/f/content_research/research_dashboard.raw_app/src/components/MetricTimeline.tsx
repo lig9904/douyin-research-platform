@@ -4,6 +4,7 @@ import { backend } from '../../backend'
 
 type Metric = {
   captured_at: string
+  source_kind?: 'billboard' | 'detail' | 'other'
   play_count?: number | null
   like_count?: number | null
   comment_count?: number | null
@@ -58,18 +59,19 @@ export default function MetricTimeline({ videoId }: { videoId: string }) {
           options={[{ value: 7, label: '近 7 天' }, { value: 30, label: '近 30 天' }, { value: 90, label: '近 90 天' }]}
         />
       </div>
-      <p className="metric-timeline-note">仅展示规范化指标快照；不展示 Provider 原始指标或请求标识。</p>
+      <p className="metric-timeline-note">仅展示规范化指标快照；不同来源的统计口径可能不同，不能直接视为增长或下降。0 为接口记录值，不代表已核实真实为零；— 表示缺失。不展示原始响应或请求标识。</p>
       {error && <Alert type="error" showIcon message="指标历史未加载" description={error} />}
       {loading ? <div className="metric-timeline-loading"><Spin size="small" /></div> : (
         <>
           <div className="metric-timeline-table-wrap">
             <table className="metric-timeline-table">
-              <thead><tr><th>采集时间</th><th>播放</th><th>点赞</th><th>评论</th><th>分享</th><th>收藏</th></tr></thead>
+              <thead><tr><th>采集时间</th><th>来源</th><th>播放</th><th>点赞</th><th>评论</th><th>分享</th><th>收藏</th><th>粉丝</th></tr></thead>
               <tbody>
                 {(data?.items || []).map((item, index) => (
                   <tr key={`${item.captured_at}-${index}`}>
-                    <td>{time(item.captured_at)}</td><td>{count(item.play_count)}</td><td>{count(item.like_count)}</td>
+                    <td>{time(item.captured_at)}</td><td>{item.source_kind === 'billboard' ? '榜单' : item.source_kind === 'detail' ? '详情' : '其他 / 未标注'}</td><td>{count(item.play_count)}</td><td>{count(item.like_count)}</td>
                     <td>{count(item.comment_count)}</td><td>{count(item.share_count)}</td><td>{count(item.collect_count)}</td>
+                    <td>{count(item.author_follower_count)}</td>
                   </tr>
                 ))}
               </tbody>

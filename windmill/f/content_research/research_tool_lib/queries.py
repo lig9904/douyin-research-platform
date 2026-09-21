@@ -130,11 +130,10 @@ def search_cases(
         db,
         """
         with latest_metric as (
-          select distinct on (video_id)
+          select
             video_id, play_count, like_count, comment_count, share_count,
             captured_at
-          from metric_snapshot
-          order by video_id, captured_at desc, id desc
+          from merged_video_metric
         )
         select
           v.id::text as video_id,
@@ -176,12 +175,11 @@ def get_case_detail(db: Mapping[str, object], *, video_id: object) -> dict[str, 
         cur.execute(
             """
             with latest_metric as (
-              select distinct on (video_id)
+              select
                 video_id, play_count, like_count, comment_count, share_count,
                 collect_count, author_follower_count, captured_at
-              from metric_snapshot
+              from merged_video_metric
               where video_id=%s
-              order by video_id, captured_at desc, id desc
             )
             select
               v.id::text as video_id,
@@ -283,11 +281,10 @@ def get_hot_videos(
         db,
         """
         with latest_metric as (
-          select distinct on (video_id)
+          select
             video_id, play_count, like_count, comment_count, share_count,
             captured_at
-          from metric_snapshot
-          order by video_id, captured_at desc, id desc
+          from merged_video_metric
         )
         select
           v.id::text as video_id,
@@ -335,11 +332,10 @@ def get_blackhorse_videos(
           where score_type='priority'
           order by video_id, calculated_at desc, id desc
         ), latest_metric as (
-          select distinct on (video_id)
+          select
             video_id, play_count, like_count, comment_count, share_count,
             author_follower_count, captured_at
-          from metric_snapshot
-          order by video_id, captured_at desc, id desc
+          from merged_video_metric
         )
         select
           v.id::text as video_id,
@@ -447,11 +443,10 @@ def get_account_videos(
         db,
         """
         with latest_metric as (
-          select distinct on (video_id)
+          select
             video_id, play_count, like_count, comment_count, share_count,
             collect_count, captured_at
-          from metric_snapshot
-          order by video_id, captured_at desc, id desc
+          from merged_video_metric
         ), latest_score as (
           select distinct on (video_id)
             video_id, score, rule_version, calculated_at
