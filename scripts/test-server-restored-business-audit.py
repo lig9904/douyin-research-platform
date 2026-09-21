@@ -27,6 +27,7 @@ REQUIRED_TABLES = frozenset(
         "analysis_run",
         "asr_execution_job",
         "l3_execution_job",
+        "asr_media_review",
     }
 )
 
@@ -101,19 +102,32 @@ BAD_LINK_SQL = {
         select count(*) from asr_execution_job j
         left join research_task_cost c on c.id=j.task_cost_id
         where (j.task_cost_id is not null and (c.id is null or c.video_id is distinct from j.video_id))
-           or (j.status='completed' and j.task_cost_id is null)
+           or (j.status='completed' and (
+             j.task_cost_id is null
+             or c.status is distinct from 'completed'
+             or c.task_key is distinct from j.task_key
+             or c.task_type is distinct from 'asr_transcription'
+             or c.input_fingerprint is distinct from j.source_fingerprint
+           ))
     """,
     "l3_execution_cost": """
         select count(*) from l3_execution_job j
         left join research_task_cost c on c.id=j.task_cost_id
         where (j.task_cost_id is not null and (c.id is null or c.video_id is distinct from j.video_id))
-           or (j.status='completed' and j.task_cost_id is null)
+           or (j.status='completed' and (
+             j.task_cost_id is null
+             or c.status is distinct from 'completed'
+             or c.task_key is distinct from j.task_key
+             or c.task_type is distinct from 'l3_structured_research'
+             or c.input_fingerprint is distinct from j.input_fingerprint
+           ))
     """,
     "asr_execution_transcript": """
         select count(*) from asr_execution_job j
         where j.status='completed' and not exists (
           select 1 from transcript t
           where t.video_id=j.video_id and t.task_cost_id=j.task_cost_id
+            and t.source_fingerprint is not distinct from j.source_fingerprint
         )
     """,
     "l3_execution_analysis": """
@@ -121,6 +135,24 @@ BAD_LINK_SQL = {
         where j.status='completed' and not exists (
           select 1 from analysis_run a
           where a.video_id=j.video_id and a.task_cost_id=j.task_cost_id
+            and a.status='completed'
+            and a.analysis_type='l3_structured_research'
+            and a.analysis_level='L3'
+            and a.input_fingerprint is not distinct from j.input_fingerprint
+        )
+    """,
+    "asr_execution_media_review": """
+        select count(*) from asr_execution_job j
+        where j.status='completed' and not exists (
+          select 1
+          from media_asset a
+          join asr_media_review r on r.asset_id=a.id
+          where a.video_id=j.video_id
+            and a.kind='audio'
+            and a.content_sha256 is not distinct from j.source_fingerprint
+            and r.active
+            and r.asset_fingerprint is not distinct from j.media_ref_fingerprint
+            and r.identity_source='windmill_end_user_email_allowlist_v1'
         )
     """,
 }
@@ -128,17 +160,46 @@ BAD_LINK_SQL = {
 FULL_CHAIN_SQL = """
     select count(distinct v.id)
     from source_video v
-    join media_asset m on m.video_id=v.id
+    join media_asset m
+      on m.video_id=v.id
+     and m.kind='audio'
     join transcript t on t.video_id=v.id
     join research_task_cost asr_cost
-      on asr_cost.id=t.task_cost_id and asr_cost.video_id=v.id and asr_cost.status='completed'
+      on asr_cost.id=t.task_cost_id
+     and asr_cost.video_id=v.id
+     and asr_cost.status='completed'
+     and asr_cost.task_type='asr_transcription'
+     and asr_cost.input_fingerprint is not distinct from t.source_fingerprint
+     and asr_cost.input_fingerprint is not distinct from m.content_sha256
+    join asr_media_review mr
+      on mr.asset_id=m.id
+     and mr.active
+     and mr.identity_source='windmill_end_user_email_allowlist_v1'
     join asr_execution_job aj
-      on aj.video_id=v.id and aj.task_cost_id=t.task_cost_id and aj.status='completed'
-    join analysis_run a on a.video_id=v.id and a.status='completed'
+      on aj.video_id=v.id
+     and aj.task_cost_id=t.task_cost_id
+     and aj.status='completed'
+     and aj.task_key=asr_cost.task_key
+     and aj.source_fingerprint is not distinct from asr_cost.input_fingerprint
+     and aj.media_ref_fingerprint is not distinct from mr.asset_fingerprint
+    join analysis_run a
+      on a.video_id=v.id
+     and a.status='completed'
+     and a.analysis_type='l3_structured_research'
+     and a.analysis_level='L3'
     join research_task_cost l3_cost
-      on l3_cost.id=a.task_cost_id and l3_cost.video_id=v.id and l3_cost.status='completed'
+      on l3_cost.id=a.task_cost_id
+     and l3_cost.video_id=v.id
+     and l3_cost.status='completed'
+     and l3_cost.task_type='l3_structured_research'
+     and l3_cost.input_fingerprint is not distinct from a.input_fingerprint
     join l3_execution_job lj
-      on lj.video_id=v.id and lj.task_cost_id=a.task_cost_id and lj.status='completed'
+      on lj.video_id=v.id
+     and lj.task_cost_id=a.task_cost_id
+     and lj.status='completed'
+     and lj.task_key=l3_cost.task_key
+     and lj.input_fingerprint is not distinct from l3_cost.input_fingerprint
+     and lj.input_fingerprint is not distinct from a.input_fingerprint
 """
 
 
