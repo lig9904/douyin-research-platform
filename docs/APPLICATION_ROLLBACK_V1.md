@@ -43,3 +43,20 @@
 
 尚未执行上述版本切换、浏览器复验和恢复当前版本；数据库隔离恢复、MinIO 实物校验不能替代这些步骤。
 数据库真正切换、对象丢失恢复、完整权限/配置重建是不同范围，不由本应用回滚自动授权或证明。
+
+## 真实数据库只读兼容性检查（2026-09-21）
+
+通过 JumpServer 从 Windmill API 获取版本 28/29 的实际 inlineScript，在现有 Worker 的隔离 uv 环境运行，
+不是用本机源码替代历史版本。数据库连接统一设置 `default_transaction_read_only=on`、
+15 秒 statement timeout 和 10 秒连接超时；凭据受控管道传递，结果不输出正文。
+
+- `application-read-compatibility-20260921.log`：两个版本各执行首页、视频库（指定真实案例详情）、热点库、指标时间线，共 8 次返回结构有效，退出 0。
+- `application-account-compatibility-20260921.log`：从已部署脚本读取实际 `account_similarity` 依赖，在内存注册原模块后执行两个版本账号库，2 次成功，退出 0；不是 mock 相似度结果。
+- `application-case-compatibility-20260921.log`：对既有案例 `da3062a7-9e87-480c-9c10-664a078aa779` 额外执行两版详情，分别断言 3 条来源证据、非空真实 ASR、非空 L3，并匹配提示版本 `ark-l3-evidence-boundary-zh-hans-v2-2026-09-21`，退出 0。
+
+以上日志均位于服务器 `/srv/douyin-research-test/evidence/`。没有改变活动应用版本、业务数据或权限，没有调用付费 Provider。
+证明的是这些输入下的真实数据库查询兼容性，不覆盖所有筛选/空数据分支、浏览器构建、播放器、历史 lock 安装或实际版本切换。
+
+已保存受控源码快照 `/srv/douyin-research-test/evidence/application-rollback-29-28-20260921.json`：
+766,241 字节，0600，独占新建、不覆盖旧文件。保存前确认活动应用仍是 29 且 value 与版本 29 一致；
+包含 28/29 的完整 API 应用记录。该 JSON 不含已构建 JS/CSS，不能单独替代完整 raw app 发布/重建验收。
