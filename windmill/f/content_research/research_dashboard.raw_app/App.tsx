@@ -106,12 +106,20 @@ type Overview = {
 type SupplierDailySpend = {
   provider: string
   account_scope: string
+  bill_scope_key: string
+  scope_kind: 'account_total' | 'product_subset'
+  scope_label: string
   billing_date: string
   cost_currency: string
   billing_timezone: string
   total_cost?: number | null
+  payable_cost?: number | null
+  paid_cost?: number | null
+  unpaid_cost?: number | null
   total_requests?: number | null
   paid_requests?: number | null
+  billing_finality: 'preliminary' | 'final'
+  source_warning?: string | null
   fetched_at?: string | null
   period_status: 'current_accumulating' | 'prior_snapshot'
   freshness_status: 'fresh' | 'stale'
@@ -149,8 +157,8 @@ function supplierDailySpendSummary(spend?: Overview['supplier_daily_spend']) {
   return spend.today.map((item) => {
     const amount = item.total_cost
     return amount === null || amount === undefined
-      ? `${item.provider} 待核验`
-      : `${item.provider} ${item.cost_currency} ${Number(amount).toFixed(3)}`
+      ? `${item.provider} · ${item.scope_label} 待核验`
+      : `${item.provider} · ${item.scope_label} ${item.cost_currency} ${Number(amount).toFixed(3)}`
   }).join('；')
 }
 

@@ -58,12 +58,13 @@ def _daily_supplier_spend(cur, days: int) -> dict[str, Any]:
     rows = _rows(
         cur,
         """
-        select provider, account_scope, billing_date, cost_currency, billing_timezone,
-               total_cost, balance_cost, free_credit_cost, total_requests,
-               paid_requests, fetched_at
+        select provider, account_scope, bill_scope_key, scope_kind, scope_label,
+               billing_date, cost_currency, billing_timezone, total_cost,
+               balance_cost, free_credit_cost, payable_cost, paid_cost, unpaid_cost,
+               total_requests, paid_requests, billing_finality, source_warning, fetched_at
         from supplier_daily_spend
         where billing_date >= current_date - %s
-        order by billing_date desc, provider, account_scope, cost_currency
+        order by billing_date desc, provider, account_scope, bill_scope_key, cost_currency
         """,
         (max(days, 7),),
     )
