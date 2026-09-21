@@ -386,6 +386,86 @@ def test_submitted_job_is_polled_without_resubmission() -> None:
     assert second_provider.poll_calls == ["private-provider-task"]
 
 
+def test_poll_outage_recovers_original_task_without_resubmitting() -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="poll-outage")
+    _budget()
+    submitted = ASRProviderState(status="submitted", provider_task_ref="private-provider-task")
+
+    class PollOutage(FakeProvider):
+        def poll(self, provider_task_ref):
+            self.poll_calls.append(provider_task_ref)
+            raise RuntimeError("private provider response must not escape")
+
+    provider = PollOutage(submitted)
+    request = _request(video_id, execute=True, confirmation=ASR_CONFIRMATION, max_polls=1)
+    first = ASRExecutionCoordinator(DSN).run(request, provider_factory=lambda: provider)
+    assert first["status"] == "submitted"
+    assert first["error_code"] == "poll_failed"
+    assert first["external_calls"] == 2
+    assert "private provider response" not in repr(first)
+    completed = ASRProviderState(
+        status="completed", provider_task_ref="private-provider-task",
+        evidence=_evidence(),
+        cost=TaskCost(api_cost=None, asr_cost=None, llm_cost=Decimal("0"),
+                      currency="CNY", basis="unknown"),
+    )
+    recovered_provider = FakeProvider(submitted, [completed])
+    # A new coordinator models loss of process-local state between attempts.
+    recovered = ASRExecutionCoordinator(DSN).run(
+        request, provider_factory=lambda: recovered_provider)
+    assert recovered["status"] == "completed"
+    assert recovered["external_calls"] == 1
+    assert recovered["submission_count"] == 1
+    assert recovered["poll_count"] == 2
+    assert len(provider.submit_calls) == 1
+    assert recovered_provider.submit_calls == []
+    assert recovered_provider.poll_calls == ["private-provider-task"]
+    replay = ASRExecutionCoordinator(DSN).run(
+        request, provider_factory=lambda: pytest.fail("completed replay must not load provider"))
+    assert replay["external_calls"] == 0
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from transcript where video_id=%s", (video_id,)).fetchone() == (1,)
+        assert conn.execute(
+            "select status,api_cost,asr_cost,total_cost,cost_basis from research_task_cost where task_key=%s",
+            (request.task_key,),
+        ).fetchone() == ("completed", None, None, None, "unknown")
+
+
+def test_process_interruption_after_submit_requires_reconciliation(monkeypatch) -> None:
+    assert DSN
+    _clear()
+    video_id = _video(key="submit-interruption")
+    _budget()
+    provider = FakeProvider(ASRProviderState(
+        status="submitted", provider_task_ref="private-provider-task"))
+    request = _request(video_id, execute=True, confirmation=ASR_CONFIRMATION, max_polls=1)
+    coordinator = ASRExecutionCoordinator(DSN)
+
+    def interrupted(*args):
+        # BaseException bypasses normal provider-error handling, like a worker exit.
+        raise SystemExit("synthetic process termination")
+
+    monkeypatch.setattr(coordinator, "_apply_state", interrupted)
+    with pytest.raises(SystemExit, match="synthetic process termination"):
+        coordinator.run(request, provider_factory=lambda: provider)
+    assert len(provider.submit_calls) == 1
+    assert provider.poll_calls == []
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute(
+            "select status,submission_count,provider_task_ref from asr_execution_job where task_key=%s",
+            (request.task_key,),
+        ).fetchone() == ("submitting", 1, None)
+    replay = ASRExecutionCoordinator(DSN).run(
+        request, provider_factory=lambda: pytest.fail("uncertain submit must not resubmit"))
+    assert replay["status"] == "reconciliation_required"
+    assert replay["external_calls"] == 0
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute("select count(*) from transcript where video_id=%s", (video_id,)).fetchone() == (0,)
+        assert conn.execute("select count(*) from research_task_cost where task_key=%s", (request.task_key,)).fetchone() == (0,)
+
+
 def test_submit_failure_is_not_retried_and_unknown_actual_cost_stays_null() -> None:
     assert DSN
     _clear()
