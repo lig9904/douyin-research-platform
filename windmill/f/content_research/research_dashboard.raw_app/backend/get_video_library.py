@@ -155,10 +155,10 @@ def main(
       and (%s < 0 or v.research_level=%s)
       and (%s < 0 or coalesce(s.score, v.monitoring_priority, 0) >= %s)
       and (%s='all' or v.monitoring_status=%s)
-      and (%s < 0 or coalesce(m.play_count,0) >= %s)
-      and (%s < 0 or coalesce(m.play_count,0) <= %s)
-      and (%s < 0 or coalesce(m.author_follower_count,0) >= %s)
-      and (%s < 0 or coalesce(m.author_follower_count,0) <= %s)
+      and (%s < 0 or (m.play_count is not null and m.play_count >= %s))
+      and (%s < 0 or (m.play_count is not null and m.play_count <= %s))
+      and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count >= %s))
+      and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count <= %s))
       and (
         %s='all'
         or (%s='yes' and coalesce(c.collection_count,0)>0)
