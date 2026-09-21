@@ -46,3 +46,5 @@ https://api.volcengine.com/api-explorer?action=ListBillDetail&groupName=%E8%B4%A
 已向用户请求专用账单只读身份及测试服 Secret 保存授权，尚未创建身份或改变权限。
 
 现有 `015_supplier_daily_spend.sql` 对余额消费、赠额消费及请求数均有 NOT NULL 约束，并要求费用非负；不能直接塞入火山应付/已付账单，也不能为缺失的请求数编造零。接入需要保留字段语义与缺失状态，并明确退款/调账处理；现有 TikHub 同步行为必须回归验证。
+
+首页 `supplierDailySpendFootnote` 当前把全部记录标为“账户总费用”，且只使用第一条记录的日期/时区。新增产品范围以及与 TikHub 不同的账期时区后，必须逐供应商显示范围、日期、时区，不能继续复用一个总脚注。首页摘要还只显示 provider，需增加产品标签，避免两个火山产品成为无法区分的金额。运维页调用次数已有 null 展示分支，可复用，但数据库和写入层仍需适配。
