@@ -428,9 +428,9 @@ def test_poll_outage_recovers_original_task_without_resubmitting() -> None:
     with psycopg.connect(DSN) as conn:
         assert conn.execute("select count(*) from transcript where video_id=%s", (video_id,)).fetchone() == (1,)
         assert conn.execute(
-            "select status,total_cost from research_task_cost where task_key=%s",
+            "select status,api_cost,asr_cost,total_cost,cost_basis from research_task_cost where task_key=%s",
             (request.task_key,),
-        ).fetchone() == ("completed", None)
+        ).fetchone() == ("completed", None, None, None, "unknown")
 
 
 def test_process_interruption_after_submit_requires_reconciliation(monkeypatch) -> None:
