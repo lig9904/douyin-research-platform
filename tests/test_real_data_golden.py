@@ -48,12 +48,18 @@ def test_force_refresh_is_explicit_in_golden_plan() -> None:
     [
         ({"max_items": 0}, "max_items"),
         ({"max_items": GOLDEN_MAX_ITEMS + 1}, "max_items"),
+        ({"max_items": False}, "max_items"),
+        ({"max_items": "5"}, "max_items"),
         ({"max_external_calls": 0}, "max_external_calls"),
         ({"max_external_calls": GOLDEN_MAX_EXTERNAL_CALLS + 1}, "max_external_calls"),
+        ({"max_external_calls": False}, "max_external_calls"),
+        ({"max_external_calls": "2"}, "max_external_calls"),
+        ({"detail_strategy": "unknown"}, "detail_strategy"),
         ({"max_external_calls": 1}, "at least 2"),
         ({"page": 2}, "page=1"),
         ({"date_window_hours": 25}, "date_window_hours"),
         ({"max_cost_usd": -0.001}, "max_cost_usd"),
+        ({"max_cost_usd": True}, "max_cost_usd"),
         ({"max_cost_usd": float("nan")}, "max_cost_usd"),
         ({"max_cost_usd": float("inf")}, "max_cost_usd"),
         ({"max_cost_usd": float("-inf")}, "max_cost_usd"),
@@ -102,6 +108,44 @@ def test_run_call_limit_is_independent_from_daily_ledger() -> None:
     assert reserved == [spec.key, spec.key]
 
 
+def test_cost_aware_hook_accepts_discovery_plus_three_details_then_rejects_fifth() -> None:
+    reserved = []
+    reserve = _make_run_limited_before_external_call(
+        reserve_daily_ledger=lambda spec: reserved.append(spec.key),
+        max_external_calls=4,
+        detail_strategy="cost_aware",
+    )
+    spec = get_endpoint("douyin.billboard.low_fan")
+
+    for _ in range(4):
+        reserve(spec)
+    with pytest.raises(ProviderBudgetError, match="5>4"):
+        reserve(spec)
+
+    assert reserved == [spec.key] * 4
+
+
+@pytest.mark.parametrize(
+    ("max_external_calls", "detail_strategy"),
+    [
+        (False, "batch50"),
+        ("2", "batch50"),
+        (3, "batch50"),
+        (GOLDEN_MAX_ITEMS + 2, "cost_aware"),
+        (2, "unknown"),
+    ],
+)
+def test_run_call_hook_rejects_invalid_strategy_or_limit(
+    max_external_calls, detail_strategy,
+) -> None:
+    with pytest.raises(ValueError):
+        _make_run_limited_before_external_call(
+            reserve_daily_ledger=lambda _: None,
+            max_external_calls=max_external_calls,
+            detail_strategy=detail_strategy,
+        )
+
+
 def test_rejected_daily_reservation_does_not_consume_run_slot() -> None:
     attempts = []
 
@@ -133,6 +177,81 @@ def test_run_call_limit_rejects_directly_constructed_invalid_plan(max_external_c
             plan=plan,
             triggered_by="test",
         )
+
+
+@pytest.mark.parametrize(
+    "plan",
+    [
+        replace(make_plan(dry_run=False), detail_strategy="unknown"),
+        replace(make_plan(dry_run=False), max_external_calls=False),
+        replace(make_plan(dry_run=False), max_external_calls="2"),
+        replace(make_plan(dry_run=False), max_external_calls=3),
+        replace(
+            make_plan(dry_run=False, max_items=3, detail_strategy="cost_aware"),
+            max_external_calls=GOLDEN_MAX_ITEMS + 2,
+        ),
+    ],
+)
+def test_run_live_rejects_invalid_public_plan_before_budget_construction(monkeypatch, plan) -> None:
+    def unexpected_budget(*args, **kwargs):
+        pytest.fail("budget must not be constructed for an invalid public plan")
+
+    monkeypatch.setattr(real_data, "DailyBudgetGuard", unexpected_budget)
+    with pytest.raises(ValueError):
+        real_data.run_live(
+            dsn="postgresql://invalid.invalid/research",
+            api_key="not-used",
+            plan=plan,
+            triggered_by="test",
+        )
+
+
+def test_run_live_accepts_cost_aware_three_details_plus_discovery(monkeypatch) -> None:
+    provider_kwargs = {}
+
+    class Budget:
+        def configure(self, **kwargs):
+            return None
+
+        def make_before_external_call(self, **kwargs):
+            return lambda _: None
+
+    class Store:
+        def finish_run(self, *args, **kwargs):
+            return None
+
+    class Runner:
+        def __init__(self, **kwargs):
+            self.store = kwargs["store"]
+
+        def run(self, *args, **kwargs):
+            return SimpleNamespace(run_id="run-cost-aware", platform="douyin", source_count=1,
+                                   observations=0, unique_platform_videos=0, scores={})
+
+    monkeypatch.setattr(real_data, "DailyBudgetGuard", lambda _: Budget())
+    monkeypatch.setattr(real_data, "TikHubTransport", lambda *a, **kw: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(real_data, "_RecordingPostgresProviderStore", lambda _: SimpleNamespace(recorded_calls=[]))
+    monkeypatch.setattr(real_data, "TikHubDouyinProvider", lambda **kwargs: provider_kwargs.update(kwargs))
+    monkeypatch.setattr(real_data, "L0L1Store", lambda _: Store())
+    monkeypatch.setattr(real_data, "L1Scorer", lambda _: None)
+    monkeypatch.setattr(real_data, "L0L1Runner", Runner)
+
+    result = real_data.run_live(
+        dsn="test", api_key="test",
+        plan=make_plan(dry_run=False, max_items=3, detail_strategy="cost_aware"),
+        triggered_by="test",
+    )
+
+    assert result["run_id"] == "run-cost-aware"
+    assert provider_kwargs["detail_strategy"] == "cost_aware"
+    # The wrapper's own strategy-aware validation accepts the discovery call
+    # plus one request for each of the three selected details.
+    reserve = provider_kwargs["before_external_call"]
+    spec = get_endpoint("douyin.billboard.low_fan")
+    for _ in range(4):
+        reserve(spec)
+    with pytest.raises(ProviderBudgetError, match="5>4"):
+        reserve(spec)
 
 
 def test_successful_run_summarizes_ledger_cost_in_usd(monkeypatch):

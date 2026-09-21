@@ -3,6 +3,28 @@
 日期：2026-09-20。实现范围：Provider、报价规划、调用日志、只读费用页与隔离测试。
 **尚未部署本轮改动；新路由没有完成真实字段覆盖／扣费验收，默认仍为既有 batch50。**
 
+## 2026-09-21 单条详情实测与边界修正
+
+测试服务器经 JumpServer 执行一次 `douyin.app.one_video` 请求，零重试、未命中缓存；
+既有响应存档 `external_api_response.id=19`，服务器日志
+`/srv/douyin-research-test/evidence/single-detail-live-20260921.log`。
+已观察 HTTP 尝试 1 次，报价估算 USD 0.001，不是供应商确认扣款。
+没有调用 ASR/LLM，没有将此次详情写入业务视频表。
+
+响应顶层 `code=200`、数据层 `status_code=0`，但 `aweme_details=null`，
+`filter_list` 只有目标 ID 与 `reason=7`。这证明本次没有可用详情，不能推断视频已删除，
+也不能将 HTTP 成功或探针退出码 0 当作详情验收通过。旧通用解析器误把过滤记录识别为视频，
+本次修正为在视频解析时递归排除 `filter_list` 与 `verification_filter_list`，包括 JSON 字符串嵌套。
+有效详情及真实零指标仍保留；评论与分页遍历不改变。
+
+同时修正显式 `cost_aware` 计划的运行上限：3 条候选允许榜单 1 次＋单条详情 3 次，
+第 5 次仍拒绝；默认 `batch50` 仍最多 2 次。运行前重新验证公开计划，非法配置不得先写日账。
+这不是恢复金额限制，也不自动切换定时任务策略。
+
+本地针对 Provider、黄金采集与省费规划回归：79 passed、1 skipped；跳过项依赖 PostgreSQL，
+不能当作数据库集成通过。修正后的服务器存档重放、有效详情覆盖率和业务路由切换仍待验收。
+不对同一个过滤样本反复付费重试。
+
 ## 采集输入与输出
 
 - `plan_video_fetches(ids, purpose="detail", strategy="cost_aware")` 去重并校验 ID，返回纯计划，不访问网络。

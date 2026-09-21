@@ -71,6 +71,39 @@ def test_missing_metrics_remain_none_not_zero() -> None:
     assert metrics.metric_status["play_count"] == "unavailable"
 
 
+@pytest.mark.parametrize("encoded", [False, True])
+@pytest.mark.parametrize("details", [None, []])
+def test_rejected_video_ids_are_not_normalized_as_details(encoded, details) -> None:
+    import json
+    data = {
+        "filter_list": [{"aweme_id": "123", "reason": "unavailable"}],
+        "verification_filter_list": [{"aweme_id": "123"}],
+        "aweme_details": details,
+    }
+    payload = {"code": 200, "data": json.dumps(data) if encoded else data}
+    assert normalize_video_observations(
+        payload, endpoint_key="douyin.app.one_video", raw_ref="raw:synthetic",
+        observed_at=datetime.now(timezone.utc),
+    ) == []
+
+
+def test_filter_entry_does_not_shadow_real_video_detail() -> None:
+    payload = {"code": 200, "data": {
+        "filter_list": [{"aweme_id": "123", "reason": "filtered"}],
+        "aweme_details": [{"aweme_id": "123", "desc": "real detail",
+                           "statistics": {"digg_count": 0}}],
+        "verification_filter_list": [{"aweme_id": "456"}],
+    }}
+    items = normalize_video_observations(
+        payload, endpoint_key="douyin.app.one_video", raw_ref="raw:synthetic",
+        observed_at=datetime.now(timezone.utc),
+    )
+    assert len(items) == 1
+    assert items[0].video.platform_video_id == "123"
+    assert items[0].video.description == "real detail"
+    assert items[0].metrics.like_count == 0
+
+
 def test_comment_normalizer_preserves_zero_and_deduplicates_ids() -> None:
     observed_at = datetime.now(timezone.utc)
     payload = {
