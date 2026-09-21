@@ -56,11 +56,11 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
                       video_id, provider, source_endpoint, observation_key,
                       play_count, like_count, comment_count, share_count,
                       collect_count, raw_metrics, captured_at
-                    ) values (%s, 'private-provider', 'private-endpoint', %s,
+                    ) values (%s, 'private-provider', %s, %s,
                       %s, %s, %s, %s, %s, '{"private":"never return"}'::jsonb,
                       now() - (%s || ' hours')::interval)
                     """,
-                    (video_id, f"{observation_prefix}-{index}", 100 + index, 10 + index, index, index, index, hours),
+                    (video_id, ('douyin.billboard.low_fan', 'douyin.app.multi_video_v2', 'private-endpoint')[index], f"{observation_prefix}-{index}", (100, 0, None)[index], 10 + index, index, index, index, hours),
                 )
             conn.commit()
 
@@ -71,6 +71,9 @@ def test_metric_timeline_bounds_and_hides_provider_columns() -> None:
         assert result["page_size"] == 10
         assert result["total"] == 3
         assert len(result["items"]) == 3
+        assert [item['source_kind'] for item in result['items']] == ['billboard', 'detail', 'other']
+        assert [item['play_count'] for item in result['items']] == [100, 0, None]
+        assert 'private-endpoint' not in str(result)
         assert result["excluded_fields"] == ["provider", "source_endpoint", "observation_key", "raw_metrics"]
         assert not {"provider", "source_endpoint", "observation_key", "raw_metrics"} & set(result["items"][0])
     finally:

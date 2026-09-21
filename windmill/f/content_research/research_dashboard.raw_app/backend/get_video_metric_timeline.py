@@ -68,6 +68,11 @@ def main(
             """
             select
               captured_at,
+              case source_endpoint
+                when 'douyin.billboard.low_fan' then 'billboard'
+                when 'douyin.app.multi_video_v2' then 'detail'
+                else 'other'
+              end as source_kind,
               play_count,
               like_count,
               comment_count,
