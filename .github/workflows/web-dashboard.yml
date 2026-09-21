@@ -53,3 +53,8 @@ jobs:
 
       - name: Verify private video preview starts without an external request
         run: node tests/run-video-preview.mjs
+
+      - name: Verify supplier-specific billing periods
+        run: |
+          npx esbuild tests/DailySpendDisplay.test.ts --bundle --platform=node --outfile=/tmp/daily-spend-display-test.cjs --log-level=warning
+          node /tmp/daily-spend-display-test.cjs
