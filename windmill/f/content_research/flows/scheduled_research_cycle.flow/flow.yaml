@@ -1,0 +1,58 @@
+summary: Scheduled Douyin discovery, comments and private media cycle
+description: >
+  Fixed operator-owned configuration, no public inputs. Steps and media downloads
+  run serially. No automatic retries, ASR/LLM submission or approval creation.
+  Review-gated analysis dispatch remains separate. Schedules are disabled in source.
+value:
+  concurrent_limit: 1
+  concurrency_time_window_s: 0
+  modules:
+    - id: discovery
+      summary: Discover, enrich, score and persist a fixed small batch
+      stop_after_if:
+        expr: result.status === 'deferred' || result.scored_videos === 0
+        skip_if_stopped: true
+      value:
+        type: script
+        path: f/content_research/collectors/scheduled_golden_intake
+        input_transforms: {}
+    - id: comments
+      summary: Collect comments and persist L2 for this discovery batch
+      value:
+        type: script
+        path: f/content_research/collectors/process_comment_batch
+        input_transforms:
+          source_run_id:
+            type: javascript
+            expr: results.discovery.run_id
+    - id: media_selection
+      summary: Select this successful batch's videos, without external requests
+      value:
+        type: script
+        path: f/content_research/collectors/select_cycle_media
+        input_transforms:
+          comment_run_id:
+            type: javascript
+            expr: results.comments.run_id
+    - id: media
+      summary: Download and extract audio serially; reuse existing private assets
+      value:
+        type: forloopflow
+        iterator:
+          type: javascript
+          expr: results.media_selection.video_ids
+        parallel: false
+        skip_failures: false
+        modules:
+          - id: ingest
+            value:
+              type: script
+              path: f/content_research/collectors/ingest_video_media
+              input_transforms:
+                video_id:
+                  type: javascript
+                  expr: flow_input.iter.value
+schema:
+  type: object
+  properties: {}
+  additionalProperties: false
