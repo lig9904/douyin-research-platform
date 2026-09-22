@@ -48,6 +48,13 @@ def test_dispatcher_has_no_public_input_or_provider_secret() -> None:
     assert "enabled: false" in schedule
 
 
+def test_dispatcher_failure_category_does_not_leak_exception_message() -> None:
+    dispatch = _load("dispatch_due_research_briefs")
+    failure = dispatch._safe_failure("query", ValueError("password=do-not-leak"))
+    assert str(failure) == "research brief dispatch query failed [ValueError]"
+    assert "do-not-leak" not in str(failure)
+
+
 def test_runner_summary_rejects_any_automatic_analysis_flag() -> None:
     runner = _load("run_research_brief")
     result = {
