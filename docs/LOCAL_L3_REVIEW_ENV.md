@@ -74,6 +74,8 @@ LOCAL_RESEARCH_RESTORE_DRILL=YES \
   scripts/local-l3-env.sh restore-drill /绝对路径/work/local-db-migrations/<UTC>
 ```
 
+输出中的 `research_brief_contract=present` 表示恢复演练同时核对了研究任务定义、运行记录、owner、索引和外键；`legacy_absent` 仅适用于迁移前回滚备份，不能证明研究任务功能的数据恢复能力。
+
 恢复演练只接受上述 ignored 目录内、`SHA256SUMS` 覆盖的 research dump。它只创建固定临时库
 `local_research_restore`，拒绝与 `douyin_research` 同名；恢复后比较视频、专题和专题项的行数，
 校验关键表及其 owner，最后删除临时库并再次确认不存在。任何校验失败也会在退出路径尝试清理。

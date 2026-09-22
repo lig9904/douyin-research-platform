@@ -18,7 +18,7 @@ from typing import Any
 
 DSN_ENV = "TEST_SERVER_RESTORED_RESEARCH_DSN"
 RESTORE_DATABASE = "test_server_research_restore"
-REQUIRED_TABLES = frozenset(
+BASE_REQUIRED_TABLES = frozenset(
     {
         "source_video",
         "media_asset",
@@ -30,6 +30,8 @@ REQUIRED_TABLES = frozenset(
         "asr_media_review",
     }
 )
+RESEARCH_BRIEF_TABLES = frozenset({"research_brief", "research_brief_run"})
+REQUIRED_TABLES = BASE_REQUIRED_TABLES | RESEARCH_BRIEF_TABLES
 
 
 class AuditError(ValueError):
@@ -76,6 +78,8 @@ COUNT_SQL = {
     "analysis_runs": "select count(*) from analysis_run",
     "asr_execution_jobs": "select count(*) from asr_execution_job",
     "l3_execution_jobs": "select count(*) from l3_execution_job",
+    "research_briefs": "select count(*) from research_brief",
+    "research_brief_runs": "select count(*) from research_brief_run",
     "transcripts_with_task_cost": "select count(*) from transcript where task_cost_id is not null",
     "analysis_runs_with_task_cost": "select count(*) from analysis_run where task_cost_id is not null",
 }
@@ -229,10 +233,26 @@ def audit(dsn: str, *, connect: Callable[..., Any] = _default_connect) -> dict[s
                 (sorted(REQUIRED_TABLES),),
             )
             present = {row[0] for row in cursor.fetchall() if isinstance(row, tuple) and len(row) == 1}
-            if present != REQUIRED_TABLES:
+            if not BASE_REQUIRED_TABLES.issubset(present):
                 raise AuditError("restored audit is missing one or more required business tables")
+            brief_present = present & RESEARCH_BRIEF_TABLES
+            if brief_present and brief_present != RESEARCH_BRIEF_TABLES:
+                raise AuditError("restored audit has an incomplete research-brief schema")
 
-            counts = {name: _scalar(cursor, sql) for name, sql in COUNT_SQL.items()}
+            cursor.execute(
+                "select exists(select 1 from schema_migrations "
+                "where filename='020_research_brief.sql')"
+            )
+            ledger_row = cursor.fetchone()
+            if ledger_row not in ((False,), (True,)) or ledger_row[0] != bool(brief_present):
+                raise AuditError("restored research-brief schema and migration ledger are inconsistent")
+            brief_contract = "present" if brief_present else "legacy_absent"
+
+            count_sql = COUNT_SQL if brief_present else {
+                name: sql for name, sql in COUNT_SQL.items()
+                if name not in {"research_briefs", "research_brief_runs"}
+            }
+            counts = {name: _scalar(cursor, sql) for name, sql in count_sql.items()}
             bad_links = {name: _scalar(cursor, sql) for name, sql in BAD_LINK_SQL.items()}
             full_chain_videos = _scalar(cursor, FULL_CHAIN_SQL)
     finally:
@@ -249,6 +269,7 @@ def audit(dsn: str, *, connect: Callable[..., Any] = _default_connect) -> dict[s
         "status": status,
         "counts": {**counts, "full_chain_videos": full_chain_videos},
         "invalid_link_count": invalid_link_count,
+        "research_brief_contract": brief_contract,
         "v1_release_accepted": False,
     }
 

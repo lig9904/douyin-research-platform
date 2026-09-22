@@ -4,6 +4,13 @@ import re
 import sys
 
 
+TARGETS = {
+    'research': ('source_video', 'collection', 'collection_item'),
+    'research_brief': ('research_brief', 'research_brief_run'),
+    'windmill': ('workspace', 'usr'),
+}
+
+
 def counts(lines, tables):
     found = {}
     current = None
@@ -29,8 +36,7 @@ def counts(lines, tables):
 
 
 if __name__ == '__main__':
-    targets = {'research': ('source_video','collection','collection_item'), 'windmill': ('workspace','usr')}
     try:
-        print(counts(sys.stdin, targets[sys.argv[1]]))
+        print(counts(sys.stdin, TARGETS[sys.argv[1]]))
     except Exception:
         raise SystemExit('ERROR: archive row inventory could not be verified') from None

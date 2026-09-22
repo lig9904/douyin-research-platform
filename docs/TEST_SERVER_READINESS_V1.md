@@ -343,7 +343,9 @@ Secret 最小集与用途如下；名称是接口契约，不是实际值：
      <backup-dir>
    ```
 
-   脚本只创建固定临时库 `test_server_research_restore` 与 `test_server_windmill_restore`；其中任一名称已存在时立即拒绝，绝不删除或复用。成功后比较双库哨兵表行数、关键对象和 owner，并只清理本次创建的两个临时库。成功摘要只输出归档格式、manifest/inventory SHA-256、归档/完成 UTC 时间和实测秒数，不输出路径或内容。`globals.sql` 在这里仅验证 SHA-256，**不会**在共享实例恢复角色。
+   脚本只创建固定临时库 `test_server_research_restore` 与 `test_server_windmill_restore`；其中任一名称已存在时立即拒绝，绝不删除或复用。成功后比较双库哨兵表行数、关键对象和 owner，并只清理本次创建的两个临时库。成功摘要只输出归档格式、manifest/inventory SHA-256、归档/完成 UTC 时间、实测秒数和研究任务恢复契约状态，不输出路径或内容。`globals.sql` 在这里仅验证 SHA-256，**不会**在共享实例恢复角色。
+
+   其中 `research_brief_contract` 在迁移 020 之后创建、用于研究任务功能验收的备份中必须为 `present`，并逐项核对 `research_brief`、`research_brief_run` 的归档行数、owner、索引和外键；`legacy_absent` 只表示迁移前回滚备份按其旧版 schema 恢复成功，不能作为研究任务功能或当前版本灾备通过的证据。表存在状态与 `schema_migrations` 中的 020 记录不一致时必须失败。
 5. 使用与测试服务器相同的固定 PostgreSQL digest，在无网络、无端口、无宿主 bind mount 的一次性集群完成 globals/roles 演练：
 
    ```bash

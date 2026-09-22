@@ -18,10 +18,11 @@ TEST_DSN = os.getenv("TEST_DATABASE_URL")
 
 
 class FakeCursor:
-    def __init__(self, *, missing_table: bool = False, bad_link: bool = False, full_chain: int = 1) -> None:
+    def __init__(self, *, missing_table: bool = False, bad_link: bool = False, full_chain: int = 1, legacy_brief: bool = False) -> None:
         self.missing_table = missing_table
         self.bad_link = bad_link
         self.full_chain = full_chain
+        self.legacy_brief = legacy_brief
         self.queries: list[str] = []
         self.params: list[tuple[object, ...]] = []
         self._last = ""
@@ -42,6 +43,8 @@ class FakeCursor:
             return ("on",)
         if self._last == "select current_database()":
             return (audit_module.RESTORE_DATABASE,)
+        if self._last.startswith("select exists(select 1 from schema_migrations"):
+            return (not self.legacy_brief,)
         if "count(distinct v.id)" in self._last:
             return (self.full_chain,)
         if "left join" in self._last or "not exists" in self._last:
@@ -52,6 +55,8 @@ class FakeCursor:
 
     def fetchall(self) -> list[tuple[str]]:
         tables = sorted(audit_module.REQUIRED_TABLES)
+        if self.legacy_brief:
+            tables = [table for table in tables if table not in audit_module.RESEARCH_BRIEF_TABLES]
         if self.missing_table:
             tables.pop()
         return [(item,) for item in tables]
@@ -99,6 +104,9 @@ def test_uses_one_read_only_transaction_and_reports_counts() -> None:
 
     assert result["status"] == "business_chain_present"
     assert result["counts"]["full_chain_videos"] == 1
+    assert result["counts"]["research_briefs"] == 1
+    assert result["counts"]["research_brief_runs"] == 1
+    assert result["research_brief_contract"] == "present"
     assert result["invalid_link_count"] == 0
     assert result["v1_release_accepted"] is False
     assert cursor.queries[:4] == [
@@ -119,6 +127,27 @@ def test_bad_cross_video_cost_association_is_not_accepted() -> None:
     result = audit_module.audit(_dsn(), connect=lambda *_args, **_kwargs: FakeConnection(cursor))
     assert result["status"] == "invalid_associations"
     assert result["invalid_link_count"] == 1
+
+
+def test_legacy_backup_is_explicit_and_does_not_claim_brief_counts() -> None:
+    cursor = FakeCursor(legacy_brief=True)
+    result = audit_module.audit(_dsn(), connect=lambda *_args, **_kwargs: FakeConnection(cursor))
+    assert result["status"] == "business_chain_present"
+    assert result["research_brief_contract"] == "legacy_absent"
+    assert "research_briefs" not in result["counts"]
+    assert "research_brief_runs" not in result["counts"]
+
+
+def test_legacy_schema_with_020_ledger_is_rejected() -> None:
+    class InconsistentCursor(FakeCursor):
+        def fetchone(self) -> tuple[object, ...]:
+            if self._last.startswith("select exists(select 1 from schema_migrations"):
+                return (True,)
+            return super().fetchone()
+
+    cursor = InconsistentCursor(legacy_brief=True)
+    with pytest.raises(audit_module.AuditError, match="inconsistent"):
+        audit_module.audit(_dsn(), connect=lambda *_args, **_kwargs: FakeConnection(cursor))
 
 
 def test_empty_restore_db_is_explicitly_insufficient_not_a_v1_pass() -> None:
