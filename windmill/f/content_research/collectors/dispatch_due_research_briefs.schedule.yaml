@@ -1,0 +1,7 @@
+summary: Check for due user-authored research briefs every hour
+script_path: f/content_research/collectors/dispatch_due_research_briefs
+is_flow: false
+schedule: '0 5 * * * *'
+timezone: Etc/UTC
+enabled: false
+args: {}

@@ -12,6 +12,7 @@ import { backend } from './backend'
 import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
 import HotspotLibrary from './HotspotLibrary'
+import ResearchBriefs from './ResearchBriefs'
 import AppShell, { type ResearchView } from './AppShell'
 import GlobalSearch from './src/components/GlobalSearch'
 import OperationsOverview from './src/components/OperationsOverview'
@@ -269,6 +270,9 @@ function App() {
 
   if (view === 'videos') {
     return <VideoLibrary onNavigate={setView} initialSelectedVideoId={selectedVideoId} />
+  }
+  if (view === 'briefs') {
+    return <ResearchBriefs onNavigate={setView} />
   }
   if (view === 'accounts') {
     return <AccountLibrary onNavigate={setView} />

@@ -23,6 +23,7 @@ def test_backend_consumers_use_the_shared_bridge() -> None:
         "VideoLibrary.tsx": "./backend",
         "AccountLibrary.tsx": "./backend",
         "HotspotLibrary.tsx": "./backend",
+        "ResearchBriefs.tsx": "./backend",
         "src/components/GlobalSearch.tsx": "../../backend",
         "src/components/MetricTimeline.tsx": "../../backend",
         "src/components/L3ReviewPanel.tsx": "../../backend",

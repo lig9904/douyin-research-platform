@@ -1,0 +1,9 @@
+summary: Dispatch due research briefs
+description: Fixed hourly dispatcher. It reads up to five due brief IDs and starts the bounded cycle; it performs no provider or LLM call.
+timeout: 120
+concurrent_limit: 1
+lock: '!inline f/content_research/collectors/dispatch_due_research_briefs.script.lock'
+schema:
+  type: object
+  properties: {}
+  additionalProperties: false

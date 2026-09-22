@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from douyin_research.providers.contracts import PlatformResearchProvider
@@ -21,6 +22,7 @@ class DiscoverySource:
     source_key: str
     kwargs: dict[str, Any] = field(default_factory=dict)
     max_items: int = 50
+    published_after: datetime | None = None
 
 
 @dataclass(slots=True)
@@ -78,7 +80,9 @@ class L0L1Runner:
                         budget_key=self.budget_key,
                         requests=1,
                     )
-                items = page.items[: max(0, source.max_items)]
+                items = self._within_published_window(
+                    page.items, published_after=source.published_after,
+                )[: max(0, source.max_items)]
                 self._validate_platform(items)
                 ranks = {
                     item.video.platform_video_id: idx
@@ -183,7 +187,32 @@ class L0L1Runner:
                 raise ValueError("search source requires kwargs.query")
             kwargs = {k: v for k, v in source.kwargs.items() if k != "query"}
             return self.provider.search_videos(query, **kwargs)
+        if source.kind == "account_posts":
+            account_id = source.kwargs.get("account_id")
+            if not account_id:
+                raise ValueError("account_posts source requires kwargs.account_id")
+            kwargs = {k: v for k, v in source.kwargs.items() if k != "account_id"}
+            return self.provider.fetch_account_posts(account_id, **kwargs)
         return self.provider.discover(source.kind, **source.kwargs)
+
+    @staticmethod
+    def _within_published_window(
+        items: list[VideoObservation], *, published_after: datetime | None,
+    ) -> list[VideoObservation]:
+        if published_after is None:
+            return items
+        cutoff = published_after
+        if cutoff.tzinfo is None:
+            cutoff = cutoff.replace(tzinfo=timezone.utc)
+        return [
+            item for item in items
+            if item.video.published_at is not None
+            and (
+                item.video.published_at
+                if item.video.published_at.tzinfo is not None
+                else item.video.published_at.replace(tzinfo=timezone.utc)
+            ) >= cutoff
+        ]
 
     def _validate_platform(self, items: list[VideoObservation]) -> None:
         mismatched = sorted({
