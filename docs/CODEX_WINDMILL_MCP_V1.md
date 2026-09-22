@@ -12,37 +12,42 @@ Community Edition 可使用 Windmill 开源 MCP server 路由；官方价格页�
 
 ## 当前交付状态（2026-09-22）
 
-- 已完成：本机 stdio MCP 五项只读查询、Windmill Gateway 十项只读研究工具代码、参数上限、只读事务和跨目录拒绝；原七项 Gateway 工具已有本机真实数据库烟测，新增三项等待随本轮重新烟测。
-- 尚未完成：测试服务器独立数据库 reader role、固定 Resource、workspace-bound 最小 scope token、`mcp_disable_token_query_param`、反代 Authorization 脱敏、Codex 客户端连接，以及服务器上的十工具与越权失败烟测。
-- 发布判断：MCP 代码已实现，但测试服务器 Gateway 尚未接通和验收；该项保留为正式 V1 发布前待办，不得写成“服务器 MCP 已可用”。
+- 已完成：本机 stdio MCP 五项只读查询；Windmill Gateway 十项只读研究工具；参数上限、只读事务、跨目录拒绝；测试服务器独立 reader role、固定 Resource、十个精确 path scope、`mcp_disable_token_query_param`、HTTPS、Codex OAuth、十工具调用和越权失败烟测。
+- 客户端证据：Codex CLI 使用 OAuth 安全凭据完成一次真实 `get_research_briefs(limit=1)` 调用并返回 `MCP_CODEX_SMOKE_OK`；项目配置隐藏内置 `runScriptByPath`。
+- 发布判断：测试服务器 MCP Gateway 已可用于只读研究查询，不再是正式 V1 发布阻点；token 轮换、工具清单或数据库授权变化后必须复验。
 - 查询边界：只查询已经进入研究库的规范化数据，不是抖音全站或互联网实时搜索；可返回公开标题和账号昵称，不返回原评论、完整转写、描述、URL、Provider 原始载荷或凭据，不开放付费 L3 执行。研究台保留按视频 ID 查看原始记录的页面下钻。
 
 ## 认证
 
 优先使用 HTTP Authorization Bearer，不把 token 放在 URL query string。
 
-Codex 支持：
+仓库使用项目级、无密钥配置：
 
 ```toml
 [mcp_servers.douyin_research]
-url = "https://windmill.example.com/api/mcp/w/<workspace>/mcp"
-bearer_token_env_var = "WINDMILL_MCP_TOKEN"
+url = "https://dy.yudao.cc:6443/api/mcp/w/test-research/mcp"
 enabled = true
+required = false
+default_tools_approval_mode = "approve"
+disabled_tools = ["runScriptByPath"]
 ```
 
-Token：
-- 仅存本地环境变量 / secrets
+Codex 当前使用 OAuth，凭据由 Codex 安全存储，不写入项目配置。非交互诊断 token 仅存
+服务器 root-only 文件和 Windmill token store，30 天到期。所有 token：
+
+- 绑定 `test-research`，`super_admin=false`
+- scope 只含十个完整脚本路径，不含通配符、`mcp:all`、flow 或 endpoint
+- 仅存本地安全凭据存储 / secrets
 - 不提交 GitHub
 - 不写到 URL
 - 不写进 README 示例真实值
 
-Windmill 自身已有 `mcp_disable_token_query_param` 设置，应在部署后开启，拒绝 URL 中的 `?token=`。
+`mcp_disable_token_query_param` 已开启并读回为 `true`；URL `?token=` 实测返回 401。
 
 ## Tool Scope
 
-业务脚本 scope 只覆盖研究工具 folder，而不是整个 workspace：
-
-`mcp:scripts:f/content_research/research_tools/*`
+业务脚本 scope 用一个 `mcp:scripts:` 条目逗号分隔下列十个完整路径；不授权整个
+workspace，也不使用 `research_tools/*` 目录通配符。
 
 仓库已定义以下十项只读工具。它们只读取已经入库的规范化数据，参数有
 schema 上限，查询在显式只读事务中执行；不会刷新缓存、调用 Provider、预占
@@ -66,7 +71,7 @@ DSN、数据库用户名、排序字段、
 表名或 Provider 参数。`get_blackhorse_videos` 返回记录中的版本化优先级评分和
 `rule_version`，默认门槛是 `min_score=60`，调用者可仅在 `0..100` 内收紧它。
 
-`run_deep_analysis` **尚未开放**，也不在这七项 Gateway 工具中。现有
+`run_deep_analysis` **尚未开放**，也不在这十项 Gateway 工具中。现有
 `manual_l3_preview`、研究台审核和预算预览均是零调用流程，不能因为传入
 `execute` 或其他参数而变成付费执行器。未来若开放，必须独立放在受限 folder，
 复用审批指纹绑定、服务端固定模型/价格配置、daily_budget、幂等 task key 和
@@ -125,27 +130,30 @@ helper 暴露为工具，但执行身份仍需对 helper 有 view 权限，并�
 
 ## 测试服务器接入与验收
 
-下面是测试服务器的目标配置，不是已部署或已验证的 Gateway 声明：
+2026-09-22 已在 `test-research` 完成：
 
-1. 使用 HTTPS URL：
-   `https://<windmill-fqdn>/api/mcp/w/<workspace>/mcp`。
-2. Codex 从本机环境变量读取 `WINDMILL_MCP_TOKEN`，通过
-   `Authorization: Bearer ...` 发送；不把 token 放入 URL、Git、截图或日志。
-3. Windmill 开启 `mcp_disable_token_query_param`，反向代理对 Authorization header
-   脱敏，workspace-bound token 仅获
-   `mcp:scripts:f/content_research/research_tools/*` scope，且不使用全局
-   `mcp:all` / workspace 全权 token。
-4. 以 MCP token 执行 `tools/list`，确认只出现上述十项业务脚本和 Windmill 内置、
-  受相同 path scope 约束的 `runScriptByPath`，不出现其他业务脚本或 API endpoint；分别调用一次
+1. HTTPS URL 为 `https://dy.yudao.cc:6443/api/mcp/w/test-research/mcp`。
+2. Codex 使用 OAuth 安全凭据；诊断脚本使用 Authorization Bearer。token 未进入 URL、
+   Git、截图或证据文件。
+3. Windmill 已开启 `mcp_disable_token_query_param`；两个 workspace-bound token 均只获
+   十个完整脚本 path scope，且 `super_admin=false`，不含 `*`、`mcp:all` 或 endpoint。
+4. `tools/list` 出现上述十项业务脚本和 Windmill 内置、受相同 path scope 约束的
+   `runScriptByPath`，未出现其他业务脚本或 API endpoint；分别调用一次
    `search_cases`、`get_case_detail`、`get_hot_videos`、`get_blackhorse_videos`、
    `search_accounts`、`get_account_videos`、`get_metric_history`、`get_daily_briefing`、
    `get_research_briefs`、`get_cost_summary` 的小结果集。
-5. 验证未知工具、超限参数、试图传入 Resource/Provider/执行参数均失败关闭；同时
-   验证 token 无法列出或运行 collectors、analysis、admin、resources、secrets。
+5. 未知工具、`limit=51`、跨目录 `manual_l3_preview`、Resource、Secret、无 Bearer
+   和 URL token 均失败关闭。Codex 项目配置再隐藏 `runScriptByPath`。
+
+服务器脱敏证据：
+
+- `/srv/douyin-research-test/evidence/mcp-positive-20260922.json`
+- `/srv/douyin-research-test/evidence/mcp-negative-20260922.json`
+- `/srv/douyin-research-test/evidence/windmill-mcp-query-push-6e309213.log`
 
 上述 smoke 还应记录运行时间、调用工具、结果条数和固定错误码，不记录正文、token、
 SQL、数据库连接串或 Provider 原始响应。真实多账号 Folder ACL、TLS、审计保留和
-Gateway 协议互操作性必须在目标测试服务器单独验收。
+Gateway 协议互操作性仍应在每个新目标环境单独验收。
 
 ## Community / Enterprise 边界
 

@@ -2,6 +2,34 @@
 
 日期：2026-09-21。范围：现有浏览器 JumpServer 会话中的服务器操作与数据库只读核验。不是最终 V1 验收。
 
+## MCP 现场验收（UTC 2026-09-22 09:47 后）
+
+PR #134 已合并，测试服务器代码为 `6e309213465f540a3eee785398b4f0b7883ae9c8`。本轮仅精确发布
+`f/content_research/research_tool_lib/queries` 和只读 Resource；全量同步预演虽无删除项，
+但包含 45 个无关覆盖更新，因此没有执行全量推送。
+
+- 新建 `douyin_research_mcp_reader`：默认只读、8 个连接、5 秒 statement timeout；仅对
+  十六个查询所需表/视图有 `SELECT`，无增删改、schema/database create、sequence、
+  `windmill` 数据库连接或角色继承。固定 Resource 为
+  `f/content_research/research_db_readonly`，密码只存在 Windmill Secret。
+- `mcp_disable_token_query_param=true` 已通过 API 写入并读回。带 URL token 明确返回 401；
+  缺失 Bearer 返回 401。
+- 服务器诊断 token 与 Codex OAuth token 均绑定 `test-research`，`super_admin=false`，scope
+  只含十个 `research_tools` 完整路径；没有 `*`、`mcp:all`、flow 或 endpoint scope。
+- `tools/list` 返回十项业务工具及受相同 path scope 约束的内置 `runScriptByPath`。十项
+  业务工具均完成真实最小结果集调用；正向证据为
+  `/srv/douyin-research-test/evidence/mcp-positive-20260922.json`。
+- 未知工具、`limit=51`、用 `runScriptByPath` 调用 `manual_l3_preview`、读取 Resource、读取
+  Secret 和无 Bearer 共六项均失败关闭；证据为
+  `/srv/douyin-research-test/evidence/mcp-negative-20260922.json`。未触发 TikHub、ASR、Ark
+  或其他付费 Provider。
+- Codex CLI 通过 OAuth 安全存储凭据，项目配置禁用 `runScriptByPath`；真实调用
+  `get_research_briefs(limit=1)` 成功并最终返回 `MCP_CODEX_SMOKE_OK`。凭据值未写入 Git、
+  URL、截图、验收文件或会话消息。
+
+边界：MCP 只读已完成测试服务器现场验收，但仍只查询已经入库的规范化数据，不提供
+原评论、完整转写、URL、Provider 原始载荷或付费分析入口，也不替代最终用户业务验收。
+
 ## 最新现场检查点（UTC 2026-09-22 08:40 后）
 
 本轮将 PR #129、#131、#132 的 Python 3.14、今日研判、原始记录下钻和 Raw App 后端绑定发布到测试服务器。服务器代码固定为主线合并提交 `788ed390abc7fc2c4675dc01d97cbc80854e0f5d`，工作树为 clean。未修改 Windmill Variables、Resources、Secrets 或既有数据库资源，也未在应用服务器部署 Nginx。
@@ -13,7 +41,7 @@
 - 部署前启用的三条计划已经恢复：`poll_pending_asr` 每 5 分钟、`sync_daily_spend` 每小时、`scheduled_research_cycle` 每 6 小时的第 10 分钟，时区均为 `Etc/UTC`。恢复后队列分别生成 UTC 08:40、09:00、12:10 的下一任务；原先关闭的 `dispatch_due_research_briefs` 保持关闭。
 - `/srv` 仍挂载在 `/dev/sdb1`（ext4）；PostgreSQL、Windmill Server、两个普通 Worker 和 native Worker 均在线，PostgreSQL 与 Server 为 healthy。应用服务器运行中的 Nginx 容器数量为 0；发布后未再出现 `get_daily_briefing`、`get_video_raw_records` 或 `path or raw_code is required` 错误。
 
-边界：以上证明代码合并、测试服务器发布、真实 Python 3.14 只读任务、页面研判与原始记录下钻、以及调度恢复。MCP Gateway 的专用 reader role/token 尚未创建，也未扩大现有访问；这一步涉及新增安全敏感访问，必须在实施时单独确认。正式 V1 仍需用户业务验收和版本发布决定。
+边界：以上证明代码合并、测试服务器发布、真实 Python 3.14 只读任务、页面研判与原始记录下钻、以及调度恢复。该段的 MCP 待办已由上方 2026-09-22 现场验收取代。正式 V1 仍需用户业务验收和版本发布决定。
 
 ## 最新现场检查点（北京时间 2026-09-21 20:20 后）
 

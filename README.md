@@ -101,4 +101,4 @@ Canonical ID 始终使用：
 - 研究台内部写操作：团队共享监测使用 actor 审计；专题、视频收藏和保存筛选按登录身份隔离；全部使用幂等事务与零外呼边界
 - 本机 V1 全链路验收：真实 TikHub、Ark、ASR、浏览器写操作、HTTPS/ACL/备份恢复的脱敏结果见 `docs/LOCAL_V1_ACCEPTANCE_2026-09-20.md`；不等同于测试服务器或生产生效
 - 测试服务器部署与验收：本机/CI 已提供五服务一次性 Overlay 烟测、`test-server-backup-v1` 双库与 globals 隔离恢复、无外发监控契约；`docker-compose.test-server-external-proxy.yml` 适用于专用反代机器终止 HTTPS 的部署，测试服务器不运行 Nginx/TLS，仅将 Windmill 绑定到明确 RFC1918 地址的 `:8000`，PostgreSQL 不发布宿主机端口；域名、真实三账号 ACL、服务器 Secret、小流量 Provider、异机备份和真实外部告警闭环见 `docs/TEST_SERVER_READINESS_V1.md`；须取得目标环境输入后执行，不用本机契约冒充目标环境生效
-- 本机只读 MCP：stdio 已扩为五项、Windmill HTTP Gateway 已扩为十项只读研究工具；原三项/七项曾使用受限 reviewer 与短期精确 path scope token 完成真实冒烟，新增的每日研判、研究任务和费用查询仍需随本轮在测试服务器 reader role 上复验。两条路径均不触发 Provider/LLM/付费调用；测试服务器 TLS、独立 reader role 与多账号 ACL 仍待现场验收
+- 只读 MCP：stdio 本机入口为五项，Windmill HTTPS Gateway 为十项。测试服务器已使用独立 PostgreSQL reader role、固定只读 Resource、workspace-bound 十路径 token 和 Codex OAuth 完成十工具真实调用；未知工具、超限参数、跨目录付费脚本、Resource、Secret、无 Bearer 与 URL token 均失败关闭。Codex 项目配置隐藏内置 `runScriptByPath`，两条路径都不触发 Provider/LLM/付费调用；真实多账号成员 ACL 仍与 MCP 服务身份分开验收

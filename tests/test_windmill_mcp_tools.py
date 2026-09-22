@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import inspect
 import sys
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,32 @@ READ_TOOLS = (
     "get_research_briefs",
     "get_cost_summary",
 )
+
+
+def test_codex_project_mcp_config_is_oauth_only_and_fail_closed() -> None:
+    config_path = ROOT / ".codex/config.toml"
+    raw = config_path.read_text(encoding="utf-8")
+    config = tomllib.loads(raw)
+    server = config["mcp_servers"]["douyin_research"]
+
+    assert server == {
+        "url": "https://dy.yudao.cc:6443/api/mcp/w/test-research/mcp",
+        "enabled": True,
+        "required": False,
+        "startup_timeout_sec": 20,
+        "tool_timeout_sec": 90,
+        "default_tools_approval_mode": "approve",
+        "disabled_tools": ["runScriptByPath"],
+    }
+    for forbidden in (
+        "bearer_token",
+        "bearer_token_env_var",
+        "http_headers",
+        "env_http_headers",
+        "authorization",
+        "token=",
+    ):
+        assert forbidden not in raw.lower()
 
 
 def test_gateway_folder_contains_exact_bounded_read_surface() -> None:
