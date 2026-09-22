@@ -10,6 +10,13 @@ Community Edition 可使用 Windmill 开源 MCP server 路由；官方价格页�
 
 不需要自研 MCP Server。
 
+## 当前交付状态（2026-09-22）
+
+- 已完成：本机 stdio MCP 三项只读查询、Windmill Gateway 七项只读研究工具、参数上限、只读事务、跨目录拒绝和本机真实数据库烟测。
+- 尚未完成：测试服务器独立数据库 reader role、固定 Resource、workspace-bound 最小 scope token、`mcp_disable_token_query_param`、反代 Authorization 脱敏、Codex 客户端连接，以及服务器上的七工具与越权失败烟测。
+- 发布判断：MCP 代码已实现，但测试服务器 Gateway 尚未接通和验收；该项保留为正式 V1 发布前待办，不得写成“服务器 MCP 已可用”。
+- 查询边界：只查询已经进入研究库的规范化数据，不是抖音全站或互联网实时搜索；不返回原评论、完整转写、URL、Provider 原始载荷或凭据，不开放付费 L3 执行。
+
 ## 认证
 
 优先使用 HTTP Authorization Bearer，不把 token 放在 URL query string。
