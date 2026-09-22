@@ -2,6 +2,19 @@
 
 日期：2026-09-21。范围：现有浏览器 JumpServer 会话中的服务器操作与数据库只读核验。不是最终 V1 验收。
 
+## 最新现场检查点（UTC 2026-09-22 08:40 后）
+
+本轮将 PR #129、#131、#132 的 Python 3.14、今日研判、原始记录下钻和 Raw App 后端绑定发布到测试服务器。服务器代码固定为主线合并提交 `788ed390abc7fc2c4675dc01d97cbc80854e0f5d`，工作树为 clean。未修改 Windmill Variables、Resources、Secrets 或既有数据库资源，也未在应用服务器部署 Nginx。
+
+- 发布前备份 `/srv/douyin-research-test/backups/20260922T075814Z` 创建成功；日志 `release-backup-cc7e294-20260922T075814Z.log`。严格预演 `windmill-dryrun-788ed390.log` 退出 0；最终发布 `windmill-push-788ed390.log` 退出 0。首次用只读源码挂载直接构建时因无法创建 `/work/dist` 失败，原始失败日志 `windmill-push-49e3cbc.log` 保留；随后始终从 `/srv` 上的隔离可写副本构建，并在发布后按精确临时目录清理。
+- Windmill 数据库中 28/28 个非归档 Python runnable 的源码均选择 `==3.14.*`。只读 `get_daily_briefing` 作业 `01a0c834-17ff-fc99-e63c-f7e7f056f1cf` 实际执行成功；Worker 日志显示下载并运行 CPython 3.14.6，结果返回 3 条事实研判。仓库和 CI 固定 3.14 系列；Python 官方目前称 3.14 为 bugfix 支持分支，不使用“官方 LTS”表述。
+- 研究台活动 `app_version` 为 38；`get_home_overview`、`get_daily_briefing`、`get_video_raw_records` 均核验为 `inline` 且含 `inlineScript`。浏览器刷新后“今日研判”在 24 小时窗口显示 3 条真实结果，可由“查看原始记录与完整详情”进入视频库。
+- 页面按需展开原始记录成功：所选视频显示规范记录、7 条指标快照、6 条发现记录、20 条评论原始行；Provider 视频快照该样本为 0 条并如实显示。页面明确区分合并数据与审计原始数据，并提示敏感键脱敏、单字段 100,000 字符上限及 MCP 不返回原始正文。
+- 部署前启用的三条计划已经恢复：`poll_pending_asr` 每 5 分钟、`sync_daily_spend` 每小时、`scheduled_research_cycle` 每 6 小时的第 10 分钟，时区均为 `Etc/UTC`。恢复后队列分别生成 UTC 08:40、09:00、12:10 的下一任务；原先关闭的 `dispatch_due_research_briefs` 保持关闭。
+- `/srv` 仍挂载在 `/dev/sdb1`（ext4）；PostgreSQL、Windmill Server、两个普通 Worker 和 native Worker 均在线，PostgreSQL 与 Server 为 healthy。应用服务器运行中的 Nginx 容器数量为 0；发布后未再出现 `get_daily_briefing`、`get_video_raw_records` 或 `path or raw_code is required` 错误。
+
+边界：以上证明代码合并、测试服务器发布、真实 Python 3.14 只读任务、页面研判与原始记录下钻、以及调度恢复。MCP Gateway 的专用 reader role/token 尚未创建，也未扩大现有访问；这一步涉及新增安全敏感访问，必须在实施时单独确认。正式 V1 仍需用户业务验收和版本发布决定。
+
 ## 最新现场检查点（北京时间 2026-09-21 20:20 后）
 
 新版六小时研究计划的首个到点任务和内容充分的人声 ASR → L3 → 页面案例均已完成；详细输入、运行 ID、费用和证据边界见 [内容充分样本验收](RICH_ASR_L3_ACCEPTANCE_2026-09-21.md)。本轮没有输出凭据、完整转写、原评论或完整模型结果。
