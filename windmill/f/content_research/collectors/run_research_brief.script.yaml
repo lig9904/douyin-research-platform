@@ -1,0 +1,14 @@
+summary: Run one due user-authored research brief
+description: Claims one active due brief and performs bounded TikHub discovery under a fixed service identity. ASR and L3 submission are never part of this script.
+timeout: 900
+concurrent_limit: 1
+lock: '!inline f/content_research/collectors/run_research_brief.script.lock'
+schema:
+  type: object
+  properties:
+    brief_id:
+      type: string
+      format: uuid
+  required:
+    - brief_id
+  additionalProperties: false

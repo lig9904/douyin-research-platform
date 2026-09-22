@@ -1,0 +1,66 @@
+summary: User-authored research brief collection cycle
+description: Bounded discovery followed by optional comments and private media. No automatic ASR, L3, approval creation or retries.
+value:
+  concurrent_limit: 1
+  concurrency_time_window_s: 0
+  modules:
+    - id: discovery
+      summary: Claim the due brief, discover, enrich and score
+      stop_after_if:
+        expr: result.status === 'deferred' || result.new_candidate_count === 0 || result.scored_videos === 0 || result.collect_comments === false
+        skip_if_stopped: true
+      value:
+        type: script
+        path: f/content_research/collectors/run_research_brief
+        input_transforms:
+          brief_id:
+            type: javascript
+            expr: flow_input.brief_id
+    - id: comments
+      summary: Collect comments only when requested by the brief depth
+      stop_after_if:
+        expr: results.discovery.collect_media === false
+        skip_if_stopped: true
+      value:
+        type: script
+        path: f/content_research/collectors/process_comment_batch
+        input_transforms:
+          source_run_id:
+            type: javascript
+            expr: results.discovery.run_id
+    - id: media_selection
+      summary: Select the successful brief batch without external requests
+      value:
+        type: script
+        path: f/content_research/collectors/select_cycle_media
+        input_transforms:
+          comment_run_id:
+            type: javascript
+            expr: results.comments.run_id
+    - id: media
+      summary: Download and extract audio serially; reuse existing private assets
+      value:
+        type: forloopflow
+        iterator:
+          type: javascript
+          expr: results.media_selection.video_ids
+        parallel: false
+        skip_failures: false
+        modules:
+          - id: ingest
+            value:
+              type: script
+              path: f/content_research/collectors/ingest_video_media
+              input_transforms:
+                video_id:
+                  type: javascript
+                  expr: flow_input.iter.value
+schema:
+  type: object
+  properties:
+    brief_id:
+      type: string
+      format: uuid
+  required:
+    - brief_id
+  additionalProperties: false

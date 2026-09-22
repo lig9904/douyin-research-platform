@@ -4,6 +4,7 @@ import './shell.css'
 
 export type ResearchView =
   | 'home'
+  | 'briefs'
   | 'platforms'
   | 'today'
   | 'videos'
@@ -25,6 +26,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { icon: '⌂', label: '首页总览', view: 'home', enabled: true },
+  { icon: '◎', label: '研究任务', view: 'briefs', enabled: true },
   { icon: '▱', label: '平台总览', view: 'platforms', enabled: false },
   { icon: '♨', label: '今日发现', view: 'today', enabled: false },
   { icon: '▶', label: '视频库', view: 'videos', enabled: true },

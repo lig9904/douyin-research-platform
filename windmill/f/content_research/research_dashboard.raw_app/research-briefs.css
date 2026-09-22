@@ -1,0 +1,106 @@
+.brief-page {
+  background:
+    radial-gradient(circle at 80% 0%, rgba(22, 119, 255, .08), transparent 30%),
+    #f5f7fb;
+}
+
+.brief-boundary { margin-bottom: 18px; }
+
+.brief-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(270px, .8fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.brief-editor,
+.brief-guide,
+.brief-table-card {
+  border: 1px solid #e7ebf2;
+  box-shadow: 0 12px 36px rgba(27, 47, 79, .05);
+}
+
+.brief-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 16px;
+}
+
+.brief-form-grid .ant-input-number { width: 100%; }
+
+.brief-cost-note {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: -2px 0 18px;
+  padding: 11px 13px;
+  color: #536179;
+  background: #f7faff;
+  border: 1px solid #dce9ff;
+  border-radius: 9px;
+}
+
+.brief-cost-note strong { color: #1457a6; }
+.brief-cost-note span { font-size: 12px; }
+
+.brief-guide ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: step;
+}
+
+.brief-guide li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0 0 20px;
+  padding-left: 42px;
+  color: #67738a;
+}
+
+.brief-guide li::before {
+  counter-increment: step;
+  content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: #1769d2;
+  font-weight: 700;
+  background: #eaf3ff;
+  border-radius: 9px;
+}
+
+.brief-guide li b { color: #26334a; }
+.brief-guide li span { font-size: 13px; line-height: 1.6; }
+
+.brief-table-card { margin-top: 18px; }
+
+.brief-scope,
+.brief-status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.brief-scope strong { color: #1f2b3d; font-size: 15px; }
+.brief-scope span { color: #41516c; }
+.brief-scope small,
+.brief-status small,
+.brief-status > span { color: #8490a3; }
+
+.activation-copy p { margin: 8px 0; line-height: 1.65; }
+
+@media (max-width: 980px) {
+  .brief-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 700px) {
+  .brief-form-grid { grid-template-columns: 1fr; }
+}
