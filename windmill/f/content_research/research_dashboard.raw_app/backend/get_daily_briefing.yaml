@@ -1,3 +1,8 @@
+type: inline
+fields:
+  db:
+    type: static
+    value: $res:f/content_research/research_db
 summary: 每日研判 - 事实简报
 description: 规则排序的合并事实、任务运行和费用口径；每条视频保留原始记录下钻 ID。
 lock: '!inline f/content_research/research_dashboard.raw_app/backend/get_daily_briefing.lock'
