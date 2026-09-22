@@ -76,6 +76,8 @@ def test_local_readonly_mcp_end_to_end() -> None:
         "search_cases",
         "get_case_detail",
         "get_cost_summary",
+        "get_daily_briefing",
+        "get_research_briefs",
     ]
 
     searched = server.dispatch(
@@ -85,7 +87,7 @@ def test_local_readonly_mcp_end_to_end() -> None:
     search_data = _tool_data(searched)
     items = search_data["items"]
     assert isinstance(items, list) and items
-    assert all("title" not in item for item in items)
+    assert all(isinstance(item.get("title"), str) for item in items)
     video_id = items[0]["video_id"]
     assert isinstance(video_id, str)
 
@@ -96,7 +98,7 @@ def test_local_readonly_mcp_end_to_end() -> None:
     detail_data = _tool_data(detail)
     assert detail_data["video_id"] == video_id
     assert detail_data["read_only"] is True
-    assert "title" not in detail_data
+    assert isinstance(detail_data["title"], str)
     analysis = detail_data["l3_analysis"]
     if analysis is not None:
         assert set(analysis) == {
@@ -118,6 +120,22 @@ def test_local_readonly_mcp_end_to_end() -> None:
     cost_data = _tool_data(costs)
     assert cost_data["days"] == 1
     assert cost_data["read_only"] is True
+
+    briefing = server.dispatch(
+        _request(6, "tools/call", {"name": "get_daily_briefing", "arguments": {"limit": 1}})
+    )
+    assert briefing is not None
+    briefing_data = _tool_data(briefing)
+    assert briefing_data["read_only"] is True
+    assert isinstance(briefing_data["items"], list)
+
+    briefs = server.dispatch(
+        _request(7, "tools/call", {"name": "get_research_briefs", "arguments": {"limit": 1}})
+    )
+    assert briefs is not None
+    briefs_data = _tool_data(briefs)
+    assert briefs_data["read_only"] is True
+    assert isinstance(briefs_data["items"], list)
 
 
 def test_local_reviewer_database_write_is_rejected() -> None:

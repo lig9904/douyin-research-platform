@@ -1,3 +1,4 @@
+# py: ==3.14.*
 from __future__ import annotations
 
 from datetime import datetime

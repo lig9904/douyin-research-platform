@@ -18,6 +18,7 @@ import ASRMediaReviewPanel from './src/components/ASRMediaReviewPanel'
 import VideoMediaPreview from './src/components/VideoMediaPreview'
 import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTranscriptPanel'
 import MetricTimeline from './src/components/MetricTimeline'
+import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
 import {
   getResearchUserState,
@@ -869,6 +870,8 @@ export default function VideoLibrary({
                       ))}
                       <MetricTimeline videoId={detail.id} />
                     </details>
+
+                    <RawRecordPanel videoId={detail.id} />
 
                     <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">

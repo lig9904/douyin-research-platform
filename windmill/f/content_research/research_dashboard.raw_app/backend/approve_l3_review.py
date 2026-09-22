@@ -1,3 +1,4 @@
+# py: ==3.14.*
 #requirements:
 #douyin-research-platform@git+https://github.com/lig9904/douyin-research-platform@1558677c40cc22239e660e269738619dfd05388d
 #psycopg[binary]==3.3.6

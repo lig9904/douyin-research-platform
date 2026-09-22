@@ -1,0 +1,19 @@
+summary: MCP read - actual and estimated cost summary
+description: >
+  Read-only bounded cost view. Supplier daily spend is the actual-cost source;
+  task and API-call values remain explicitly estimated or reconciled. It never
+  reserves or changes budget.
+lock: '!inline f/content_research/research_tools/get_cost_summary.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    days:
+      type: integer
+      default: 30
+      minimum: 1
+      maximum: 366
+  required: []
+timeout: 10

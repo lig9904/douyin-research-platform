@@ -1,3 +1,4 @@
+# py: ==3.14.*
 from __future__ import annotations
 
 from ..research_tool_lib.queries import get_metric_history, research_db, safe_tool

@@ -64,6 +64,8 @@ class CanonicalResearchQueries:
                 select
                   v.id::text as video_id,
                   v.platform,
+                  coalesce(v.title, '(无标题)') as title,
+                  a.nickname as account_name,
                   v.published_at,
                   v.duration_ms,
                   v.research_level,
@@ -79,6 +81,7 @@ class CanonicalResearchQueries:
                       and p.outcome='selected'
                   ) as l3_selected
                 from source_video v
+                left join source_account a on a.id=v.account_id
                 left join latest_metric m on m.video_id=v.id
                 where (%s::text is null or v.platform=%s)
                   and (%s='' or coalesce(v.title, '') ilike '%%' || %s || '%%')
@@ -104,6 +107,8 @@ class CanonicalResearchQueries:
                 select
                   v.id::text as video_id,
                   v.platform,
+                  coalesce(v.title, '(无标题)') as title,
+                  a.nickname as account_name,
                   v.published_at,
                   v.duration_ms,
                   v.research_level,
@@ -116,6 +121,7 @@ class CanonicalResearchQueries:
                       and p.outcome='selected'
                   ) as l3_selected
                 from source_video v
+                left join source_account a on a.id=v.account_id
                 where v.id=%s
                 """,
                 (normalized_id,),
@@ -175,6 +181,44 @@ class CanonicalResearchQueries:
             cur.execute(
                 """
                 select
+                  provider, account_scope, bill_scope_key, scope_kind, scope_label,
+                  billing_date, cost_currency, billing_timezone, total_cost,
+                  payable_cost, paid_cost, unpaid_cost, total_requests, paid_requests,
+                  billing_finality, source_warning, fetched_at
+                from supplier_daily_spend
+                where billing_date >= current_date - %s
+                order by billing_date desc, provider, account_scope, bill_scope_key
+                limit 100
+                """,
+                (bounded_days,),
+            )
+            supplier_spend = [_json_safe(dict(row)) for row in cur.fetchall()]
+            cur.execute(
+                """
+                select provider, coalesce(cost_currency, 'UNKNOWN') as currency,
+                       count(*)::int as call_count,
+                       coalesce(sum(case
+                         when coalesce(metadata->>'cost_basis', '') in
+                           ('estimated_unit_price', 'verified_unit_price')
+                         then coalesce(estimated_cost, actual_cost, 0) else 0 end), 0)::numeric
+                         as estimated_cost,
+                       coalesce(sum(case
+                         when metadata->>'cost_basis'='supplier_bill'
+                         then coalesce(actual_cost, 0) else 0 end), 0)::numeric
+                         as reconciled_cost,
+                       count(*) filter (where metadata->>'billing_status'='unknown')::int
+                         as unknown_cost_calls
+                from external_api_call
+                where started_at >= current_date - %s
+                group by provider, coalesce(cost_currency, 'UNKNOWN')
+                order by provider, currency
+                """,
+                (bounded_days,),
+            )
+            api_call_costs = [_json_safe(dict(row)) for row in cur.fetchall()]
+            cur.execute(
+                """
+                select
                   budget_date,
                   provider,
                   budget_key,
@@ -196,9 +240,140 @@ class CanonicalResearchQueries:
         return {
             "days": bounded_days,
             "task_costs": task_costs,
+            "supplier_daily_spend": supplier_spend,
+            "api_call_costs": api_call_costs,
             "daily_budgets": budgets,
+            "actual_cost_source": "supplier_daily_spend",
+            "estimate_source": "external_api_call_or_research_task_cost",
             "read_only": True,
         }
+
+    def get_daily_briefing(
+        self,
+        *,
+        platform: str | None = None,
+        hours: int = 24,
+        limit: int = 10,
+    ) -> dict[str, object]:
+        normalized_platform = _platform(platform)
+        bounded_hours = _hours(hours)
+        bounded_limit = _limit(limit)
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                with latest_score as (
+                  select distinct on (video_id)
+                    video_id, score, rule_version, calculated_at
+                  from video_score
+                  where score_type='priority'
+                  order by video_id, calculated_at desc, id desc
+                ), source_hits as (
+                  select video_id,
+                         array_agg(distinct source_type order by source_type) as sources
+                  from discovery_event
+                  group by video_id
+                )
+                select
+                  v.id::text as video_id,
+                  v.platform,
+                  coalesce(v.title, '(无标题)') as title,
+                  a.nickname as account_name,
+                  v.published_at,
+                  v.last_seen_at,
+                  v.research_level,
+                  v.monitoring_status,
+                  coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,
+                  s.rule_version,
+                  m.play_count,
+                  m.like_count,
+                  m.comment_count,
+                  m.share_count,
+                  m.author_follower_count,
+                  m.captured_at as metric_captured_at,
+                  m.metric_provenance,
+                  coalesce(h.sources, array[]::text[]) as sources,
+                  exists(
+                    select 1 from analysis_run ar
+                    join research_task_cost c on c.id=ar.task_cost_id
+                    where ar.video_id=v.id
+                      and ar.analysis_level='L3'
+                      and ar.analysis_type='l3_structured_research'
+                      and ar.status='completed'
+                      and ar.schema_version='l3-research-v1.0.0'
+                      and ar.output->>'privacy_reviewed'='true'
+                      and c.status='completed'
+                  ) as l3_completed
+                from source_video v
+                left join source_account a on a.id=v.account_id
+                left join merged_video_metric m on m.video_id=v.id
+                left join latest_score s on s.video_id=v.id
+                left join source_hits h on h.video_id=v.id
+                where (%s::text is null or v.platform=%s)
+                  and v.last_seen_at >= now() - (%s || ' hours')::interval
+                  and v.availability_status='available'
+                order by coalesce(s.score, v.monitoring_priority, 0) desc,
+                         v.last_seen_at desc, v.id
+                limit %s
+                """,
+                (
+                    normalized_platform,
+                    normalized_platform,
+                    bounded_hours,
+                    bounded_limit,
+                ),
+            )
+            items = [_json_safe(dict(row)) for row in cur.fetchall()]
+        return {
+            "items": items,
+            "platform": normalized_platform or "all",
+            "hours": bounded_hours,
+            "limit": bounded_limit,
+            "interpretation": "rule_ranked_facts_not_model_generated_conclusions",
+            "read_only": True,
+        }
+
+    def get_research_briefs(self, *, limit: int = 20) -> dict[str, object]:
+        bounded_limit = _limit(limit)
+        with self._cursor() as cur:
+            cur.execute(
+                """
+                select
+                  b.id::text as brief_id,
+                  b.name,
+                  b.platform,
+                  b.source_type,
+                  b.target,
+                  b.time_window_hours,
+                  b.max_items,
+                  b.depth,
+                  b.cadence_hours,
+                  b.status,
+                  b.next_due_at,
+                  b.last_dispatched_at,
+                  r.status as latest_run_status,
+                  r.trigger_kind as latest_trigger_kind,
+                  r.started_at as latest_run_started_at,
+                  r.finished_at as latest_run_finished_at,
+                  r.error_code as latest_run_error_code
+                from research_brief b
+                left join lateral (
+                  select status, trigger_kind, started_at, finished_at, error_code
+                  from research_brief_run
+                  where brief_id=b.id
+                  order by started_at desc, id desc
+                  limit 1
+                ) r on true
+                where b.status <> 'archived'
+                order by
+                  case b.status when 'active' then 0 when 'paused' then 1 else 2 end,
+                  b.next_due_at nulls last,
+                  b.updated_at desc
+                limit %s
+                """,
+                (bounded_limit,),
+            )
+            items = [_json_safe(dict(row)) for row in cur.fetchall()]
+        return {"items": items, "limit": bounded_limit, "read_only": True}
 
     def _cursor(self):
         return _ReadOnlyCursor(self._dsn)
@@ -256,6 +431,18 @@ def _days(value: object) -> int:
         raise MCPInputError("days must be an integer") from None
     if not 1 <= result <= 366:
         raise MCPInputError("days must be between 1 and 366")
+    return result
+
+
+def _hours(value: object) -> int:
+    if isinstance(value, bool):
+        raise MCPInputError("hours must be an integer")
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        raise MCPInputError("hours must be an integer") from None
+    if not 1 <= result <= 720:
+        raise MCPInputError("hours must be between 1 and 720")
     return result
 
 

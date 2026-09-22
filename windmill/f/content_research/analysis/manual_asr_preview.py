@@ -1,3 +1,4 @@
+# py: ==3.14.*
 #requirements:
 #douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@a4c72caa2d68324d802ea8f3bb7fad97d67d0f13
 

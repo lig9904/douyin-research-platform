@@ -22,7 +22,7 @@ def test_media_worker_release_has_pinned_dependency_lock():
     metadata = SCRIPT.with_suffix(".script.yaml").read_text()
     commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", SCRIPT.read_text()).group(1)
     assert f"douyin-research-platform@{commit}" in lock
-    assert lock.startswith("# workspace-dependencies-mode: manual\n# py: 3.13\n")
+    assert lock.startswith("# workspace-dependencies-mode: manual\n# py: 3.14\n")
     assert "lock: '!inline f/content_research/collectors/ingest_video_media.script.lock'" in metadata
     assert "psycopg==3.3.6" in lock
     assert "wmill==1.815.0" in lock

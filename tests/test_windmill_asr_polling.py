@@ -152,7 +152,7 @@ def test_polling_release_metadata_includes_pinned_runtime_dependencies():
     for name in ("run_reviewed_asr", "poll_pending_asr"):
         lock = (ROOT / f"{name}.script.lock").read_text()
         metadata = (ROOT / f"{name}.script.yaml").read_text()
-        assert "# py: 3.13" in lock
+        assert "# py: 3.14" in lock
         assert "wmill==1.815.0" in lock and "psycopg-binary==3.3.6" in lock
         assert f"!inline f/content_research/analysis/{name}.script.lock" in metadata
         assert f"f/content_research/analysis/{name}:" in workspace_lock

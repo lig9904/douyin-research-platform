@@ -22,6 +22,9 @@ READ_TOOLS = (
     "search_accounts",
     "get_account_videos",
     "get_metric_history",
+    "get_daily_briefing",
+    "get_research_briefs",
+    "get_cost_summary",
 )
 
 
@@ -83,6 +86,7 @@ def test_safe_tool_replaces_input_and_runtime_errors() -> None:
     [
         (lambda: _queries.validate_limit(50), 50),
         (lambda: _queries.validate_days(90, maximum=90), 90),
+        (lambda: _queries.validate_hours(720), 720),
         (lambda: _queries.validate_query("x" * 120), "x" * 120),
         (lambda: _queries.validate_platform("wechat_channels"), "wechat_channels"),
         (lambda: _queries.validate_score(60.5), _queries.Decimal("60.5")),
@@ -98,6 +102,7 @@ def test_public_input_bounds_accept_contract_edges(call, valid) -> None:
         lambda: _queries.validate_limit(0),
         lambda: _queries.validate_limit(True),
         lambda: _queries.validate_days(91, maximum=90),
+        lambda: _queries.validate_hours(721),
         lambda: _queries.validate_query("x" * 121),
         lambda: _queries.validate_platform("bad platform"),
         lambda: _queries.validate_score(101),

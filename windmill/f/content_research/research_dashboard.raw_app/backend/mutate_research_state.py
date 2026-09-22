@@ -1,3 +1,4 @@
+# py: ==3.14.*
 #requirements:
 #psycopg[binary]==3.3.6
 

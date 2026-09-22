@@ -36,6 +36,14 @@ class FakeQueries:
         self.calls.append(("get_cost_summary", days))
         return {"days": days, "task_costs": [], "daily_budgets": [], "read_only": True}
 
+    def get_daily_briefing(self, *, platform=None, hours: int = 24, limit: int = 10):
+        self.calls.append(("get_daily_briefing", (platform, hours, limit)))
+        return {"items": [], "hours": hours, "limit": limit, "read_only": True}
+
+    def get_research_briefs(self, *, limit: int = 20):
+        self.calls.append(("get_research_briefs", limit))
+        return {"items": [], "limit": limit, "read_only": True}
+
 
 class FailingQueries(FakeQueries):
     def search_cases(self, **kwargs):
@@ -70,6 +78,8 @@ def test_initialize_and_tool_list_expose_only_read_operations() -> None:
         "search_cases",
         "get_case_detail",
         "get_cost_summary",
+        "get_daily_briefing",
+        "get_research_briefs",
     ]
     names = {tool["name"] for tool in tools}
     assert names.isdisjoint(

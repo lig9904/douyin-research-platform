@@ -92,14 +92,15 @@ MCP 只暴露指定研究工具，不暴露所有 workspace scripts。
 测试服务器的 workspace-bound MCP token scope 对应：
 `mcp:scripts:f/content_research/research_tools/*`
 
-当前该 folder 仅包含七项只读工具：`search_cases`、`get_case_detail`、
+当前该 folder 仅包含十项只读工具：`search_cases`、`get_case_detail`、
 `get_hot_videos`、`get_blackhorse_videos`、`search_accounts`、
-`get_account_videos`、`get_metric_history`。MCP 身份只能调用这些工具，不能读取
+`get_account_videos`、`get_metric_history`、`get_daily_briefing`、
+`get_research_briefs`、`get_cost_summary`。MCP 身份只能调用这些工具，不能读取
 Resource/Secret、枚举 workspace、访问 App backend、collectors、analysis 或
 `admin_tools`。
 
 Windmill 对 granular script scope 会自动增加内置 `runScriptByPath` 工具；该工具仍按
-同一 path scope 检查参数，只能运行 `research_tools` 下的脚本。验收应期待七个业务
+同一 path scope 检查参数，只能运行 `research_tools` 下的脚本。验收应期待十个业务
 脚本工具加这个内置启动器，而不是误把它当成跨目录权限。token 不能设置
 `read_only=true`，因为 Windmill 会因此禁止所有 job-run；业务只读由精确 scope、
 无写脚本、只读事务和数据库 reader role落实。
@@ -108,7 +109,7 @@ Windmill 对 granular script scope 会自动增加内置 `runScriptByPath` 工�
 获得 Resource 的 read 权限。应以独立的最小权限数据库 role 作为该 Resource 的
 连接身份，且只授予所需表的 `SELECT`；代码内的只读事务是第二道边界，不替代 ACL。
 
-七项入口还会导入 `f/content_research/research_tool_lib/queries`。MCP scope 仍只列出
+十项入口还会导入 `f/content_research/research_tool_lib/queries`。MCP scope 仍只列出
 `research_tools`，但执行身份必须能 view 这个 helper；helper 自身不得进入 MCP
 工具列表。测试服务器应给 helper 精确 view 权限，不能把整个 `content_research`
 folder 授予 MCP 身份。
@@ -119,7 +120,7 @@ folder 授予 MCP 身份。
 
 测试服务器 ACL 验收至少覆盖：
 
-- MCP token 的 `tools/list` 只展示七项只读业务脚本和受相同 path scope 约束的
+- MCP token 的 `tools/list` 只展示十项只读业务脚本和受相同 path scope 约束的
   `runScriptByPath`，不展示其他 workspace 或 API endpoint 工具；
 - 每项工具能在最小结果集下读取，未知工具/超限输入失败关闭；
 - MCP token 不能读取 Resource/Secret、调用收费脚本或运行 collectors/analysis/admin；

@@ -1,3 +1,4 @@
+# py: ==3.14.*
 """Deterministic, local account-profile similarity for L2 research.
 
 The scorer consumes only already persisted profile fields.  It does not infer

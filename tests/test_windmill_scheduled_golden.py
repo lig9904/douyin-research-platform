@@ -233,7 +233,7 @@ def test_source_declares_fixed_dependency_and_no_public_main_parameters() -> Non
     lock = SCRIPT.with_suffix(".script.lock").read_text(encoding="utf-8")
     import re
     commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", source).group(1)
-    assert '# requires-python = "==3.13.*"' in source
+    assert '# requires-python = "==3.14.*"' in source
     assert commit == "e32581b9f771ea75a4d53f579df1f83dac60521a"
     assert f"douyin-research-platform@{commit}" in lock
     assert "def main() -> dict[str, object]:" in source

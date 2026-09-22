@@ -1,0 +1,5 @@
+# py: 3.14
+psycopg==3.3.6
+psycopg-binary==3.3.6
+psycopg-pool==3.3.2
+typing-extensions==4.16.0
