@@ -13,6 +13,7 @@ import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
 import HotspotLibrary from './HotspotLibrary'
 import ResearchBriefs from './ResearchBriefs'
+import DailyBriefing from './DailyBriefing'
 import AppShell, { type ResearchView } from './AppShell'
 import GlobalSearch from './src/components/GlobalSearch'
 import OperationsOverview from './src/components/OperationsOverview'
@@ -270,6 +271,17 @@ function App() {
 
   if (view === 'videos') {
     return <VideoLibrary onNavigate={setView} initialSelectedVideoId={selectedVideoId} />
+  }
+  if (view === 'today') {
+    return (
+      <DailyBriefing
+        onNavigate={setView}
+        onOpenVideo={(videoId) => {
+          setSelectedVideoId(videoId)
+          setView('videos')
+        }}
+      />
+    )
   }
   if (view === 'briefs') {
     return <ResearchBriefs onNavigate={setView} />

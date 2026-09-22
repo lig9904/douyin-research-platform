@@ -1,0 +1,25 @@
+summary: 每日研判 - 事实简报
+description: 规则排序的合并事实、任务运行和费用口径；每条视频保留原始记录下钻 ID。
+lock: '!inline f/content_research/research_dashboard.raw_app/backend/get_daily_briefing.lock'
+schema:
+  type: object
+  properties:
+    db:
+      type: object
+      format: resource-postgresql
+    platform:
+      type: string
+      default: all
+    hours:
+      type: integer
+      default: 24
+      minimum: 1
+      maximum: 720
+    limit:
+      type: integer
+      default: 12
+      minimum: 1
+      maximum: 30
+  required:
+    - db
+timeout: 15

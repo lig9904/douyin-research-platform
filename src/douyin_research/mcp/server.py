@@ -31,6 +31,12 @@ class ResearchQueries(Protocol):
 
     def get_cost_summary(self, *, days: int = 30) -> dict[str, object]: ...
 
+    def get_daily_briefing(
+        self, *, platform: str | None = None, hours: int = 24, limit: int = 10
+    ) -> dict[str, object]: ...
+
+    def get_research_briefs(self, *, limit: int = 20) -> dict[str, object]: ...
+
 
 _TOOLS = (
     {
@@ -58,11 +64,35 @@ _TOOLS = (
     },
     {
         "name": "get_cost_summary",
-        "description": "Read task-cost and daily-budget status. This does not reserve, update, or execute budget.",
+        "description": "Read task estimates, supplier daily spend, API-call estimates and daily-budget status without changing budget.",
         "inputSchema": {
             "type": "object",
             "additionalProperties": False,
             "properties": {"days": {"type": "integer", "minimum": 1, "maximum": 366}},
+        },
+    },
+    {
+        "name": "get_daily_briefing",
+        "description": "Read a bounded facts-first daily briefing with public titles, merged metrics, provenance and rule-ranked priority. Transcript, comments, provider payloads and URLs are excluded.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "platform": {"type": "string", "maxLength": 64},
+                "hours": {"type": "integer", "minimum": 1, "maximum": 720},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
+        },
+    },
+    {
+        "name": "get_research_briefs",
+        "description": "List bounded research-task scopes, schedules and latest safe run status. It never dispatches or edits a task.",
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+            },
         },
     },
 )
@@ -129,6 +159,18 @@ class ReadOnlyMCPServer:
                 _only(arguments, {"days"})
                 data = self._queries.get_cost_summary(
                     days=_integer(arguments.get("days", 30), "days")
+                )
+            elif name == "get_daily_briefing":
+                _only(arguments, {"platform", "hours", "limit"})
+                data = self._queries.get_daily_briefing(
+                    platform=_optional_string(arguments.get("platform"), "platform"),
+                    hours=_integer(arguments.get("hours", 24), "hours"),
+                    limit=_integer(arguments.get("limit", 10), "limit"),
+                )
+            elif name == "get_research_briefs":
+                _only(arguments, {"limit"})
+                data = self._queries.get_research_briefs(
+                    limit=_integer(arguments.get("limit", 20), "limit")
                 )
             else:
                 return _tool_error(request_id, "MCP_TOOL_NOT_FOUND")

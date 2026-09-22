@@ -1,3 +1,4 @@
+# py: ==3.14.*
 """Display-safe, paginated video metric history for the Case detail view."""
 
 from __future__ import annotations

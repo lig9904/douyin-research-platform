@@ -26,7 +26,7 @@ def test_app_dependencies_are_declared_in_runtime_supported_pep723():
     source = SCRIPT.read_text()
     block = source.split("# /// script\n", 1)[1].split("# ///", 1)[0]
     metadata = tomllib.loads("\n".join(line.removeprefix("# ") for line in block.splitlines()))
-    assert metadata["requires-python"] == "==3.12.*"
+    assert metadata["requires-python"] == "==3.14.*"
     assert "psycopg[binary]==3.3.6" in metadata["dependencies"]
     assert any(dep.startswith("douyin-research-platform @ git+https://github.com/lig9904/")
                for dep in metadata["dependencies"])
@@ -173,7 +173,7 @@ def test_app_surface_keeps_paid_envelope_fixed_and_server_owned() -> None:
     assert "max_cost_usd: null" in ui
     assert "enrich_details: true" in ui
     assert "无固定金额上限" in ui
-    assert "# py: 3.12" in lock
+    assert "# py: 3.14" in lock
     assert "douyin-research-platform @ git+https://" in lock
     assert "psycopg-binary==3.3.6" in lock
     assert (

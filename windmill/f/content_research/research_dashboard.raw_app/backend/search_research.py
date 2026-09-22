@@ -1,3 +1,4 @@
+# py: ==3.14.*
 """Read-only, privacy-bounded global search for the research dashboard."""
 
 from __future__ import annotations

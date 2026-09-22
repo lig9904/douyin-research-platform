@@ -12,10 +12,10 @@ Community Edition 可使用 Windmill 开源 MCP server 路由；官方价格页�
 
 ## 当前交付状态（2026-09-22）
 
-- 已完成：本机 stdio MCP 三项只读查询、Windmill Gateway 七项只读研究工具、参数上限、只读事务、跨目录拒绝和本机真实数据库烟测。
-- 尚未完成：测试服务器独立数据库 reader role、固定 Resource、workspace-bound 最小 scope token、`mcp_disable_token_query_param`、反代 Authorization 脱敏、Codex 客户端连接，以及服务器上的七工具与越权失败烟测。
+- 已完成：本机 stdio MCP 五项只读查询、Windmill Gateway 十项只读研究工具代码、参数上限、只读事务和跨目录拒绝；原七项 Gateway 工具已有本机真实数据库烟测，新增三项等待随本轮重新烟测。
+- 尚未完成：测试服务器独立数据库 reader role、固定 Resource、workspace-bound 最小 scope token、`mcp_disable_token_query_param`、反代 Authorization 脱敏、Codex 客户端连接，以及服务器上的十工具与越权失败烟测。
 - 发布判断：MCP 代码已实现，但测试服务器 Gateway 尚未接通和验收；该项保留为正式 V1 发布前待办，不得写成“服务器 MCP 已可用”。
-- 查询边界：只查询已经进入研究库的规范化数据，不是抖音全站或互联网实时搜索；不返回原评论、完整转写、URL、Provider 原始载荷或凭据，不开放付费 L3 执行。
+- 查询边界：只查询已经进入研究库的规范化数据，不是抖音全站或互联网实时搜索；可返回公开标题和账号昵称，不返回原评论、完整转写、描述、URL、Provider 原始载荷或凭据，不开放付费 L3 执行。研究台保留按视频 ID 查看原始记录的页面下钻。
 
 ## 认证
 
@@ -44,7 +44,7 @@ Windmill 自身已有 `mcp_disable_token_query_param` 设置，应在部署后�
 
 `mcp:scripts:f/content_research/research_tools/*`
 
-仓库已定义以下七项只读工具。它们只读取已经入库的规范化数据，参数有
+仓库已定义以下十项只读工具。它们只读取已经入库的规范化数据，参数有
 schema 上限，查询在显式只读事务中执行；不会刷新缓存、调用 Provider、预占
 预算或返回 URL、正文、转写、评论原文、Provider 原始载荷或凭据：
 
@@ -55,6 +55,9 @@ schema 上限，查询在显式只读事务中执行；不会刷新缓存、调�
 - search_accounts
 - get_account_videos
 - get_metric_history
+- get_daily_briefing
+- get_research_briefs
+- get_cost_summary
 
 工具使用服务器端固定的 PostgreSQL Resource
 `f/content_research/research_db`；调用者不能提交 DSN、数据库用户名、排序字段、
@@ -80,12 +83,12 @@ schema 上限，查询在显式只读事务中执行；不会刷新缓存、调�
 不能只依赖 Codex UI 审批作为成本控制。
 
 注意：Windmill 的 token `read_only` 开关会同时禁止 job-run，因此这个 MCP token
-不能设为 `read_only=true`；否则七个脚本均无法执行。这里的“只读”由精确
+不能设为 `read_only=true`；否则十个脚本均无法执行。这里的“只读”由精确
 `mcp:scripts:` scope、无写入口、显式 `BEGIN READ ONLY` 和最小权限数据库角色共同
 保证。Windmill 还会为 granular script scope 自动列出内置 `runScriptByPath`；它受
 同一 path scope 约束，只能运行上述目录，不能借此运行其他脚本。
 
-七个入口会导入 `f/content_research/research_tool_lib/queries`。MCP scope 不应把该
+十个入口会导入 `f/content_research/research_tool_lib/queries`。MCP scope 不应把该
 helper 暴露为工具，但执行身份仍需对 helper 有 view 权限，并需能在 job 内读取固定
 Resource。测试服务器应单独验证这个执行 ACL，不能通过扩大到整个
 `f/content_research/*` 来绕过。
@@ -97,8 +100,8 @@ Resource。测试服务器应单独验证这个执行 ACL，不能通过扩大�
 - 使用 15 分钟、workspace-bound、仅含
   `mcp:scripts:f/content_research/research_tools/*` 的临时 token；
 - `initialize` 返回 MCP `2025-03-26` 和 tools capability；
-- `tools/list` 返回七个业务脚本及受同 scope 约束的内置 `runScriptByPath`；
-- 七个业务脚本均经 `tools/call` 成功完成最小结果集调用；
+- 当时的 `tools/list` 返回七个业务脚本及受同 scope 约束的内置 `runScriptByPath`；
+- 当时七个业务脚本均经 `tools/call` 成功完成最小结果集调用；新增三项不继承该证据；
 - `limit=51` 返回固定 `MCP_INPUT_INVALID`；
 - 用 `runScriptByPath` 尝试运行
   `f/content_research/analysis/manual_l3_preview` 被明确拒绝为不在 token scope；
@@ -131,9 +134,10 @@ Resource。测试服务器应单独验证这个执行 ACL，不能通过扩大�
    `mcp:scripts:f/content_research/research_tools/*` scope，且不使用全局
    `mcp:all` / workspace 全权 token。
 4. 以 MCP token 执行 `tools/list`，确认只出现上述七项业务脚本和 Windmill 内置、
-   受相同 path scope 约束的 `runScriptByPath`，不出现其他业务脚本或 API endpoint；分别调用一次
+  受相同 path scope 约束的 `runScriptByPath`，不出现其他业务脚本或 API endpoint；分别调用一次
    `search_cases`、`get_case_detail`、`get_hot_videos`、`get_blackhorse_videos`、
-   `search_accounts`、`get_account_videos`、`get_metric_history` 的小结果集。
+   `search_accounts`、`get_account_videos`、`get_metric_history`、`get_daily_briefing`、
+   `get_research_briefs`、`get_cost_summary` 的小结果集。
 5. 验证未知工具、超限参数、试图传入 Resource/Provider/执行参数均失败关闭；同时
    验证 token 无法列出或运行 collectors、analysis、admin、resources、secrets。
 

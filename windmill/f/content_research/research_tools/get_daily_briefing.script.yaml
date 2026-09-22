@@ -1,0 +1,29 @@
+summary: MCP read - daily research briefing
+description: >
+  Read-only bounded briefing over public titles, merged metrics, provenance and
+  rule-ranked priority. Transcript, comments, provider payloads, URLs, provider
+  calls, writes and budget reservations are excluded.
+lock: '!inline f/content_research/research_tools/get_daily_briefing.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 4
+schema:
+  type: object
+  additionalProperties: false
+  properties:
+    platform:
+      type: string
+      default: ''
+      maxLength: 64
+      originalType: string
+    hours:
+      type: integer
+      default: 24
+      minimum: 1
+      maximum: 720
+    limit:
+      type: integer
+      default: 10
+      minimum: 1
+      maximum: 50
+  required: []
+timeout: 10

@@ -1,3 +1,4 @@
+# py: ==3.14.*
 """Read-only task and cost overview for the dashboard's Admin/Developer view."""
 
 from __future__ import annotations

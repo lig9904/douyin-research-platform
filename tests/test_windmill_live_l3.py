@@ -23,7 +23,7 @@ def test_worker_release_lock_matches_pinned_core_and_python():
     metadata = PATH.with_suffix(".script.yaml").read_text()
     revision = "e33b56c11359e41e1ceee3957391ef3ef59e3478"
     assert revision in lock and revision in PATH.read_text()
-    assert "# py: 3.13" in lock and "wmill==1.815.0" in lock
+    assert "# py: 3.14" in lock and "wmill==1.815.0" in lock
     assert "!inline f/content_research/analysis/run_reviewed_l3.script.lock" in metadata
     assert "f/content_research/analysis/run_reviewed_l3:" in (Path(__file__).parents[1] / "windmill/wmill-lock.yaml").read_text()
 

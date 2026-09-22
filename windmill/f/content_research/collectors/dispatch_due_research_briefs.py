@@ -1,5 +1,5 @@
 # /// script
-# requires-python = "==3.13.*"
+# requires-python = "==3.14.*"
 # dependencies = [
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",

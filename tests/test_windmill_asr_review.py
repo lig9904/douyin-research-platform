@@ -24,12 +24,12 @@ def test_backend_dependency_lock_matches_source_revision_and_runtime():
     source = PATH.read_text()
     revision = "92153f603368a3ab2cb7810924d6d3948857987a"
     assert revision in lock and revision in source
-    assert "# py: 3.13" in lock
+    assert "# py: 3.14" in lock
     assert "wmill==1.815.0" in lock
     assert "boto3==" in lock and "psycopg-binary==3.3.6" in lock
     metadata = source.split("# /// script\n", 1)[1].split("# ///", 1)[0]
     config = tomllib.loads("\n".join(line.removeprefix("# ") for line in metadata.splitlines()))
-    assert config["requires-python"] == "==3.13.*"
+    assert config["requires-python"] == "==3.14.*"
     assert any(revision in dependency for dependency in config["dependencies"])
     workspace_lock = (Path(__file__).parents[1] / "windmill/wmill-lock.yaml").read_text()
     assert "f/content_research/research_dashboard.raw_app+asr_media_review.py:" in workspace_lock
