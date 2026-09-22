@@ -4,6 +4,7 @@ description: |
   daily aggregate. It records only daily totals and request counts; it does not
   retain a provider payload or allocate costs to individual research calls.
   The repository dependency is pinned to the reviewed daily-spend implementation.
+lock: '!inline f/content_research/collectors/sync_daily_spend.script.lock'
 concurrency_time_window_s: 0
 concurrent_limit: 1
 schema:
