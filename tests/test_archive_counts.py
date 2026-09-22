@@ -7,6 +7,11 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 
 
+def test_research_restore_inventory_includes_brief_control_plane():
+    assert module.TARGETS['research'] == ('source_video', 'collection', 'collection_item')
+    assert module.TARGETS['research_brief'] == ('research_brief', 'research_brief_run')
+
+
 def test_copy_rows_not_field_values_or_escaped_newlines():
     lines = 'COPY public.source_video (id, title) FROM stdin;\n1\ttext\\nnext\n2\t\\N\n\\.\nCOPY public.collection (id) FROM stdin;\n\\.\n'
     assert module.counts(lines.splitlines(True), ('source_video','collection')) == '2|0'

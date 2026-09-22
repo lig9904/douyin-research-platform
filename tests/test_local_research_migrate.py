@@ -24,6 +24,12 @@ def test_local_migrate_script_uses_research_owner_and_backup_first() -> None:
     assert 'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec pg_dump -U "$RESEARCH_DB_USER"' in migrate
     assert "tableowner=current_user" in migrate
     assert "has_table_privilege(current_user" in migrate
+    assert "to_regclass('public.research_brief')" in migrate
+    assert "to_regclass('public.research_brief_run')" in migrate
+    assert "to_regclass('public.uq_research_brief_owner_name')" in migrate
+    assert "to_regclass('public.idx_research_brief_due')" in migrate
+    assert "to_regclass('public.idx_research_brief_run_time')" in migrate
+    assert "research_brief_run_brief_id_fkey" in migrate
     assert migrate.index("pg_dump") < migrate.index("for migration_path")
 
 
@@ -37,6 +43,10 @@ def test_local_restore_drill_is_gated_checksum_bound_and_cleans_fixed_database()
     assert "shasum -a 256 -c SHA256SUMS" in restore
     assert "pg_restore" in restore
     assert "source_counts" in restore and "restored_counts" in restore
+    assert "research_brief_contract" in restore
+    assert "restored research-brief row counts" in restore
+    assert "to_regclass('public.research_brief')" in restore
+    assert "to_regclass('public.research_brief_run')" in restore
     assert "tableowner=current_user" in restore
     assert "trap cleanup_restore EXIT" in restore
     assert "cleanup_restore_strict" in restore

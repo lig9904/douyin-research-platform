@@ -279,8 +279,8 @@ cmd_migrate() {
     >/dev/null
 
   verified="$(research_query \
-    "select (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || exists(select 1 from information_schema.columns where table_schema='public' and table_name='collection_item' and column_name='account_id')::int || '|' || exists(select 1 from pg_constraint where conname='collection_item_one_target')::int || '|' || (to_regclass('public.uq_collection_owner_name') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('saved_research_filter','research_user_action'))::int || '|' || (has_table_privilege(current_user,'public.saved_research_filter','SELECT') and has_table_privilege(current_user,'public.saved_research_filter','INSERT') and has_table_privilege(current_user,'public.saved_research_filter','UPDATE') and has_table_privilege(current_user,'public.research_user_action','SELECT') and has_table_privilege(current_user,'public.research_user_action','INSERT') and has_table_privilege(current_user,'public.research_user_action','UPDATE'))::int")"
-  [[ "$verified" == "1|1|1|1|1|1|1" ]] || {
+    "select (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || exists(select 1 from information_schema.columns where table_schema='public' and table_name='collection_item' and column_name='account_id')::int || '|' || exists(select 1 from pg_constraint where conname='collection_item_one_target')::int || '|' || (to_regclass('public.uq_collection_owner_name') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('saved_research_filter','research_user_action','research_brief','research_brief_run'))::int || '|' || (has_table_privilege(current_user,'public.saved_research_filter','SELECT,INSERT,UPDATE') and has_table_privilege(current_user,'public.research_user_action','SELECT,INSERT,UPDATE') and has_table_privilege(current_user,'public.research_brief','SELECT,INSERT,UPDATE') and has_table_privilege(current_user,'public.research_brief_run','SELECT,INSERT,UPDATE'))::int || '|' || (to_regclass('public.research_brief') is not null)::int || '|' || (to_regclass('public.research_brief_run') is not null)::int || '|' || (to_regclass('public.uq_research_brief_owner_name') is not null)::int || '|' || (to_regclass('public.idx_research_brief_due') is not null)::int || '|' || (to_regclass('public.idx_research_brief_run_time') is not null)::int || '|' || exists(select 1 from pg_constraint where conname='research_brief_run_brief_id_fkey' and conrelid='public.research_brief_run'::regclass)::int")"
+  [[ "$verified" == "1|1|1|1|1|1|1|1|1|1|1|1|1" ]] || {
     echo "ERROR: migration verification did not match the research action contract." >&2
     exit 1
   }
@@ -299,6 +299,7 @@ cmd_restore_drill() (
   }
 
   local backup_dir research_db restore_db=local_research_restore count_sql source_counts restored_counts verified remaining
+  local brief_state brief_contract brief_count_sql brief_source_counts brief_restored_counts brief_verified
   [[ -d "$1" ]] || { echo "ERROR: migration backup directory does not exist." >&2; exit 2; }
   backup_dir="$(cd "$1" && pwd -P)"
   case "$backup_dir" in
@@ -364,6 +365,20 @@ SQL
     echo "ERROR: restored database schema or owner verification failed." >&2
     exit 1
   }
+  brief_state="$(database_query "$restore_db" "select (to_regclass('public.research_brief') is not null)::int || '|' || (to_regclass('public.research_brief_run') is not null)::int")"
+  case "$brief_state" in
+    '1|1')
+      brief_contract=present
+      brief_count_sql="select (select count(*) from research_brief) || '|' || (select count(*) from research_brief_run)"
+      brief_source_counts="$(database_query "$research_db" "$brief_count_sql")"
+      brief_restored_counts="$(database_query "$restore_db" "$brief_count_sql")"
+      [[ "$brief_source_counts" == "$brief_restored_counts" ]] || { echo "ERROR: restored research-brief row counts do not match the source database." >&2; exit 1; }
+      brief_verified="$(database_query "$restore_db" "select (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('research_brief','research_brief_run'))::int || '|' || (to_regclass('public.uq_research_brief_owner_name') is not null)::int || '|' || (to_regclass('public.idx_research_brief_due') is not null)::int || '|' || (to_regclass('public.idx_research_brief_run_time') is not null)::int || '|' || exists(select 1 from pg_constraint where conname='research_brief_run_brief_id_fkey' and conrelid='public.research_brief_run'::regclass)::int")"
+      [[ "$brief_verified" == "1|1|1|1|1" ]] || { echo "ERROR: restored research-brief owner or object verification failed." >&2; exit 1; }
+      ;;
+    '0|0') brief_contract=legacy_absent ;;
+    *) echo "ERROR: restored research-brief schema is incomplete." >&2; exit 1 ;;
+  esac
 
   cleanup_restore_strict
   remaining="$(compose exec -T postgres psql -U "$(env_value POSTGRES_USER)" -d postgres -At -v ON_ERROR_STOP=1 -c "select exists(select 1 from pg_database where datname='$restore_db')")"
@@ -372,7 +387,7 @@ SQL
     exit 1
   }
   trap - EXIT
-  echo "[local-l3] restore drill passed: checksum, key-table counts, owners, and cleanup verified."
+  echo "[local-l3] restore drill passed: checksum, key-table counts, owners, cleanup, and research_brief_contract=$brief_contract verified."
 )
 
 cmd_review() {

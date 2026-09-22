@@ -270,8 +270,8 @@ verify_migration_ledger() {
 
 verify_contract() {
   local verified
-  verified="$(research_query "$research_database" "select (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || exists(select 1 from information_schema.columns where table_schema='public' and table_name='collection_item' and column_name='account_id')::int || '|' || exists(select 1 from pg_constraint where conname='collection_item_one_target')::int || '|' || (to_regclass('public.uq_collection_owner_name') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('saved_research_filter','research_user_action'))::int || '|' || (has_table_privilege(current_user,'public.saved_research_filter','SELECT') and has_table_privilege(current_user,'public.saved_research_filter','INSERT') and has_table_privilege(current_user,'public.saved_research_filter','UPDATE') and has_table_privilege(current_user,'public.research_user_action','SELECT') and has_table_privilege(current_user,'public.research_user_action','INSERT') and has_table_privilege(current_user,'public.research_user_action','UPDATE'))::int")"
-  [[ "$verified" == '1|1|1|1|1|1|1' ]] || { echo 'ERROR: research migration owner, privilege, or object verification failed.' >&2; exit 1; }
+  verified="$(research_query "$research_database" "select (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || exists(select 1 from information_schema.columns where table_schema='public' and table_name='collection_item' and column_name='account_id')::int || '|' || exists(select 1 from pg_constraint where conname='collection_item_one_target')::int || '|' || (to_regclass('public.uq_collection_owner_name') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('saved_research_filter','research_user_action','research_brief','research_brief_run'))::int || '|' || (has_table_privilege(current_user,'public.saved_research_filter','SELECT,INSERT,UPDATE') and has_table_privilege(current_user,'public.research_user_action','SELECT,INSERT,UPDATE') and has_table_privilege(current_user,'public.research_brief','SELECT,INSERT,UPDATE') and has_table_privilege(current_user,'public.research_brief_run','SELECT,INSERT,UPDATE'))::int || '|' || (to_regclass('public.research_brief') is not null)::int || '|' || (to_regclass('public.research_brief_run') is not null)::int || '|' || (to_regclass('public.uq_research_brief_owner_name') is not null)::int || '|' || (to_regclass('public.idx_research_brief_due') is not null)::int || '|' || (to_regclass('public.idx_research_brief_run_time') is not null)::int || '|' || exists(select 1 from pg_constraint where conname='research_brief_run_brief_id_fkey' and conrelid='public.research_brief_run'::regclass)::int")"
+  [[ "$verified" == '1|1|1|1|1|1|1|1|1|1|1|1|1' ]] || { echo 'ERROR: research migration owner, privilege, or object verification failed.' >&2; exit 1; }
 }
 
 cmd_backup() { wait_for_postgres; printf 'BACKUP %s\n' "$(create_backup)"; }
@@ -307,6 +307,7 @@ cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
   [[ -n "$backup_argument" ]] || { echo 'ERROR: restore-drill requires one backup directory.' >&2; exit 2; }
   local backup_dir source_counts restored_counts windmill_source_counts windmill_restored_counts remaining research_verified windmill_verified existing
+  local brief_state brief_contract brief_source_counts brief_restored_counts brief_verified
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
@@ -347,6 +348,19 @@ cmd_restore_drill() (
   source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" research)"
   restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from source_video) || '|' || (select count(*) from collection) || '|' || (select count(*) from collection_item)")"
   [[ "$source_counts" == "$restored_counts" ]] || { echo 'ERROR: restore-drill key-table counts do not match the backup archive.' >&2; exit 1; }
+  brief_state="$(research_query "$RESTORE_DATABASE" "select (to_regclass('public.research_brief') is not null)::int || '|' || (to_regclass('public.research_brief_run') is not null)::int || '|' || exists(select 1 from schema_migrations where filename='020_research_brief.sql')::int")"
+  case "$brief_state" in
+    '1|1|1')
+      brief_contract=present
+      brief_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" research_brief)"
+      brief_restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from research_brief) || '|' || (select count(*) from research_brief_run)")"
+      [[ "$brief_source_counts" == "$brief_restored_counts" ]] || { echo 'ERROR: research-brief restore counts do not match the backup archive.' >&2; exit 1; }
+      brief_verified="$(research_query "$RESTORE_DATABASE" "select (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('research_brief','research_brief_run'))::int || '|' || (to_regclass('public.uq_research_brief_owner_name') is not null)::int || '|' || (to_regclass('public.idx_research_brief_due') is not null)::int || '|' || (to_regclass('public.idx_research_brief_run_time') is not null)::int || '|' || exists(select 1 from pg_constraint where conname='research_brief_run_brief_id_fkey' and conrelid='public.research_brief_run'::regclass)::int")"
+      [[ "$brief_verified" == '1|1|1|1|1' ]] || { echo 'ERROR: restored research-brief owner or object verification failed.' >&2; exit 1; }
+      ;;
+    '0|0|0') brief_contract=legacy_absent ;;
+    *) echo 'ERROR: restored research-brief schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
   windmill_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/windmill.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" windmill)"
   windmill_restored_counts="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (select count(*) from workspace) || '|' || (select count(*) from usr)")"
   [[ "$windmill_source_counts" == "$windmill_restored_counts" ]] || { echo 'ERROR: Windmill restore-drill key-table counts do not match the backup archive.' >&2; exit 1; }
@@ -375,8 +389,8 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   trap - EXIT
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   duration_seconds="$(( $(date +%s) - start_epoch ))"
-  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s\n' \
-    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract"
 )
 
 case "$command_name" in

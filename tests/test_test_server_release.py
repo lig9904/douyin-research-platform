@@ -124,6 +124,16 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "'begin;'" in source and "'commit;'" in source
     assert "tableowner=current_user" in source
     assert "has_table_privilege(current_user" in source
+    assert "to_regclass('public.research_brief')" in source
+    assert "to_regclass('public.research_brief_run')" in source
+    assert "to_regclass('public.uq_research_brief_owner_name')" in source
+    assert "to_regclass('public.idx_research_brief_due')" in source
+    assert "to_regclass('public.idx_research_brief_run_time')" in source
+    assert "research_brief_run_brief_id_fkey" in source
+    assert "select count(*) from research_brief" in source
+    assert "select count(*) from research_brief_run" in source
+    assert "research_brief_contract=%s" in source
+    assert "schema and migration ledger are inconsistent" in source
     assert "RESTORE_DATABASE=\"test_server_research_restore\"" in source
     assert "RESTORE_WINDMILL_DATABASE=\"test_server_windmill_restore\"" in source
     assert 'TEST_SERVER_RESTORE_DRILL:-}" == YES' in source
