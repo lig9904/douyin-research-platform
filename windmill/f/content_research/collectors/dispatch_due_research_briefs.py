@@ -1,6 +1,10 @@
-#requirements:
-#psycopg[binary]==3.3.6
-#wmill==1.815.0
+# /// script
+# requires-python = "==3.13.*"
+# dependencies = [
+#   "psycopg[binary]==3.3.6",
+#   "wmill==1.815.0",
+# ]
+# ///
 
 """Dispatch a small batch of due briefs; performs no provider calls itself."""
 
@@ -50,11 +54,23 @@ def _due(db: postgresql) -> list[str]:
         return [str(row["id"]) for row in cur.fetchall()]
 
 
+def _safe_failure(stage: str, exc: Exception) -> RuntimeError:
+    """Expose an actionable category without returning credentials or SQL text."""
+    sqlstate = getattr(exc, "sqlstate", None)
+    category = type(exc).__name__
+    suffix = f":{sqlstate}" if isinstance(sqlstate, str) and sqlstate else ""
+    return RuntimeError(f"research brief dispatch {stage} failed [{category}{suffix}]")
+
+
 def main() -> dict[str, object]:
     try:
-        due = _due(_resource())
-    except Exception:
-        raise RuntimeError("research brief dispatch query failed") from None
+        db = _resource()
+    except Exception as exc:
+        raise _safe_failure("resource", exc) from None
+    try:
+        due = _due(db)
+    except Exception as exc:
+        raise _safe_failure("query", exc) from None
     import wmill
 
     jobs = [
