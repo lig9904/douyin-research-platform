@@ -152,9 +152,23 @@ def discovery_source(
             **common,
         )
     if config.source_type == "keyword":
+        # TikHub only offers 1-day, 7-day and 180-day search windows.  Use the
+        # smallest provider window that contains the requested scope and keep
+        # ``published_after`` as the exact local boundary (for example 72h).
+        publish_time = {
+            24: "1",
+            72: "7",
+            168: "7",
+            720: "180",
+        }[config.time_window_hours]
         return DiscoverySource(
             kind="search",
-            kwargs={"query": config.target, "force_refresh": False},
+            kwargs={
+                "query": config.target,
+                "sort_type": "2",
+                "publish_time": publish_time,
+                "force_refresh": False,
+            },
             **common,
         )
     return DiscoverySource(

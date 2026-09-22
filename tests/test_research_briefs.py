@@ -58,6 +58,23 @@ def test_brief_maps_to_one_bounded_source(
     assert source.kwargs.get("force_refresh") is False
 
 
+@pytest.mark.parametrize(
+    ("time_window_hours", "publish_time"),
+    [(24, "1"), (72, "7"), (168, "7"), (720, "180")],
+)
+def test_keyword_search_uses_latest_provider_window_and_exact_local_cutoff(
+    time_window_hours: int, publish_time: str,
+) -> None:
+    config = make_config(
+        source_type="keyword", target="文旅", time_window_hours=time_window_hours,
+        max_items=1, depth="metadata", cadence_hours=None,
+    )
+    source = discovery_source(config, now=NOW)
+    assert source.kwargs["sort_type"] == "2"
+    assert source.kwargs["publish_time"] == publish_time
+    assert source.published_after == NOW - timedelta(hours=time_window_hours)
+
+
 def test_brief_validation_keeps_paid_scope_bounded() -> None:
     with pytest.raises(ValueError, match="bounded endpoint"):
         make_config(
