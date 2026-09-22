@@ -1,3 +1,8 @@
+type: inline
+fields:
+  db:
+    type: static
+    value: $res:f/content_research/research_db
 summary: 视频详情 - 原始记录下钻
 description: 只读返回单条视频的规范记录、Provider 快照、指标快照、发现记录和评论原始行。
 lock: '!inline f/content_research/research_dashboard.raw_app/backend/get_video_raw_records.lock'
