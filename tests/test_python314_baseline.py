@@ -36,3 +36,19 @@ def test_all_windmill_python_and_lock_files_select_python_314() -> None:
     for lock in locks:
         source = lock.read_text(encoding="utf-8")
         assert "# py: 3.14" in source[:200], lock
+
+
+def test_all_windmill_python_script_metadata_reference_their_lock() -> None:
+    root = ROOT / "windmill"
+    metadata_files = list((root / "f/content_research").rglob("*.script.yaml"))
+    assert metadata_files
+    for metadata in metadata_files:
+        stem = str(metadata)[: -len(".script.yaml")]
+        script = Path(f"{stem}.py")
+        lock = Path(f"{stem}.script.lock")
+        if not script.exists():
+            continue
+        assert lock.is_file() and lock.stat().st_size > 0, metadata
+        relative_lock = lock.relative_to(root).as_posix()
+        source = metadata.read_text(encoding="utf-8")
+        assert f"lock: '!inline {relative_lock}'" in source, metadata
