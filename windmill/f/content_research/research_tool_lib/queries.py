@@ -23,7 +23,10 @@ MAX_QUERY_CHARS = 120
 MAX_DAYS = 366
 MAX_HOURS = 720
 T = TypeVar("T")
-RESEARCH_DB_RESOURCE = "f/content_research/research_db"
+# MCP tools use a separate database identity.  The main ``research_db``
+# resource is intentionally reserved for collectors, reviews and other
+# application paths that need writes.
+RESEARCH_DB_RESOURCE = "f/content_research/research_db_readonly"
 L3_LIST_FIELDS = (
     "narrative_structure",
     "hook_functions",

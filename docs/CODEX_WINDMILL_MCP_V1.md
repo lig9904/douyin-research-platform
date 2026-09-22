@@ -60,7 +60,9 @@ schema 上限，查询在显式只读事务中执行；不会刷新缓存、调�
 - get_cost_summary
 
 工具使用服务器端固定的 PostgreSQL Resource
-`f/content_research/research_db`；调用者不能提交 DSN、数据库用户名、排序字段、
+`f/content_research/research_db_readonly`；它绑定独立的
+`douyin_research_mcp_reader` 数据库身份，不能复用应用写入身份。调用者不能提交
+DSN、数据库用户名、排序字段、
 表名或 Provider 参数。`get_blackhorse_videos` 返回记录中的版本化优先级评分和
 `rule_version`，默认门槛是 `min_score=60`，调用者可仅在 `0..100` 内收紧它。
 
@@ -90,7 +92,7 @@ schema 上限，查询在显式只读事务中执行；不会刷新缓存、调�
 
 十个入口会导入 `f/content_research/research_tool_lib/queries`。MCP scope 不应把该
 helper 暴露为工具，但执行身份仍需对 helper 有 view 权限，并需能在 job 内读取固定
-Resource。测试服务器应单独验证这个执行 ACL，不能通过扩大到整个
+只读 Resource。测试服务器应单独验证这个执行 ACL，不能通过扩大到整个
 `f/content_research/*` 来绕过。
 
 ## 本机 Gateway 证据（2026-09-20）
@@ -133,7 +135,7 @@ Resource。测试服务器应单独验证这个执行 ACL，不能通过扩大�
    脱敏，workspace-bound token 仅获
    `mcp:scripts:f/content_research/research_tools/*` scope，且不使用全局
    `mcp:all` / workspace 全权 token。
-4. 以 MCP token 执行 `tools/list`，确认只出现上述七项业务脚本和 Windmill 内置、
+4. 以 MCP token 执行 `tools/list`，确认只出现上述十项业务脚本和 Windmill 内置、
   受相同 path scope 约束的 `runScriptByPath`，不出现其他业务脚本或 API endpoint；分别调用一次
    `search_cases`、`get_case_detail`、`get_hot_videos`、`get_blackhorse_videos`、
    `search_accounts`、`get_account_videos`、`get_metric_history`、`get_daily_briefing`、

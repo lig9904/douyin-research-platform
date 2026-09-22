@@ -69,7 +69,9 @@ def test_tool_layer_has_no_write_or_provider_surface() -> None:
         "run_deep_analysis",
     ):
         assert forbidden not in source
-    assert _queries.RESEARCH_DB_RESOURCE == "f/content_research/research_db"
+    assert _queries.RESEARCH_DB_RESOURCE == (
+        "f/content_research/research_db_readonly"
+    )
 
 
 def test_safe_tool_replaces_input_and_runtime_errors() -> None:
@@ -229,8 +231,22 @@ def test_fixed_resource_is_loaded_server_side(monkeypatch) -> None:
     monkeypatch.setattr(_queries, "wmill", fake)
     db = _queries.research_db()
 
-    assert fake.paths == ["f/content_research/research_db"]
+    assert fake.paths == ["f/content_research/research_db_readonly"]
     assert db["user"] == "reader"
+
+
+def test_readonly_resource_cannot_reuse_application_writer_identity() -> None:
+    metadata = (
+        ROOT
+        / "windmill/f/content_research/research_db_readonly.resource.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "user: douyin_research_mcp_reader" in metadata
+    assert "research_db_readonly_password" in metadata
+    assert "user: douyin_research\n" not in metadata
+    assert "research_db_password" not in metadata.replace(
+        "research_db_readonly_password", ""
+    )
 
 
 def test_case_detail_returns_only_l3_counts_and_strongly_binds_cost(monkeypatch) -> None:

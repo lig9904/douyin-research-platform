@@ -105,7 +105,7 @@ Windmill 对 granular script scope 会自动增加内置 `runScriptByPath` 工�
 `read_only=true`，因为 Windmill 会因此禁止所有 job-run；业务只读由精确 scope、
 无写脚本、只读事务和数据库 reader role落实。
 
-这些工具在服务端固定使用 `f/content_research/research_db`，但 MCP token 不应因此
+这些工具在服务端固定使用 `f/content_research/research_db_readonly`，但 MCP token 不应因此
 获得 Resource 的 read 权限。应以独立的最小权限数据库 role 作为该 Resource 的
 连接身份，且只授予所需表的 `SELECT`；代码内的只读事务是第二道边界，不替代 ACL。
 

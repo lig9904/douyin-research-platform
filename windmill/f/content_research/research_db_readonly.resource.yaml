@@ -1,0 +1,9 @@
+value:
+  host: postgres
+  port: 5432
+  user: douyin_research_mcp_reader
+  password: $var:f/content_research/research_db_readonly_password
+  dbname: douyin_research
+  sslmode: disable
+description: MCP 研究工具专用只读数据库连接；不得用于采集、审核或其他写入任务
+resource_type: postgresql
