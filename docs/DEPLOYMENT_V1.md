@@ -177,6 +177,12 @@ Windmill 的 token `read_only=true` 会阻止脚本 job-run，不能用于这个
 业务只读性由精确 `mcp:scripts:` scope、代码无写入口、数据库只读事务和 reader role
 保证，不能用全权 token 代替。
 
+Gateway 的十项脚本固定读取
+`f/content_research/research_db_readonly`，其数据库用户必须是
+`douyin_research_mcp_reader`。不得把应用写入 Resource
+`f/content_research/research_db` 绑定给 MCP 工具；否则即使代码使用只读事务，也不能
+满足数据库权限的独立防线。
+
 ## 11. 安全
 
 - 研究台默认 Members，不匿名 Public
