@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@d591b9dc1968cd0ad443848df436aa1c702d805c",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@a46b12647ebeb4a133536bf97c8578161c89bed7",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
