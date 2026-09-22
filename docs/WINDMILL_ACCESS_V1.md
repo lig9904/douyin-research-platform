@@ -89,8 +89,8 @@ Windmill 文档明确提示：Operator 如果获得 variable 的 read 权限，�
 
 MCP 只暴露指定研究工具，不暴露所有 workspace scripts。
 
-测试服务器的 workspace-bound MCP token scope 对应：
-`mcp:scripts:f/content_research/research_tools/*`
+测试服务器的 workspace-bound MCP token scope 使用一个 `mcp:scripts:` 条目，逗号分隔
+下列十个脚本的完整路径；不使用 `*`、`mcp:all`、flow 或 endpoint scope。
 
 当前该 folder 仅包含十项只读工具：`search_cases`、`get_case_detail`、
 `get_hot_videos`、`get_blackhorse_videos`、`search_accounts`、
@@ -126,4 +126,5 @@ folder 授予 MCP 身份。
 - MCP token 不能读取 Resource/Secret、调用收费脚本或运行 collectors/analysis/admin；
 - Admin、Developer、Viewer 与 MCP token 的 Folder 权限分别按预期生效。
 
-上述是部署前验收项，不表示当前本机或任何测试服务器已经配置完成。
+上述项目已于 2026-09-22 在 `test-research` 测试工作区完成现场验收；新环境、token
+轮换或工具清单变化后必须重新执行，不能继承本次证据。
