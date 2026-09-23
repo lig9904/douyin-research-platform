@@ -16,7 +16,7 @@ type Operations = {
   api_calls: { id: string; provider: string; platform: string; endpoint_key: string; status: string; http_status?: number | null; cached: boolean; estimated_cost?: number | null; actual_cost?: number | null; cost_currency: string; cost_basis: string; price_source?: string | null; pricing_version?: string | null; http_attempt_count?: number | null; unknown_attempt_count?: number | null; cost_status: 'estimated' | 'reconciled' | 'known_zero' | 'unknown'; billing_status: 'estimated' | 'unknown' | 'known_zero'; started_at: string }[]
   run_summary: { total_runs?: number; running_runs?: number; failed_runs?: number }
   task_costs: { currency: string; basis: string; task_count: number; completed_count: number; failed_count: number; unknown_amount_count: number; known_total: number }[]
-  tasks: { id: string; task_type: string; task_version: string; status: string; cost_basis: string; total_cost?: number | null; cost_currency: string; created_at: string; platform?: string | null }[]
+  tasks: { id: string; task_type: string; task_version: string; status: string; cost_basis: string; api_cost?: number | null; asr_cost?: number | null; llm_cost?: number | null; total_cost?: number | null; cost_currency: string; created_at: string; platform?: string | null }[]
   runs: { id: string; run_type: string; run_version?: string | null; status: string; platform?: string | null; started_at: string; api_cost?: number | null; asr_cost?: number | null; llm_cost?: number | null; cost_currency?: string | null }[]
 }
 

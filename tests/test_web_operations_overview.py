@@ -57,6 +57,12 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
               cost_currency, cost_basis
             ) values (%s, 'ops-asr-unknown', 'v1', %s, %s, 'completed',
               'private-input', 'private-output', null, null, null, 'CNY', 'unknown')""", (f"{task_key}-unknown", run_id, video_id))
+            cur.execute("""insert into research_task_cost(
+              task_key, task_type, task_version, pipeline_run_id, video_id, status,
+              input_fingerprint, output_fingerprint, api_cost, asr_cost, llm_cost,
+              cost_currency, cost_basis
+            ) values (%s, 'ops-partial-cost', 'v1', %s, %s, 'completed',
+              'private-input', 'private-output', 0.01, null, 0, 'CNY', 'mixed')""", (f"{task_key}-partial", run_id, video_id))
             cur.execute("""insert into external_api_call(
               provider, platform, endpoint_key, request_fingerprint, status, cached,
               actual_cost, cost_currency, metadata
@@ -130,11 +136,17 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
         assert any(row["known_total"] == pytest.approx(6) for row in result["task_costs"])
         unknown_costs = next(row for row in result["task_costs"] if row["basis"] == "unknown")
         assert unknown_costs["unknown_amount_count"] >= 1
+        mixed_costs = next(row for row in result["task_costs"] if row["basis"] == "mixed")
+        assert mixed_costs["unknown_amount_count"] >= 1
+        assert float(mixed_costs["known_total"]) >= 0.01
         task = next(row for row in result["tasks"] if row["task_type"] == "ops-task")
         assert task["total_cost"] == pytest.approx(6)
         unknown_task = next(row for row in result["tasks"] if row["task_type"] == "ops-asr-unknown")
         assert unknown_task["total_cost"] is None
         assert unknown_task["cost_basis"] == "unknown"
+        partial_task = next(row for row in result["tasks"] if row["task_type"] == "ops-partial-cost")
+        assert partial_task["total_cost"] is None
+        assert partial_task["api_cost"] == pytest.approx(0.01)
         assert "input_fingerprint" not in task and "metadata" not in task
         assert "request_fingerprint" in result["excluded_fields"]
     finally:
