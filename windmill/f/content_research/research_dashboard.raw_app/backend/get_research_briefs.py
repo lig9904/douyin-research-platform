@@ -35,6 +35,41 @@ def _actor() -> str:
     return value
 
 
+def _project_id(value: object) -> str | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError("project_id is invalid")
+    try:
+        return str(UUID(value))
+    except ValueError:
+        raise ValueError("project_id is invalid") from None
+
+
+def _project_readable(cur, *, project_id: str, actor: str) -> None:
+    cur.execute(
+        """
+        select 1
+        from research_project project
+        join research_organization organization on organization.id=project.organization_id
+        join lateral (
+          select status, effective_until
+          from research_project_member
+          where project_id=project.id and actor_id=%s and effective_from <= now()
+          order by effective_from desc
+          limit 1
+        ) membership on true
+        where project.id=%s and project.status='active' and organization.status='active'
+          and membership.status='active'
+          and (membership.effective_until is null or membership.effective_until > now())
+        """,
+        (actor, project_id),
+    )
+    if cur.fetchone() is None:
+        # Same denial for a missing, inactive, or inaccessible project.
+        raise PermissionError("RESEARCH_PROJECT_ACCESS_DENIED")
+
+
 def _json(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -47,8 +82,9 @@ def _json(value: Any) -> Any:
     return value
 
 
-def main(db: postgresql):
+def main(db: postgresql, project_id: str | None = None):
     actor = _actor()
+    normalized_project_id = _project_id(project_id)
     connect_args = {
         "host": db["host"],
         "port": int(db.get("port", 5432)),
@@ -60,6 +96,8 @@ def main(db: postgresql):
     try:
         with psycopg.connect(**connect_args, row_factory=dict_row) as conn, conn.cursor() as cur:
             cur.execute("set transaction read only")
+            if normalized_project_id is not None:
+                _project_readable(cur, project_id=normalized_project_id, actor=actor)
             cur.execute(
                 """
                 select id, name, platform, source_type, target,
@@ -67,11 +105,15 @@ def main(db: postgresql):
                   status, config_version, next_due_at, last_dispatched_at,
                   created_at, updated_at
                 from research_brief
-                where owner_actor=%s and status <> 'archived'
+                where status <> 'archived'
+                  and (
+                    (project_id is null and %s::uuid is null and owner_actor=%s)
+                    or (project_id=%s::uuid and %s::uuid is not null)
+                  )
                 order by created_at desc, id
                 limit 100
                 """,
-                (actor,),
+                (normalized_project_id, actor, normalized_project_id, normalized_project_id),
             )
             briefs = [_json(dict(row)) for row in cur.fetchall()]
             brief_ids = [row["id"] for row in briefs]
@@ -84,15 +126,15 @@ def main(db: postgresql):
                       r.started_at, r.finished_at
                     from research_brief_run r
                     join research_brief b on b.id=r.brief_id
-                    where b.owner_actor=%s and r.brief_id=any(%s::uuid[])
+                    where r.brief_id=any(%s::uuid[])
                     order by r.started_at desc, r.id
                     limit 200
                     """,
-                    (actor, brief_ids),
+                    (brief_ids,),
                 )
                 runs = [_json(dict(row)) for row in cur.fetchall()]
         return {"briefs": briefs, "runs": runs, "read_only": True}
-    except PermissionError:
+    except (PermissionError, ValueError):
         raise
     except Exception:
         raise RuntimeError("RESEARCH_BRIEFS_UNAVAILABLE") from None
