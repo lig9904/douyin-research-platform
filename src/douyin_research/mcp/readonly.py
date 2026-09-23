@@ -333,47 +333,9 @@ class CanonicalResearchQueries:
         }
 
     def get_research_briefs(self, *, limit: int = 20) -> dict[str, object]:
-        bounded_limit = _limit(limit)
-        with self._cursor() as cur:
-            cur.execute(
-                """
-                select
-                  b.id::text as brief_id,
-                  b.name,
-                  b.platform,
-                  b.source_type,
-                  b.target,
-                  b.time_window_hours,
-                  b.max_items,
-                  b.depth,
-                  b.cadence_hours,
-                  b.status,
-                  b.next_due_at,
-                  b.last_dispatched_at,
-                  r.status as latest_run_status,
-                  r.trigger_kind as latest_trigger_kind,
-                  r.started_at as latest_run_started_at,
-                  r.finished_at as latest_run_finished_at,
-                  r.error_code as latest_run_error_code
-                from research_brief b
-                left join lateral (
-                  select status, trigger_kind, started_at, finished_at, error_code
-                  from research_brief_run
-                  where brief_id=b.id
-                  order by started_at desc, id desc
-                  limit 1
-                ) r on true
-                where b.status <> 'archived'
-                order by
-                  case b.status when 'active' then 0 when 'paused' then 1 else 2 end,
-                  b.next_due_at nulls last,
-                  b.updated_at desc
-                limit %s
-                """,
-                (bounded_limit,),
-            )
-            items = [_json_safe(dict(row)) for row in cur.fetchall()]
-        return {"items": items, "limit": bounded_limit, "read_only": True}
+        # The stdio MCP transport has no verified end-user identity. Research
+        # briefs are user-owned; a shared read-only DB role must not list them.
+        return {"ok": False, "error": "MCP_IDENTITY_SCOPE_UNAVAILABLE"}
 
     def _cursor(self):
         return _ReadOnlyCursor(self._dsn)

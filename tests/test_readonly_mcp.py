@@ -146,6 +146,20 @@ def test_database_errors_are_replaced_with_fixed_tool_error() -> None:
     assert RAW_SENTINEL not in serialized
 
 
+def test_private_briefs_fail_closed_without_actor_identity() -> None:
+    queries = FakeQueries()
+    response = ReadOnlyMCPServer(queries).dispatch(
+        _request(1, "tools/call", {"name": "get_research_briefs", "arguments": {"limit": 1}})
+    )
+    assert response is not None
+    assert _content(response) == {"ok": False, "error": "MCP_IDENTITY_SCOPE_UNAVAILABLE"}
+    assert queries.calls == []
+    assert CanonicalResearchQueries("not-a-dsn").get_research_briefs() == {
+        "ok": False,
+        "error": "MCP_IDENTITY_SCOPE_UNAVAILABLE",
+    }
+
+
 def test_parse_error_never_terminates_following_message() -> None:
     queries = FakeQueries()
     output_stream = io.StringIO()

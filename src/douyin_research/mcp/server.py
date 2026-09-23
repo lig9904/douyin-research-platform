@@ -169,9 +169,8 @@ class ReadOnlyMCPServer:
                 )
             elif name == "get_research_briefs":
                 _only(arguments, {"limit"})
-                data = self._queries.get_research_briefs(
-                    limit=_integer(arguments.get("limit", 20), "limit")
-                )
+                _integer(arguments.get("limit", 20), "limit")
+                data = {"ok": False, "error": "MCP_IDENTITY_SCOPE_UNAVAILABLE"}
             else:
                 return _tool_error(request_id, "MCP_TOOL_NOT_FOUND")
         except MCPInputError:

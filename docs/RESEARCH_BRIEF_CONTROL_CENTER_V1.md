@@ -46,7 +46,7 @@ V1 支持抖音三类来源：
 
 ```text
 研究台 / 研究任务
-  ├─ get_research_briefs（当前登录用户，只读）
+  ├─ get_research_briefs（MCP 暂不可用；研究台仍按当前登录用户读取）
   └─ mutate_research_brief（写入白名单 + 登录身份 + 幂等审计）
              ↓
        research_brief
