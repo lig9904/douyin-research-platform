@@ -133,6 +133,10 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "select count(*) from research_brief" in source
     assert "select count(*) from research_brief_run" in source
     assert "research_brief_contract=%s" in source
+    assert "project_contract=%s" in source
+    assert "verify_migration_ledger required \"$RESTORE_DATABASE\"" in source
+    assert "verify_project_contract \"$RESTORE_DATABASE\"" in source
+    assert 'test-server-archive-counts.py\" project' in source
     assert "schema and migration ledger are inconsistent" in source
     assert "RESTORE_DATABASE=\"test_server_research_restore\"" in source
     assert "RESTORE_WINDMILL_DATABASE=\"test_server_windmill_restore\"" in source
@@ -149,6 +153,65 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "docker-compose.test-server-external-proxy.yml" in source
     assert "reviewed test-server overlay filename" in source
     assert "test-server-external-proxy-validate.sh" in source
+
+
+def test_release_verify_contract_covers_project_migration_chain_fail_closed() -> None:
+    """The release gate must reject a partially applied 021--024 project schema."""
+    source = SCRIPT.read_text(encoding="utf-8")
+    start = source.index("verify_project_contract() {")
+    end = source.index("\n}\n\ncmd_backup", start)
+    contract = source[start:end]
+
+    # 021: project tenancy and the project-to-account relation are all
+    # independently required.  Checking only research_project would allow an
+    # interrupted migration to be reported as deployable.
+    for relation in (
+        "research_organization",
+        "research_project",
+        "research_project_member",
+        "project_account_relation",
+    ):
+        assert f"to_regclass('public.{relation}')" in contract
+
+    # 022: both the candidate table and the project scopes added to existing
+    # control-plane records are release requirements.
+    assert "to_regclass('public.project_video_inclusion')" in contract
+    for check, relation in (
+        ("022.brief_project_id", "research_brief"),
+        ("022.run_project_id", "pipeline_run"),
+        ("022.brief_run_project_id", "research_brief_run"),
+    ):
+        assert check in contract
+        assert f"to_regclass('public.{relation}')" in contract
+    assert "022.inclusion_immutable" in contract
+
+    # 023 predicates are the fail-closed read boundary; merely creating the
+    # member and inclusion tables is not sufficient for an ACL-capable release.
+    assert "to_regprocedure('public.project_actor_can_read(uuid,text)')" in contract
+    assert "to_regprocedure('public.project_video_can_read(uuid,text,uuid)')" in contract
+    assert "023.actor_body" in contract and "023.video_body" in contract
+    assert "sha256(convert_to(prosrc,'UTF8'))" in contract
+
+    # 024 must retain the reviewed keyset cursor index before the matrix API is
+    # exposed to a test server.
+    assert "to_regclass('public.idx_project_account_relation_verified_cursor')" in contract
+
+    # Ownership and grants are catalog checks, independent from merely finding
+    # the relations. The implementation may use names or resolved OIDs.
+    assert "project.table_owners" in contract
+    assert "tableowner=current_user" in contract
+    assert "project.read_grants" in contract
+    assert "has_table_privilege(current_user" in contract
+    assert "project.owner_only_grants" in contract
+    assert "grant_row.grantee<>relation_row.relowner" in contract
+
+    # Keep the contract an all-or-nothing gate: a missing item must reach the
+    # explicit non-zero verification failure rather than only being logged.
+    assert '[[ -z "$failed" ]]' in contract
+    assert "project migration contract verification failed" in contract
+    assert "exit 1" in contract
+    assert "verify_project_contract" in source[source.index("cmd_migrate() {"):]
+    assert "cmd_verify()" in source and "verify_project_contract" in source[source.index("cmd_verify()"):]
 
 
 def test_release_script_is_executable() -> None:
