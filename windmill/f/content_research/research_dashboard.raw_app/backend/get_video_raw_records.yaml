@@ -15,6 +15,9 @@ schema:
     video_id:
       type: string
       format: uuid
+    project_id:
+      type: string
+      format: uuid
   required:
     - db
     - video_id
