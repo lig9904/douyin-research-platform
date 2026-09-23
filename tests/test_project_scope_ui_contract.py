@@ -23,7 +23,7 @@ def test_project_roster_is_required_before_loading_global_home() -> None:
     assert "if (noScope || projectViewBlocked)" in app
     assert "key={scope.mode === 'project' ? scope.projectId : 'legacy-admin'}" in app
     assert "legacyAdmin ? [{ value: 'legacy-admin'" in shell
-    assert "new Set<ResearchView>(['videos', 'briefs'])" in shell
+    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts'])" in shell
 
 
 def test_project_video_calls_carry_scope_and_hide_unscoped_review_paths() -> None:
@@ -48,3 +48,19 @@ def test_project_briefs_only_offer_metadata_and_carry_scope_on_mutation() -> Non
     assert ".filter(([value]) => !projectId || value === 'metadata')" in briefs
     assert "const version = ++requestVersion.current" in briefs
     assert "if (version === requestVersion.current)" in briefs
+
+
+def test_project_account_matrix_uses_project_route_and_public_fields_only() -> None:
+    app = _source("App.tsx")
+    matrix = _source("ProjectAccountMatrix.tsx")
+    assert "<ProjectAccountMatrix key={scope.projectId} scope={scope}" in app
+    assert "backend.get_project_accounts({ project_id: scope.projectId, limit: 100 })" in matrix
+    assert "project_id: scope.projectId" in matrix
+    assert "after_relation_id: data.next_cursor" in matrix
+    assert "included_public_video_count" in matrix
+    assert "last_included_at" in matrix
+    assert "follower_captured_at" in matrix
+    assert "requestEpoch.current !== epoch" in matrix
+    assert "backend.get_accounts" not in matrix
+    assert "credential_ref" not in matrix
+    assert "evidence_ref" not in matrix
