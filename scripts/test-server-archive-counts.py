@@ -7,6 +7,12 @@ import sys
 TARGETS = {
     'research': ('source_video', 'collection', 'collection_item'),
     'research_brief': ('research_brief', 'research_brief_run'),
+    'project': (
+        'research_organization', 'research_project', 'research_project_member',
+        'research_subject', 'project_account_relation', 'account_group',
+        'account_group_member', 'account_identity_link', 'account_authorization',
+        'project_video_inclusion',
+    ),
     'windmill': ('workspace', 'usr'),
 }
 

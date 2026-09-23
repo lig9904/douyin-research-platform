@@ -262,7 +262,8 @@ HTTPS 路径验收。
    ```
 
    迁移由研究数据库专用账号在单事务执行；已记录 migration 必须是仓库文件名/SHA-256 的连续合法前缀，完成后必须与仓库完整集合一致。任何历史 migration 改写、缺失中间版本、未知记录或数据前置约束失败都会在继续前关闭。
-3. 按已审阅 commit 通过 Windmill CLI 同步 scripts、flows、App 和 lock；先比较同步计划，拒绝意外删除或未审阅覆盖。同步后由管理员生成**只含** `path` 与 `is_secret` 的 `0600` 变量元数据文件，再运行只读对象预检；不得使用可能返回变量值的 CLI 列表：
+   对 021–024 项目迁移，`migrate` 和 `verify` 还必须通过独立 `verify_project_contract`：组织/项目/成员/关系及授权元数据表、项目归属字段和不可变触发器、项目读取 ACL 函数及其审阅源码指纹、024 游标索引、owner 与无 PUBLIC 授权缺一即失败。研究台数据库资源须另行核对确实使用受控研究库角色，不能以 owner 自检替代资源身份核验。部署前的旧归档恢复演练允许 `project_contract=legacy_absent`；迁移后的归档必须得到 `project_contract=present` 并核对全部十张新增项目表的归档与恢复行数。两者不能互相替代，任何一项失败都不得推送新版研究台。
+3. 按已审阅 commit 通过 Windmill CLI 只发布本次验收清单中的对象；研究台必须精确发布 `f/content_research/research_dashboard` Raw App，项目任务涉及的独立脚本/Flow 须逐项列名并复核后才可同步。不执行全工作区 sync/push，也不覆盖无关对象。先比较变更计划，拒绝意外删除或未审阅覆盖。发布前由管理员生成**只含** `path` 与 `is_secret` 的 `0600` 变量元数据文件，再运行只读对象预检；不得使用可能返回变量值的 CLI 列表：
 
    ```bash
    scripts/test-server-windmill-preflight.sh \
@@ -281,7 +282,7 @@ HTTPS 路径验收。
    元数据文件契约仅允许 `{"variables":[{"path":"...","is_secret":true|false}]}`；脚本只调用 `wmill app|script|resource list --json`，不会读取值、get、sync 或 push。
 4. 在浏览器确认 App 可加载，后端 runnable 可完成无 Provider 的读取/预览路径。
 
-输出与验收：迁移记录、备份校验、Windmill sync 结果、App 版本和基础读路径成功。业务库与 Windmill 内部库不可混用；失败时不继续导入 Provider Secret。
+输出与验收：迁移记录、备份校验、目标对象发布记录、App 版本和基础读路径成功。业务库与 Windmill 内部库不可混用；失败时不继续导入 Provider Secret。
 
 回滚：停止后续 sync/任务，使用同一部署前备份只恢复到测试库或精确指定的恢复库；确认行数、关键约束、owner 和应用读路径，再决定是否切回。不得把测试恢复文件覆盖生产数据库。
 
@@ -296,6 +297,7 @@ HTTPS 路径验收。
 3. 对每个账号分别新登录浏览器，检查 Folder、App、Secrets/Resources、脚本运行入口与 Job 历史的可见性。
 4. 在 reviewer/admin 身份验证 L3 审核候选、`WM_END_USER_EMAIL` 缺失失败关闭、非 allowlist 无法写审批，以及正文不进入 Job 输入、输出和日志。
 5. 在允许写入的研究身份验证监测、专题、收藏与保存筛选：监测为团队共享且记录 actor；专题、收藏、筛选按 actor 隔离。Viewer 必须没有写后端 runnable 的执行权限。
+6. 多项目版另用 A 成员、B 成员和未加入者三个真实浏览器身份验收：同一 canonical 账号在 A/B 仅显示各自已核验关系、本项目视频数和允许的公开指标；未加入者直调项目接口被拒绝。撤权后刷新、切项目、浏览器前进/后退与“继续加载”均不得重现旧行；项目模式的全局媒体/ASR/L3、监测、搜索和成本入口继续隐藏或由服务端拒绝。没有这组现场证据，不对普通项目成员开放多项目能力。
 
 输出与验收：每个测试账号的预期允许/拒绝矩阵、一次脱敏操作审计样本和浏览器刷新后的持久化结果。Folder ACL 是服务端边界，应用 allowlist 只是第二道防线；两者任何一个失败都不得进入付费 Provider 门。
 
