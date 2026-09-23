@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Modal, Pagination, Select, Spin, Table, Tag } from 'antd'
 import { backend } from '../../backend'
+import { taskCostSummaryText, taskCostText } from '../operationsCostDisplay'
 import PlatformIcon from './PlatformIcon'
 
 type Platform = { key: string; name: string; enabled: boolean }
@@ -14,8 +15,8 @@ type Operations = {
   }
   api_calls: { id: string; provider: string; platform: string; endpoint_key: string; status: string; http_status?: number | null; cached: boolean; estimated_cost?: number | null; actual_cost?: number | null; cost_currency: string; cost_basis: string; price_source?: string | null; pricing_version?: string | null; http_attempt_count?: number | null; unknown_attempt_count?: number | null; cost_status: 'estimated' | 'reconciled' | 'known_zero' | 'unknown'; billing_status: 'estimated' | 'unknown' | 'known_zero'; started_at: string }[]
   run_summary: { total_runs?: number; running_runs?: number; failed_runs?: number }
-  task_costs: { currency: string; basis: string; task_count: number; completed_count: number; failed_count: number; known_total: number }[]
-  tasks: { id: string; task_type: string; task_version: string; status: string; cost_basis: string; total_cost?: number | null; cost_currency: string; created_at: string; platform?: string | null }[]
+  task_costs: { currency: string; basis: string; task_count: number; completed_count: number; failed_count: number; unknown_amount_count: number; known_total: number }[]
+  tasks: { id: string; task_type: string; task_version: string; status: string; cost_basis: string; api_cost?: number | null; asr_cost?: number | null; llm_cost?: number | null; total_cost?: number | null; cost_currency: string; created_at: string; platform?: string | null }[]
   runs: { id: string; run_type: string; run_version?: string | null; status: string; platform?: string | null; started_at: string; api_cost?: number | null; asr_cost?: number | null; llm_cost?: number | null; cost_currency?: string | null }[]
 }
 
@@ -159,7 +160,7 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
         <p className="operations-supplier-note">仅用于定位请求和预估，不代表供应商实际扣费；实际费用以上方供应商每日费用为准。</p>
         <div className="operations-cost-grid">
           <div><h3>API 费用事实</h3>{data?.api_costs.length ? data.api_costs.map((cost) => <p key={cost.currency}>{cost.currency} · 报价估算 <b>{value(cost.estimated_cost)}</b> · 已对账 <b>{value(cost.reconciled_cost)}</b><br /><small>来源未核验 {cost.unknown_cost_calls} 条 · 已知免费/缓存 {cost.known_zero_calls} 条</small></p>) : <p>暂无</p>}</div>
-          <div><h3>研究任务费用</h3>{data?.task_costs.map((cost) => <p key={`${cost.currency}-${cost.basis}`}>{cost.currency} · {cost.basis}：<b>{value(cost.known_total)}</b>（{cost.task_count} 项）</p>) || <p>暂无</p>}</div>
+          <div><h3>研究任务费用</h3>{data?.task_costs.map((cost) => <p key={`${cost.currency}-${cost.basis}`}>{cost.currency} · {cost.basis}：<b>{taskCostSummaryText(cost)}</b>（{cost.task_count} 项）</p>) || <p>暂无</p>}</div>
         </div>
       </section>
       <section className="card operations-section"><h2>API 调用记录</h2>
@@ -177,7 +178,7 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
         <Table size="small" rowKey="id" pagination={false} dataSource={data?.tasks || []} columns={[
           { title: '时间', dataIndex: 'created_at', render: time }, { title: '类型', dataIndex: 'task_type' },
           { title: '状态', dataIndex: 'status', render: (status) => <Tag color={status === 'completed' ? 'green' : status === 'failed' ? 'red' : 'default'}>{status}</Tag> },
-          { title: '费用', render: (_, row) => `${value(row.total_cost)} ${row.cost_currency}` }, { title: '口径', dataIndex: 'cost_basis' },
+          { title: '费用', render: (_, row) => taskCostText(row) }, { title: '口径', dataIndex: 'cost_basis' },
         ]} />
         {(data?.task_total || 0) > (data?.page_size || 20) && <Pagination current={data?.page || 1} pageSize={data?.page_size || 20} total={data?.task_total || 0} showSizeChanger={false} onChange={(page) => load(page)} />}
       </section>

@@ -265,10 +265,13 @@ def main(
               count(*)::int as task_count,
               count(*) filter (where c.status='completed')::int as completed_count,
               count(*) filter (where c.status='failed')::int as failed_count,
+              count(*) filter (where c.total_cost is null or c.cost_basis='unknown')::int as unknown_amount_count,
               coalesce(sum(c.api_cost), 0)::numeric as api_cost,
               coalesce(sum(c.asr_cost), 0)::numeric as asr_cost,
               coalesce(sum(c.llm_cost), 0)::numeric as llm_cost,
-              coalesce(sum(c.total_cost), 0)::numeric as known_total
+              coalesce(sum(
+                coalesce(c.api_cost, 0) + coalesce(c.asr_cost, 0) + coalesce(c.llm_cost, 0)
+              ) filter (where c.cost_basis <> 'unknown'), 0)::numeric as known_total
             from research_task_cost c
             left join source_video v on v.id=c.video_id
             left join pipeline_run r on r.id=c.pipeline_run_id
