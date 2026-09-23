@@ -98,7 +98,8 @@ Canonical ID 始终使用：
 - 本机真实数据黄金链路：已提供默认 dry-run、最多 5 条 / 2 次未缓存调用 / 零重试的 TikHub → 规范化 → PostgreSQL → L0/L1 入口；详情见 `docs/LOCAL_REAL_DATA_GOLDEN_V1.md`
 - Web 研究台：已在本机 Windmill CE 部署，已验收首页、视频库、账号库、热点库、全局搜索、运行/成本只读页、可解释账号相似度，以及 L3 待审摘要→一次性正文页→审核保存→零调用预算预览全链路
 - 研究任务控制中心：已在测试服务器运行用户自定义低粉榜、关键词或指定账号范围，支持单次/6/12/24 小时频率和元数据/评论/媒体/待审核材料深度；任务按登录身份隔离，激活仅授权有账本的 TikHub 采集，ASR/L3 不自动提交。迁移 020 已执行，新 dispatcher 已启用、旧固定发现计划已停用；现场运行和下一次计划见 `docs/RESEARCH_BRIEF_CONTROL_CENTER_V1.md`
+- 多项目/多类型账号基础：迁移 021、项目成员与账号关系/授权规则、按登录用户过滤的只读项目名册已在代码中实现并经隔离 PostgreSQL 测试；尚未部署或接入研究台页面。旧任务、视频、原始证据、媒体、L3 和成本仍非项目隔离，不可把此基础层当成多租户已上线；见 `docs/GENERIC_PROJECT_ACCOUNT_MODEL_V1.md` 与 Issue #143
 - 研究台内部写操作：团队共享监测使用 actor 审计；专题、视频收藏和保存筛选按登录身份隔离；全部使用幂等事务与零外呼边界
 - 本机 V1 全链路验收：真实 TikHub、Ark、ASR、浏览器写操作、HTTPS/ACL/备份恢复的脱敏结果见 `docs/LOCAL_V1_ACCEPTANCE_2026-09-20.md`；不等同于测试服务器或生产生效
 - 测试服务器部署与验收：五服务部署、真实供应商小流量、内容充分 ASR→L3、恢复/回滚、MCP Gateway 和研究任务调度已有现场证据；研究台应用服务器不运行 Nginx/TLS，由专用反代机器终止 HTTPS。最新验收边界见 `docs/SERVER_ACCEPTANCE_2026-09-21.md`；真实三账号 ACL、异机备份、外部告警等未完成项不得由单机测试替代
-- 只读 MCP：stdio 本机入口为五项，Windmill HTTPS Gateway 为十项。测试服务器已使用独立 PostgreSQL reader role、固定只读 Resource、workspace-bound 十路径 token 和 Codex OAuth 完成十工具真实调用；未知工具、超限参数、跨目录付费脚本、Resource、Secret、无 Bearer 与 URL token 均失败关闭。Codex 项目配置隐藏内置 `runScriptByPath`，两条路径都不触发 Provider/LLM/付费调用；真实多账号成员 ACL 仍与 MCP 服务身份分开验收
+- 只读 MCP：stdio 本机入口为五项，Windmill HTTPS Gateway 为十项。测试服务器使用独立 PostgreSQL reader role、固定只读 Resource、workspace-bound 十路径 token 和 Codex OAuth；2026-09-22 的十工具调用是历史烟测。安全复核后，私人任务工具 `get_research_briefs` 已在测试服务器固定拒绝无最终用户身份的调用；其余公开研究读路径仍需真实多项目 ACL 验收。未知工具、超限参数、跨目录付费脚本、Resource、Secret、无 Bearer 与 URL token 均失败关闭。Codex 项目配置隐藏内置 `runScriptByPath`，两条路径都不触发 Provider/LLM/付费调用
