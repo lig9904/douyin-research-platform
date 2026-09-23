@@ -16,11 +16,15 @@ Community Edition 可使用 Windmill 开源 MCP server 路由；官方价格页�
 token 无法可靠映射到任务所有者。本地与 Gateway 实现现已改为固定返回
 `MCP_IDENTITY_SCOPE_UNAVAILABLE`、不查询数据库；待服务端具备可验证的
 actor/project 授权后才能恢复。以下 2026-09-22 调用记录是当时的历史烟测，
-不能用作当前跨用户隔离验收；脚本代码更新到测试服务器前，远端旧版本仍有风险。
+不能用作当前跨用户隔离验收。2026-09-23 已在测试服务器通过浏览器中的
+Windmill 编辑器单独发布入口脚本；运行 `01a0cd13-9861-8b4c-2345-53a83ba7b4fb`
+返回固定拒绝码、无任务数据。此次只发布了入口脚本，helper 的仓库修复尚未同步
+到远端；安全边界不依赖 helper，而由入口直接拒绝。历史版本仍留在 Windmill
+脚本历史中，后续任何全量同步或回滚都必须复验当前入口版本。
 
 - 已完成：本机 stdio MCP 五项只读查询；Windmill Gateway 十项只读研究工具；参数上限、只读事务、跨目录拒绝；测试服务器独立 reader role、固定 Resource、十个精确 path scope、`mcp_disable_token_query_param`、HTTPS、Codex OAuth、十工具调用和越权失败烟测。
 - 客户端证据：Codex CLI 使用 OAuth 安全凭据完成一次真实 `get_research_briefs(limit=1)` 调用并返回 `MCP_CODEX_SMOKE_OK`；项目配置隐藏内置 `runScriptByPath`。
-- 发布判断：公开研究数据的只读查询可继续评估；私有任务工具在身份授权闭环和远端更新完成前不得视为可用。token 轮换、工具清单或数据库授权变化后必须复验。
+- 发布判断：公开研究数据的只读查询可继续评估；私有任务工具在身份授权闭环前不得视为可用。token 轮换、工具清单或数据库授权变化后必须复验。
 - 查询边界：只查询已经进入研究库的规范化数据，不是抖音全站或互联网实时搜索；可返回公开标题和账号昵称，不返回原评论、完整转写、描述、URL、Provider 原始载荷或凭据，不开放付费 L3 执行。研究台保留按视频 ID 查看原始记录的页面下钻。
 
 ## 认证
