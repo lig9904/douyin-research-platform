@@ -63,7 +63,7 @@ def test_project_video_evidence_requires_manager_and_exact_acceptance(monkeypatc
                 "insert into research_organization(slug,name) values('evidence-org','证据组织') returning id"
             ).fetchone()[0]
             a, b = [conn.execute(
-                "insert into research_project(organization_id,slug,name) values(%s,%s,%s) returning id",
+                "insert into research_project(organization_id,slug,name,status) values(%s,%s,%s,'active') returning id",
                 (org, slug, name),
             ).fetchone()[0] for slug, name in (("evidence-a", "项目 A"), ("evidence-b", "项目 B"))]
             conn.execute(
