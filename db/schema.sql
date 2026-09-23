@@ -1397,7 +1397,7 @@ comment on table account_authorization is
 alter table research_brief
   add column if not exists project_id uuid references research_project(id) on delete restrict;
 drop index if exists uq_research_brief_owner_name;
-create unique index if not exists uq_research_brief_legacy_owner_name
+create unique index if not exists uq_research_brief_owner_name
   on research_brief(owner_actor, lower(name))
   where status <> 'archived' and project_id is null;
 create unique index if not exists uq_research_brief_project_name

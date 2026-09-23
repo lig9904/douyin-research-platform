@@ -33,7 +33,7 @@ def test_project_task_ownership_is_present_without_canonical_backfill() -> None:
         assert "references research_brief_run(id, project_id)" in source
         assert "is distinct from new.project_id" in source
         assert "trg_research_brief_run_project_scope" in source
-        assert "uq_research_brief_legacy_owner_name" in source
+        assert "uq_research_brief_owner_name" in source
         assert "uq_research_brief_project_name" in source
         assert "enforce_project_id_immutable" in source
         assert "update source_video" not in source.lower()

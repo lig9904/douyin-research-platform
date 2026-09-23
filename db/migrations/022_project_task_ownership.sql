@@ -7,7 +7,7 @@ alter table research_brief
 -- The prior owner/name index was global.  Keep that exact rule for legacy
 -- rows, but make project-owned task names project-local.
 drop index if exists uq_research_brief_owner_name;
-create unique index if not exists uq_research_brief_legacy_owner_name
+create unique index if not exists uq_research_brief_owner_name
   on research_brief(owner_actor, lower(name))
   where status <> 'archived' and project_id is null;
 create unique index if not exists uq_research_brief_project_name
