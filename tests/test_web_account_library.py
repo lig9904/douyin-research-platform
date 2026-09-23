@@ -4,6 +4,7 @@ import importlib.util
 import os
 from pathlib import Path
 import sys
+import types
 from urllib.parse import urlparse
 
 import psycopg
@@ -12,6 +13,14 @@ import pytest
 
 DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
+
+
+@pytest.fixture(autouse=True)
+def legacy_admin_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WM_END_USER_EMAIL", "fixture@example.com")
+    wmill = types.ModuleType("wmill")
+    wmill.get_variable = lambda _path: "fixture@example.com"  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "wmill", wmill)
 
 
 def load_backend():

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Button,
@@ -20,6 +20,7 @@ import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTran
 import MetricTimeline from './src/components/MetricTimeline'
 import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
+import type { ProjectScope } from './src/projectScope'
 import {
   getResearchUserState,
   mutateResearchState,
@@ -43,8 +44,8 @@ type VideoItem = {
   source_url?: string | null
   published_at?: string | null
   duration_ms?: number | null
-  research_level: number
-  monitoring_status: string
+  research_level: number | null
+  monitoring_status: string | null
   account_id?: string | null
   account_name?: string | null
   play_count?: number | null
@@ -56,11 +57,11 @@ type VideoItem = {
   metric_captured_at?: string | null
   metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'other' | null
   metric_provenance?: Record<string, { source_kind: string; captured_at: string }>
-  priority: number
+  priority: number | null
   follower_efficiency?: number | null
   sources: string[]
   source_count: number
-  collection_count: number
+  collection_count: number | null
   evidence?: {
     source_type: string
     source_key?: string | null
@@ -242,11 +243,15 @@ const initialFilters: Filters = {
 
 export default function VideoLibrary({
   onNavigate,
+  scope,
   initialSelectedVideoId = '',
 }: {
   onNavigate: (view: ResearchView) => void
+  scope: ProjectScope
   initialSelectedVideoId?: string
 }) {
+  const isProject = scope.mode === 'project'
+  const projectId = isProject ? scope.projectId : undefined
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [draft, setDraft] = useState<Filters>(initialFilters)
   const [data, setData] = useState<VideoLibraryData | null>(null)
@@ -263,15 +268,20 @@ export default function VideoLibrary({
   const [collectionTargetIds, setCollectionTargetIds] = useState<string[]>([])
   const [filterModalOpen, setFilterModalOpen] = useState(false)
   const [filterName, setFilterName] = useState('')
+  const requestVersion = useRef(0)
 
   const load = async (next: Filters, selected = selectedVideoId) => {
+    const version = ++requestVersion.current
     setLoading(true)
     setError('')
+    setData(null)
     try {
       const result = (await backend.get_video_library({
         ...next,
         selected_video_id: selected,
+        ...(projectId ? { project_id: projectId } : {}),
       })) as VideoLibraryData
+      if (version !== requestVersion.current) return
       setData(result)
       if (!selected && result.items.length) {
         setSelectedVideoId(result.items[0].id)
@@ -280,15 +290,23 @@ export default function VideoLibrary({
         setSelectedVideoId(String(result.detail.id || selected))
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (version === requestVersion.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (version === requestVersion.current) setLoading(false)
     }
   }
 
   useEffect(() => {
-    load(filters, selectedVideoId)
-  }, [filters])
+    void load(filters, selectedVideoId)
+    return () => { requestVersion.current += 1 }
+  }, [filters, projectId])
+
+  useEffect(() => {
+    setSelectedVideoId('')
+    setSelectedRows(new Set())
+    setData(null)
+    setError('')
+  }, [projectId])
 
   const loadUserState = async () => {
     try {
@@ -299,8 +317,9 @@ export default function VideoLibrary({
   }
 
   useEffect(() => {
-    loadUserState()
-  }, [])
+    if (!isProject) void loadUserState()
+    else setUserState(null)
+  }, [isProject])
 
   const platforms = [
     { key: 'all', name: '全部平台', enabled: true, provider_status: 'aggregate' },
@@ -419,7 +438,7 @@ export default function VideoLibrary({
       activeView="videos"
       onNavigate={onNavigate}
       title="视频库"
-      subtitle="多平台视频资产 / 黑马候选 / 研究流转"
+      subtitle={isProject ? `项目范围：${scope.projectName} · 仅显示已明确纳入本项目的视频与安全依据` : '多平台视频资产 / 黑马候选 / 研究流转'}
       mainClassName="video-library-main"
       headerClassName="video-library-topbar"
       actions={
@@ -441,7 +460,7 @@ export default function VideoLibrary({
               { value: 90, label: '近90天' },
             ]}
           />
-          {!!userState?.saved_filters.length && (
+          {!isProject && !!userState?.saved_filters.length && (
             <Select
               placeholder="已保存筛选"
               onChange={applySavedFilter}
@@ -451,17 +470,17 @@ export default function VideoLibrary({
               }))}
             />
           )}
-          <Button type="primary" ghost onClick={() => setFilterModalOpen(true)}>
-            保存筛选
-          </Button>
-          <Button type="primary" disabled>导出结果</Button>
+          {!isProject && <Button type="primary" ghost onClick={() => setFilterModalOpen(true)}>
+              保存筛选
+            </Button>}
+          {!isProject && <Button type="primary" disabled>导出结果</Button>}
         </>
       }
     >
-          {writeNotice && (
+          {!isProject && writeNotice && (
             <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
           )}
-          {writeError && (
+          {!isProject && writeError && (
             <Alert type="error" showIcon message="写操作失败" description={writeError} closable onClose={() => setWriteError('')} />
           )}
           <section className="platform-strip card">
@@ -487,7 +506,7 @@ export default function VideoLibrary({
 
           <section className="video-filter-card card">
             <div className="video-filter-grid">
-              <label>
+              {!isProject && <label>
                 <span>时间范围</span>
                 <Select
                   value={draft.days}
@@ -498,8 +517,8 @@ export default function VideoLibrary({
                     { value: 90, label: '近90天' },
                   ]}
                 />
-              </label>
-              <label>
+              </label>}
+              {!isProject && <label>
                 <span>研究层级</span>
                 <Select
                   value={draft.research_level}
@@ -512,8 +531,8 @@ export default function VideoLibrary({
                     { value: 3, label: 'L3' },
                   ]}
                 />
-              </label>
-              <label>
+              </label>}
+              {!isProject && <label>
                 <span>来源类型</span>
                 <Select
                   value={draft.source_type}
@@ -526,8 +545,8 @@ export default function VideoLibrary({
                     })),
                   ]}
                 />
-              </label>
-              <label>
+              </label>}
+              {!isProject && <label>
                 <span>优先级分</span>
                 <Select
                   value={draft.priority_min}
@@ -539,8 +558,8 @@ export default function VideoLibrary({
                     { value: 40, label: '40分以上' },
                   ]}
                 />
-              </label>
-              <label>
+              </label>}
+              {!isProject && <label>
                 <span>状态</span>
                 <Select
                   value={draft.status}
@@ -553,7 +572,7 @@ export default function VideoLibrary({
                     { value: 'stopped', label: '已停止' },
                   ]}
                 />
-              </label>
+              </label>}
 
               <label>
                 <span>播放量</span>
@@ -587,7 +606,7 @@ export default function VideoLibrary({
                   />
                 </div>
               </label>
-              <label>
+              {!isProject && <label>
                 <span>是否已收藏</span>
                 <Select
                   value={draft.collected}
@@ -598,7 +617,7 @@ export default function VideoLibrary({
                     { value: 'no', label: '未加入专题' },
                   ]}
                 />
-              </label>
+              </label>}
               <label className="keyword-filter">
                 <span>关键词搜索</span>
                 <Input
@@ -640,7 +659,11 @@ export default function VideoLibrary({
                       setFilters(next)
                       setDraft({ ...draft, sort, page: 1 })
                     }}
-                    options={[
+                    options={isProject ? [
+                      { value: 'published_desc', label: '按发布时间排序' },
+                      { value: 'likes_desc', label: '按点赞排序' },
+                      { value: 'plays_desc', label: '按播放量排序' },
+                    ] : [
                       { value: 'published_desc', label: '按发布时间排序' },
                       { value: 'priority_desc', label: '按优先级排序' },
                       { value: 'likes_desc', label: '按点赞排序' },
@@ -653,7 +676,7 @@ export default function VideoLibrary({
                   <table className="video-list-table">
                     <thead>
                       <tr>
-                        <th className="check-col" />
+                        {!isProject && <th className="check-col" />}
                         <th>#</th>
                         <th className="video-info-col">视频信息</th>
                         <th>账号名称</th>
@@ -666,9 +689,9 @@ export default function VideoLibrary({
                         <th>分享</th>
                         <th>粉丝数</th>
                         <th>互动效率（合并估算）</th>
-                        <th>优先级</th>
-                        <th>研究层级</th>
-                        <th>状态</th>
+                        {!isProject && <th>优先级</th>}
+                        {!isProject && <th>研究层级</th>}
+                        {!isProject && <th>状态</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -678,12 +701,12 @@ export default function VideoLibrary({
                           className={selectedVideoId === item.id ? 'selected-detail-row' : ''}
                           onClick={() => selectDetail(item.id)}
                         >
-                          <td onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              checked={selectedRows.has(item.id)}
-                              onChange={(e) => toggleRow(item.id, e.target.checked)}
-                            />
-                          </td>
+                          {!isProject && <td onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={selectedRows.has(item.id)}
+                                onChange={(e) => toggleRow(item.id, e.target.checked)}
+                              />
+                            </td>}
                           <td>{(filters.page - 1) * filters.page_size + idx + 1}</td>
                           <td>
                             <div className="video-list-title">
@@ -728,24 +751,24 @@ export default function VideoLibrary({
                               ? '—'
                               : `${Number(item.follower_efficiency).toFixed(1)}%`}
                           </td>
-                          <td>
+                          {!isProject && <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
                               {priorityText(Number(item.priority || 0))}
                             </span>
-                          </td>
-                          <td><Tag color="blue">L{item.research_level}</Tag></td>
-                          <td><Tag color={statusColor(item.monitoring_status)}>{statusName(item.monitoring_status)}</Tag></td>
+                          </td>}
+                          {!isProject && <td><Tag color="blue">L{item.research_level}</Tag></td>}
+                          {!isProject && <td><Tag color={statusColor(item.monitoring_status)}>{statusName(item.monitoring_status)}</Tag></td>}
                         </tr>
                       ))}
                       {!data?.items?.length && (
-                        <tr><td colSpan={16} className="empty-row">当前筛选下暂无视频</td></tr>
+                        <tr><td colSpan={isProject ? 13 : 16} className="empty-row">当前筛选下暂无视频</td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
 
                 <div className="video-list-footer">
-                  <div className="bulk-actions">
+                  {!isProject && <div className="bulk-actions">
                     <span>已选择 {selectedRows.size} 项</span>
                     <Button
                       type="primary"
@@ -760,7 +783,7 @@ export default function VideoLibrary({
                     <Button onClick={() => setSelectedRows(new Set())} disabled={!selectedRows.size}>
                       取消选择
                     </Button>
-                  </div>
+                  </div>}
                   <Pagination
                     current={filters.page}
                     pageSize={filters.page_size}
@@ -786,7 +809,7 @@ export default function VideoLibrary({
                       <h2>▣ 视频详情</h2>
                     </div>
 
-                    <VideoMediaPreview key={`video-${detail.id}`} videoId={detail.id} />
+                    {!isProject && <VideoMediaPreview key={`video-${detail.id}`} videoId={detail.id} />}
 
                     <h3 className="detail-title">{detail.title}</h3>
 
@@ -798,7 +821,7 @@ export default function VideoLibrary({
                           <small>{formatCount(detail.author_follower_count)} 粉丝</small>
                         </div>
                       </div>
-                      <Button
+                      {!isProject && <Button
                         type="primary"
                         loading={writeBusy}
                         onClick={() => runWrite(
@@ -813,7 +836,7 @@ export default function VideoLibrary({
                         )}
                       >
                         加入监测
-                      </Button>
+                      </Button>}
                     </div>
 
                     <div className="detail-meta">
@@ -848,8 +871,10 @@ export default function VideoLibrary({
                               : `${Number(detail.follower_efficiency).toFixed(1)}%`,
                             '互动效率（合并估算）',
                           ],
-                          [priorityText(Number(detail.priority || 0)), '优先级'],
-                          [`L${detail.research_level}`, '研究层级'],
+                          ...(!isProject ? [
+                            [priorityText(Number(detail.priority || 0)), '优先级'],
+                            [`L${detail.research_level}`, '研究层级'],
+                          ] : []),
                         ].map(([value, label]) => (
                           <div key={label}>
                             <strong>{value}</strong>
@@ -868,12 +893,12 @@ export default function VideoLibrary({
                           ：{evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '详情' : '其他'} · {formatFullDate(evidence.captured_at)}
                         </p>
                       ))}
-                      <MetricTimeline videoId={detail.id} />
+                      <MetricTimeline videoId={detail.id} projectId={projectId} />
                     </details>
 
-                    <RawRecordPanel videoId={detail.id} />
+                    <RawRecordPanel videoId={detail.id} projectId={projectId} />
 
-                    <section className="detail-section l3-analysis-section">
+                    {!isProject && <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">
                         <h4>L3 精研结果</h4>
                         <span>{detail.l3_analysis ? `完成于 ${formatFullDate(detail.l3_analysis.created_at)}` : '尚无已完成结果'}</span>
@@ -920,16 +945,16 @@ export default function VideoLibrary({
                           </p>
                         </div>
                       )}
-                    </section>
+                    </section>}
 
-                    <L3ReviewPanel
+                    {!isProject && <L3ReviewPanel
                       key={detail.id}
                       videoId={detail.id}
-                      researchLevel={detail.research_level}
-                    />
+                      researchLevel={detail.research_level ?? 0}
+                    />}
 
-                    <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />
-                    <ASRTranscriptPanel transcript={detail.asr_transcript} />
+                    {!isProject && <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />}
+                    {!isProject && <ASRTranscriptPanel transcript={detail.asr_transcript} />}
 
                     <section className="detail-section">
                       <div className="detail-section-head">
@@ -976,7 +1001,7 @@ export default function VideoLibrary({
                       </a>
                     )}
 
-                    <div className="detail-actions">
+                    {!isProject && <div className="detail-actions">
                       <Button type="primary" loading={writeBusy} onClick={() => openCollection([detail.id])}>
                         加入专题
                       </Button>
@@ -996,7 +1021,7 @@ export default function VideoLibrary({
                       >
                         收藏
                       </Button>
-                    </div>
+                    </div>}
                   </>
                 )}
               </aside>
@@ -1004,9 +1029,11 @@ export default function VideoLibrary({
           </Spin>
 
           <div className="video-library-page-note">
-            第 {filters.page} / {totalPages} 页 · 收藏、专题、监测与筛选均记录实际登录用户
+            第 {filters.page} / {totalPages} 页 · {isProject
+              ? '项目视图只显示已纳入项目的公开视频事实及安全依据，不展示全局研究状态或模型审核内容'
+              : '收藏、专题、监测与筛选均记录实际登录用户'}
           </div>
-          <Modal
+          {!isProject && <Modal
             title="加入专题"
             open={collectionModalOpen}
             confirmLoading={writeBusy}
@@ -1032,8 +1059,8 @@ export default function VideoLibrary({
                 onChange={setCollectionName}
               />
             )}
-          </Modal>
-          <Modal
+          </Modal>}
+          {!isProject && <Modal
             title="保存当前筛选"
             open={filterModalOpen}
             confirmLoading={writeBusy}
@@ -1050,7 +1077,7 @@ export default function VideoLibrary({
               placeholder="例如：近30天高优先级视频"
               onChange={(event) => setFilterName(event.target.value)}
             />
-          </Modal>
+          </Modal>}
     </AppShell>
   )
 }

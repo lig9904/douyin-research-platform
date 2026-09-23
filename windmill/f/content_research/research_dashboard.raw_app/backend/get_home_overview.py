@@ -1,6 +1,9 @@
 # py: ==3.14.*
 from __future__ import annotations
 
+import json
+import os
+import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, TypedDict
@@ -17,6 +20,38 @@ class postgresql(TypedDict):
     password: str
     dbname: str
     sslmode: str
+
+
+_ACTOR_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
+_LEGACY_ADMIN_ALLOWLIST_PATH = "f/content_research/research_action_writers"
+_LEGACY_ACCESS_DENIED = "LEGACY_ADMIN_ACCESS_REQUIRED"
+
+
+def _require_legacy_admin() -> str:
+    """Gate the former global dashboard before opening a database connection.
+
+    The caller cannot supply either the identity or allowlist.  This legacy
+    overview crosses project boundaries, so a missing Windmill identity or
+    variable fails closed with the same response as a non-administrator.
+    """
+    actor = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
+    if not _ACTOR_RE.fullmatch(actor) or len(actor) > 254:
+        raise PermissionError(_LEGACY_ACCESS_DENIED)
+    try:
+        import wmill
+
+        raw = wmill.get_variable(_LEGACY_ADMIN_ALLOWLIST_PATH)
+        values = json.loads(raw) if isinstance(raw, str) and raw.lstrip().startswith("[") else re.split(r"[,\n]", raw)
+    except Exception:
+        raise PermissionError(_LEGACY_ACCESS_DENIED) from None
+    if not isinstance(values, list) or not any(
+        isinstance(value, str)
+        and _ACTOR_RE.fullmatch(value.strip().lower())
+        and value.strip().lower() == actor
+        for value in values
+    ):
+        raise PermissionError(_LEGACY_ACCESS_DENIED)
+    return actor
 
 
 def _params(platform: str, hours: int) -> tuple[str, str, int]:
@@ -105,6 +140,7 @@ def _daily_supplier_spend(conn, days: int = 7) -> dict[str, Any]:
 
 
 def main(db: postgresql, platform: str = "douyin", hours: int = 24):
+    _require_legacy_admin()
     selected, selected2, hours = _params(platform, hours)
 
     connect_args = {

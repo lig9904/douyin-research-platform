@@ -1,12 +1,58 @@
 # py: ==3.14.*
 from __future__ import annotations
 
+import json
+import os
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, TypedDict
 
 import psycopg
 from psycopg.rows import dict_row
+
+
+_ACTOR_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
+_ACCESS_DENIED = "RESEARCH_LEGACY_CATALOG_ACCESS_DENIED"
+_LEGACY_ADMIN_ALLOWLIST_PATH = "f/content_research/research_action_writers"
+
+
+def _actor() -> str:
+    """Return the Windmill-authenticated actor, never a caller-supplied value."""
+    value = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
+    if not _ACTOR_RE.fullmatch(value) or len(value) > 254:
+        raise PermissionError(_ACCESS_DENIED)
+    return value
+
+
+def _legacy_admin_allowed(actor: str) -> bool:
+    """Fail closed unless the server-owned legacy-admin list contains actor."""
+    try:
+        import wmill
+
+        raw = wmill.get_variable(_LEGACY_ADMIN_ALLOWLIST_PATH)
+    except Exception:
+        return False
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        values = json.loads(raw) if raw.lstrip().startswith("[") else re.split(r"[,\n]", raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(values, list):
+        return False
+    return any(
+        isinstance(value, str)
+        and _ACTOR_RE.fullmatch(value.strip().lower())
+        and value.strip().lower() == actor
+        for value in values
+    )
+
+
+def _require_legacy_admin() -> None:
+    actor = _actor()
+    if not _legacy_admin_allowed(actor):
+        raise PermissionError(_ACCESS_DENIED)
 
 
 class postgresql(TypedDict):
@@ -67,6 +113,10 @@ def main(
     sort: str = "heat_desc",
     selected_signal_id: str = "",
 ):
+    # This endpoint is the old global hotspot catalogue.  Do not read any
+    # global records until server identity and server-owned legacy admin policy
+    # have both been verified.
+    _require_legacy_admin()
     platform = (platform or "all").strip()
     days = max(1, min(int(days or 7), 365))
     research_level = int(research_level)

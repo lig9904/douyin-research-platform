@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Button,
@@ -16,6 +16,7 @@ import {
 } from 'antd'
 import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
+import type { ProjectScope } from './src/projectScope'
 import './research-briefs.css'
 
 type BriefStatus = 'draft' | 'active' | 'paused'
@@ -98,9 +99,12 @@ function discoveryEstimate(source: FormValues['source_type']) {
 
 export default function ResearchBriefs({
   onNavigate,
+  scope,
 }: {
   onNavigate: (view: ResearchView) => void
+  scope: ProjectScope
 }) {
+  const projectId = scope.mode === 'project' ? scope.projectId : null
   const [form] = Form.useForm<FormValues>()
   const [toast, contextHolder] = message.useMessage()
   const [briefs, setBriefs] = useState<ResearchBrief[]>([])
@@ -109,30 +113,40 @@ export default function ResearchBriefs({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editingId, setEditingId] = useState('')
+  const requestVersion = useRef(0)
   const sourceType = Form.useWatch('source_type', form) || 'keyword'
   const depth = Form.useWatch('depth', form) || 'comments'
   const maxItemsLimit = sourceType === 'low_fan' || depth === 'media' || depth === 'review_ready' ? 5 : 20
 
   const load = async () => {
+    const version = ++requestVersion.current
     setLoading(true)
     setError('')
     try {
-      const result = (await backend.get_research_briefs({})) as {
+      const result = (await backend.get_research_briefs(projectId ? { project_id: projectId } : {})) as {
         briefs: ResearchBrief[]
         runs: BriefRun[]
       }
-      setBriefs(result.briefs || [])
-      setRuns(result.runs || [])
+      if (version === requestVersion.current) {
+        setBriefs(result.briefs || [])
+        setRuns(result.runs || [])
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (version === requestVersion.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (version === requestVersion.current) setLoading(false)
     }
   }
 
   useEffect(() => {
-    load()
-  }, [])
+    setBriefs([])
+    setRuns([])
+    setEditingId('')
+    form.resetFields()
+    if (projectId) form.setFieldValue('depth', 'metadata')
+    void load()
+    return () => { requestVersion.current += 1 }
+  }, [projectId])
 
   const latestRuns = useMemo(() => {
     const result = new Map<string, BriefRun>()
@@ -155,10 +169,15 @@ export default function ResearchBriefs({
       max_items: values?.max_items || 5,
       depth: values?.depth || 'metadata',
       cadence_hours: values?.cadence_hours || null,
+      ...(projectId ? { project_id: projectId } : {}),
     })
   }
 
   const save = async (values: FormValues) => {
+    if (projectId && values.depth !== 'metadata') {
+      toast.error('项目任务目前只支持元数据采集。')
+      return
+    }
     setSaving(true)
     try {
       await mutate(editingId ? 'update' : 'create', editingId, values)
@@ -238,8 +257,10 @@ export default function ResearchBriefs({
         className="brief-boundary"
         type="info"
         showIcon
-        message="任务负责确定研究范围，不替你作结论"
-        description="系统按来源、时间窗和深度采集并合并到现有视频、账号、热点资产；ASR 与 L3 始终保留独立人工审核。"
+        message={projectId ? '当前项目任务只采公开元数据' : '任务负责确定研究范围，不替你作结论'}
+        description={projectId
+          ? '采集会纳入当前项目；项目任务暂不采新评论或媒体。已保存的公开视频评论可在视频库查看；ASR 和 L3 尚未建立项目归属与审核边界。'
+          : '系统按来源、时间窗和深度采集并合并到现有视频、账号、热点资产；ASR 与 L3 始终保留独立人工审核。'}
       />
       {error && <Alert type="error" showIcon message="研究任务加载失败" description={error} />}
 
@@ -248,7 +269,7 @@ export default function ResearchBriefs({
           <Form<FormValues>
             form={form}
             layout="vertical"
-            initialValues={initialValues}
+            initialValues={{ ...initialValues, depth: projectId ? 'metadata' : initialValues.depth }}
             onFinish={save}
           >
             <Form.Item name="name" label="任务名称" rules={[{ required: true, max: 80 }]}>
@@ -289,7 +310,10 @@ export default function ResearchBriefs({
               </Form.Item>
               <Form.Item name="depth" label="采集深度">
                 <Select
-                  options={Object.entries(depthNames).map(([value, label]) => ({ value, label }))}
+                  options={Object.entries(depthNames)
+                    .filter(([value]) => !projectId || value === 'metadata')
+                    .map(([value, label]) => ({ value, label }))}
+                  disabled={Boolean(projectId)}
                   onChange={(value) => {
                     if ((value === 'media' || value === 'review_ready') && Number(form.getFieldValue('max_items')) > 5) {
                       form.setFieldValue('max_items', 5)
@@ -310,7 +334,7 @@ export default function ResearchBriefs({
             </div>
             <div className="brief-cost-note">
               <strong>{discoveryEstimate(sourceType)}</strong>
-              <span>评论按实际新候选另计；所有调用汇总到运行与成本页。</span>
+              <span>{projectId ? '只执行公开元数据采集；当前尚无项目级成本分摊。' : '评论按实际新候选另计；所有调用汇总到运行与成本页。'}</span>
             </div>
             <Space>
               <Button type="primary" htmlType="submit" loading={saving}>
@@ -327,8 +351,8 @@ export default function ResearchBriefs({
           <ol>
             <li><b>发现</b><span>按指定来源抓取有限候选并补齐详情。</span></li>
             <li><b>合并</b><span>同一视频和账号进入统一资产，不制造重复记录。</span></li>
-            <li><b>加深</b><span>按深度采评论或私有媒体；无需的步骤直接停止。</span></li>
-            <li><b>人工判断</b><span>需要转写或大模型分析时，再在内容页确认。</span></li>
+            <li><b>加深</b><span>{projectId ? '项目任务暂不采新评论或私有媒体；已保存的公开评论仅作阅读依据。' : '按深度采评论或私有媒体；无需的步骤直接停止。'}</span></li>
+            <li><b>人工判断</b><span>{projectId ? '项目级转写与大模型分析仍待归属和审核链路。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
           </ol>
         </Card>
       </div>

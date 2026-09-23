@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Alert,
   Button,
@@ -19,6 +19,11 @@ import GlobalSearch from './src/components/GlobalSearch'
 import OperationsOverview from './src/components/OperationsOverview'
 import PlatformIcon from './src/components/PlatformIcon'
 import { supplierDailySpendFootnote } from './src/dailySpendDisplay'
+import {
+  ProjectScopeProvider,
+  type ProjectRosterItem,
+  type ProjectScope,
+} from './src/projectScope'
 
 type Platform = {
   key: string
@@ -232,8 +237,49 @@ function App() {
   const [data, setData] = useState<Overview | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [projects, setProjects] = useState<ProjectRosterItem[]>([])
+  const [legacyAdmin, setLegacyAdmin] = useState(false)
+  const [scope, setScope] = useState<ProjectScope | null>(null)
+  const [scopeLoading, setScopeLoading] = useState(true)
+  const [scopeError, setScopeError] = useState('')
+  const homeRequestVersion = useRef(0)
+
+  useEffect(() => {
+    let cancelled = false
+    const loadRoster = async () => {
+      setScopeLoading(true)
+      setScopeError('')
+      try {
+        const result = await backend.get_my_projects({}) as { projects?: ProjectRosterItem[]; legacy_admin?: boolean }
+        if (cancelled) return
+        setProjects(Array.isArray(result.projects) ? result.projects : [])
+        setLegacyAdmin(result.legacy_admin === true)
+      } catch (e) {
+        if (!cancelled) setScopeError(e instanceof Error ? e.message : String(e))
+      } finally {
+        if (!cancelled) setScopeLoading(false)
+      }
+    }
+    void loadRoster()
+    return () => { cancelled = true }
+  }, [])
+
+  const chooseScope = (nextScope: ProjectScope) => {
+    if (scopeLoading || scopeError) return
+    if (nextScope.mode === 'legacy-admin' && !legacyAdmin) return
+    if (nextScope.mode === 'project' && !projects.some((project) => project.id === nextScope.projectId)) return
+    homeRequestVersion.current += 1
+    setScope(nextScope)
+    setSelectedVideoId('')
+    setSearchQuery('')
+    setQuery('')
+    setData(null)
+    setError('')
+    setView(nextScope.mode === 'project' ? 'videos' : 'home')
+  }
 
   const load = async (nextPlatform = platform, nextHours = hours) => {
+    const version = ++homeRequestVersion.current
     setLoading(true)
     setError('')
     try {
@@ -241,17 +287,18 @@ function App() {
         platform: nextPlatform,
         hours: nextHours,
       })) as Overview
-      setData(result)
+      if (version === homeRequestVersion.current) setData(result)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (version === homeRequestVersion.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (version === homeRequestVersion.current) setLoading(false)
     }
   }
 
   useEffect(() => {
-    load(platform, hours)
-  }, [platform, hours])
+    if (scope?.mode !== 'legacy-admin') return
+    void load(platform, hours)
+  }, [platform, hours, scope?.mode])
 
   const visibleBlackhorse = useMemo(() => {
     if (!data) return []
@@ -269,11 +316,42 @@ function App() {
     ...(data?.platforms || []),
   ]
 
+  const scopeContext = { scope, projects, legacyAdmin, loading: scopeLoading, error: scopeError, chooseScope }
+  const noScope = !scope
+  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs'
+
+  if (noScope || projectViewBlocked) {
+    const message = scopeLoading
+      ? '正在确认你可进入的研究项目…'
+      : scopeError
+        ? '项目范围暂时无法确认，系统不会回退加载全局历史数据。'
+        : projectViewBlocked
+          ? '当前项目仅接通“视频库”和“研究任务”。其它全局页面尚未完成项目隔离，已停止加载。'
+          : '请先在右上角选择一个研究项目。'
+    return (
+      <ProjectScopeProvider value={scopeContext}>
+        <AppShell
+          activeView={scope?.mode === 'project' ? 'videos' : 'home'}
+          onNavigate={setView}
+          title="内容研究台"
+          subtitle="先选择研究范围，再加载数据"
+        >
+          <section className="scope-empty-state card">
+            <h2>{scopeLoading ? '正在加载项目范围' : '研究范围尚未接通'}</h2>
+            <p>{message}</p>
+            {!scopeLoading && !scopeError && projects.length === 0 && !legacyAdmin ? <p>你的账号当前没有可访问项目，请联系项目管理员添加成员权限。</p> : null}
+          </section>
+        </AppShell>
+      </ProjectScopeProvider>
+    )
+  }
+
   if (view === 'videos') {
-    return <VideoLibrary onNavigate={setView} initialSelectedVideoId={selectedVideoId} />
+    return <ProjectScopeProvider value={scopeContext}><VideoLibrary key={scope.mode === 'project' ? scope.projectId : 'legacy-admin'} scope={scope} onNavigate={setView} initialSelectedVideoId={selectedVideoId} /></ProjectScopeProvider>
   }
   if (view === 'today') {
     return (
+      <ProjectScopeProvider value={scopeContext}>
       <DailyBriefing
         onNavigate={setView}
         onOpenVideo={(videoId) => {
@@ -281,19 +359,21 @@ function App() {
           setView('videos')
         }}
       />
+      </ProjectScopeProvider>
     )
   }
   if (view === 'briefs') {
-    return <ResearchBriefs onNavigate={setView} />
+    return <ProjectScopeProvider value={scopeContext}><ResearchBriefs key={scope.mode === 'project' ? scope.projectId : 'legacy-admin'} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
   }
   if (view === 'accounts') {
-    return <AccountLibrary onNavigate={setView} />
+    return <ProjectScopeProvider value={scopeContext}><AccountLibrary onNavigate={setView} /></ProjectScopeProvider>
   }
   if (view === 'hotspots') {
-    return <HotspotLibrary onNavigate={setView} />
+    return <ProjectScopeProvider value={scopeContext}><HotspotLibrary onNavigate={setView} /></ProjectScopeProvider>
   }
   if (view === 'search') {
     return (
+      <ProjectScopeProvider value={scopeContext}>
       <AppShell
         activeView="search"
         onNavigate={setView}
@@ -310,10 +390,12 @@ function App() {
           }}
         />
       </AppShell>
+      </ProjectScopeProvider>
     )
   }
   if (view === 'cost') {
     return (
+      <ProjectScopeProvider value={scopeContext}>
       <AppShell
         activeView="cost"
         onNavigate={(next) => setView(next)}
@@ -322,10 +404,12 @@ function App() {
       >
         <OperationsOverview platforms={data?.platforms || []} />
       </AppShell>
+      </ProjectScopeProvider>
     )
   }
 
   return (
+    <ProjectScopeProvider value={scopeContext}>
     <AppShell
       activeView="home"
       onNavigate={setView}
@@ -355,7 +439,7 @@ function App() {
               { value: 720, label: '近30天' },
             ]}
           />
-          <Button type="primary" onClick={() => load()}>刷新数据</Button>
+          <Button type="primary" onClick={() => void load()}>刷新数据</Button>
           <Button disabled title="日报导出将在后续页面阶段启用">导出日报</Button>
         </>
       }
@@ -598,6 +682,7 @@ function App() {
             </section>
           </Spin>
     </AppShell>
+    </ProjectScopeProvider>
   )
 }
 

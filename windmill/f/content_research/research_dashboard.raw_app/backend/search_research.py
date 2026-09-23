@@ -3,12 +3,58 @@
 
 from __future__ import annotations
 
+import json
+import os
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, TypedDict
 
 import psycopg
 from psycopg.rows import dict_row
+
+
+_ACTOR_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
+_ACCESS_DENIED = "RESEARCH_LEGACY_CATALOG_ACCESS_DENIED"
+_LEGACY_ADMIN_ALLOWLIST_PATH = "f/content_research/research_action_writers"
+
+
+def _actor() -> str:
+    """Return the Windmill-authenticated actor, never a caller-supplied value."""
+    value = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
+    if not _ACTOR_RE.fullmatch(value) or len(value) > 254:
+        raise PermissionError(_ACCESS_DENIED)
+    return value
+
+
+def _legacy_admin_allowed(actor: str) -> bool:
+    """Fail closed unless the server-owned legacy-admin list contains actor."""
+    try:
+        import wmill
+
+        raw = wmill.get_variable(_LEGACY_ADMIN_ALLOWLIST_PATH)
+    except Exception:
+        return False
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        values = json.loads(raw) if raw.lstrip().startswith("[") else re.split(r"[,\n]", raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(values, list):
+        return False
+    return any(
+        isinstance(value, str)
+        and _ACTOR_RE.fullmatch(value.strip().lower())
+        and value.strip().lower() == actor
+        for value in values
+    )
+
+
+def _require_legacy_admin() -> None:
+    actor = _actor()
+    if not _legacy_admin_allowed(actor):
+        raise PermissionError(_ACCESS_DENIED)
 
 
 class postgresql(TypedDict):
@@ -51,6 +97,10 @@ def main(
     provider responses are deliberately outside this endpoint's search scope.
     """
 
+    # A global cross-entity search is intentionally a legacy-admin capability.
+    # Run the gate before empty-query handling so unauthenticated callers
+    # cannot use this endpoint as a policy or timing oracle.
+    _require_legacy_admin()
     query = _normalize_query(query)
     platform = platform.strip() if isinstance(platform, str) else "all"
     page = max(1, int(page or 1))

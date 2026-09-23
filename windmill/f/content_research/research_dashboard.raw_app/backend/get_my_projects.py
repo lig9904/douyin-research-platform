@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import date, datetime
@@ -26,6 +27,7 @@ class postgresql(TypedDict):
 
 
 _ACTOR_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
+_LEGACY_ADMIN_ALLOWLIST_PATH = "f/content_research/research_action_writers"
 
 
 def _actor() -> str:
@@ -34,6 +36,36 @@ def _actor() -> str:
     if not _ACTOR_RE.fullmatch(value) or len(value) > 254:
         raise PermissionError("RESEARCH_ACTION_IDENTITY_REQUIRED")
     return value
+
+
+def _legacy_admin(actor: str) -> bool:
+    """Return whether this server-authenticated user is a legacy administrator.
+
+    This is intentionally an optional capability signal, not an authorization
+    input.  The list is obtained inside the Windmill worker, is never accepted
+    from the caller, and a missing or malformed variable is treated as no
+    administrator access.
+    """
+    try:
+        import wmill
+
+        raw = wmill.get_variable(_LEGACY_ADMIN_ALLOWLIST_PATH)
+    except Exception:
+        return False
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        values = json.loads(raw) if raw.lstrip().startswith("[") else re.split(r"[,\n]", raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(values, list):
+        return False
+    return any(
+        isinstance(value, str)
+        and _ACTOR_RE.fullmatch(value.strip().lower())
+        and value.strip().lower() == actor
+        for value in values
+    )
 
 
 def _json(value: Any) -> Any:
@@ -67,6 +99,9 @@ def _connect(db: postgresql):
 
 def main(db: postgresql):
     actor = _actor()
+    # Fetch independently of the roster query.  A Windmill-variable outage
+    # must never make project membership data unavailable.
+    legacy_admin = _legacy_admin(actor)
     try:
         with _connect(db) as conn, conn.cursor() as cur:
             cur.execute("set transaction read only")
@@ -97,7 +132,7 @@ def main(db: postgresql):
                 (actor,),
             )
             projects = [_json(dict(row)) for row in cur.fetchall()]
-        return {"projects": projects, "read_only": True}
+        return {"projects": projects, "read_only": True, "legacy_admin": legacy_admin}
     except PermissionError:
         raise
     except Exception:
