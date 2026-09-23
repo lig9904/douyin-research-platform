@@ -267,7 +267,7 @@ HTTPS 路径验收。
 
    ```bash
    scripts/test-server-windmill-preflight.sh \
-     --workspace test-research \
+     --workspace test-server \
      --profile /srv/douyin-research-test/wmill-profile \
      --app f/content_research/research_dashboard \
      --script f/content_research/analysis/manual_l3_preview \
@@ -279,7 +279,7 @@ HTTPS 路径验收。
      --variable-metadata /srv/douyin-research-test/variable-metadata.json
    ```
 
-   元数据文件契约仅允许 `{"variables":[{"path":"...","is_secret":true|false}]}`；脚本只调用 `wmill app|script|resource list --json`，不会读取值、get、sync 或 push。
+   上例中的 `test-server` 是该服务器 Windmill CLI 的本地配置名，指向远端工作区 `test-research`；`--workspace` 不能误填远端工作区 ID。元数据文件契约仅允许 `{"variables":[{"path":"...","is_secret":true|false}]}`；脚本只调用 `wmill app|script|resource list --json`，不会读取值、get、sync 或 push。
 4. 在浏览器确认 App 可加载，后端 runnable 可完成无 Provider 的读取/预览路径。
 
 输出与验收：迁移记录、备份校验、目标对象发布记录、App 版本和基础读路径成功。业务库与 Windmill 内部库不可混用；失败时不继续导入 Provider Secret。
