@@ -46,6 +46,10 @@ def test_collaboration_page_is_project_only_and_shows_narrow_share_scope() -> No
     assert "backend.get_project_collaboration" in page
     assert "backend.mutate_project_collaboration" in page
     assert "审核正文、原始 Provider 响应、媒体、私有授权和费用" in page
+    assert "data.project_id !== projectId" in page
+    assert "version === requestVersion.current && currentProject.current === projectId" in page
+    assert "待我方确认" in page
+    assert "还没有可查看的共享依据" in page
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
