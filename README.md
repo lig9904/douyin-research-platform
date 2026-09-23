@@ -2,7 +2,7 @@
 
 多平台热点采集、对标研究、黑马发现与 AI 精研平台。当前 V1 以抖音作为首个落地平台，但数据库、Provider Contract、L0/L1 和后续 Web 均按多平台架构设计。
 
-当前发布状态：`v0.1.0-rc.2` 为 V1 测试服务器候选版；测试服务器验收和生产发布尚未完成。RC2 在 RC1 的本机验收基线上补充外部反代测试服务器 overlay 与失败关闭的运行时 smoke；版本能力、证据边界与部署限制见 [`docs/releases/V1_RC2.md`](docs/releases/V1_RC2.md)。
+当前发布状态：最新正式标签仍是 `v0.1.0-rc.2`，测试服务器运行后续主线代码、研究任务控制中心和研究台应用版本 39；渔岛实跑暴露同名游戏内容混入及详情 HTTP 400，业务验收未通过，正式 V1 与生产发布均未进行。现场证据见 [`docs/SERVER_ACCEPTANCE_2026-09-21.md`](docs/SERVER_ACCEPTANCE_2026-09-21.md)，业务缺口见 [`docs/YUDAO_BUSINESS_ACCEPTANCE_V1.md`](docs/YUDAO_BUSINESS_ACCEPTANCE_V1.md)；RC2 的历史能力边界见 [`docs/releases/V1_RC2.md`](docs/releases/V1_RC2.md)。
 
 > 仓库名与 Python package 中仍保留 `douyin` 历史命名，用于兼容现有代码；它们不再代表产品只能研究抖音。
 
@@ -13,7 +13,7 @@ V1 先解决四件事：
 1. 先用现成接口采集抖音热点、黑马视频、账号、作品和必要评论，同时保留未来接入快手、视频号、小红书、B站、微博等平台的统一入口。
 2. 采用“先粗后细”的分层漏斗，尽可能用代码、SQL、统计和规则完成筛选。
 3. 提供人人可访问、可看懂、可搜索、可回看历史的多平台 Web 研究台。
-4. 通过 MCP 向 Codex 暴露经过缓存和治理后的研究数据与任务，而不是让 Codex 无限制直接调用外部收费接口。
+4. 通过 MCP 向 Codex 提供经过缓存和治理的研究资产只读查询；按用户身份隔离的研究任务在研究台管理，不让 Codex 无限制直接调用外部收费接口。
 
 ## 当前技术路线
 
@@ -97,8 +97,8 @@ Canonical ID 始终使用：
 - TikHub 真实付费接口 V0：已完成低粉爆款、创作者素材、视频/账号搜索、账号详情与作品、批量视频详情、评论/回复、分页去重、报价和日用量的受控小批量实测；SDK 2.1.1、零重试，Secret 与原始响应未进入仓库或日志。当前结论仍为 PARTIAL，删除/私密映射、更多账号分层、准确性对照、受控故障和本地账单对账继续保留在 Issue #1
 - 本机真实数据黄金链路：已提供默认 dry-run、最多 5 条 / 2 次未缓存调用 / 零重试的 TikHub → 规范化 → PostgreSQL → L0/L1 入口；详情见 `docs/LOCAL_REAL_DATA_GOLDEN_V1.md`
 - Web 研究台：已在本机 Windmill CE 部署，已验收首页、视频库、账号库、热点库、全局搜索、运行/成本只读页、可解释账号相似度，以及 L3 待审摘要→一次性正文页→审核保存→零调用预算预览全链路
-- 研究任务控制中心：已实现用户自定义低粉榜、关键词或指定账号范围，支持单次/6/12/24 小时频率和元数据/评论/媒体/待审核材料深度；任务按登录身份隔离，激活仅授权有账本的 TikHub 采集，ASR/L3 不自动提交。代码与边界见 `docs/RESEARCH_BRIEF_CONTROL_CENTER_V1.md`；尚未部署到测试服务器，不能替代旧计划的现场切换验收
+- 研究任务控制中心：已在测试服务器运行用户自定义低粉榜、关键词或指定账号范围，支持单次/6/12/24 小时频率和元数据/评论/媒体/待审核材料深度；任务按登录身份隔离，激活仅授权有账本的 TikHub 采集，ASR/L3 不自动提交。迁移 020 已执行，新 dispatcher 已启用、旧固定发现计划已停用；现场运行和下一次计划见 `docs/RESEARCH_BRIEF_CONTROL_CENTER_V1.md`
 - 研究台内部写操作：团队共享监测使用 actor 审计；专题、视频收藏和保存筛选按登录身份隔离；全部使用幂等事务与零外呼边界
 - 本机 V1 全链路验收：真实 TikHub、Ark、ASR、浏览器写操作、HTTPS/ACL/备份恢复的脱敏结果见 `docs/LOCAL_V1_ACCEPTANCE_2026-09-20.md`；不等同于测试服务器或生产生效
-- 测试服务器部署与验收：本机/CI 已提供五服务一次性 Overlay 烟测、`test-server-backup-v1` 双库与 globals 隔离恢复、无外发监控契约；`docker-compose.test-server-external-proxy.yml` 适用于专用反代机器终止 HTTPS 的部署，测试服务器不运行 Nginx/TLS，仅将 Windmill 绑定到明确 RFC1918 地址的 `:8000`，PostgreSQL 不发布宿主机端口；域名、真实三账号 ACL、服务器 Secret、小流量 Provider、异机备份和真实外部告警闭环见 `docs/TEST_SERVER_READINESS_V1.md`；须取得目标环境输入后执行，不用本机契约冒充目标环境生效
+- 测试服务器部署与验收：五服务部署、真实供应商小流量、内容充分 ASR→L3、恢复/回滚、MCP Gateway 和研究任务调度已有现场证据；研究台应用服务器不运行 Nginx/TLS，由专用反代机器终止 HTTPS。最新验收边界见 `docs/SERVER_ACCEPTANCE_2026-09-21.md`；真实三账号 ACL、异机备份、外部告警等未完成项不得由单机测试替代
 - 只读 MCP：stdio 本机入口为五项，Windmill HTTPS Gateway 为十项。测试服务器已使用独立 PostgreSQL reader role、固定只读 Resource、workspace-bound 十路径 token 和 Codex OAuth 完成十工具真实调用；未知工具、超限参数、跨目录付费脚本、Resource、Secret、无 Bearer 与 URL token 均失败关闭。Codex 项目配置隐藏内置 `runScriptByPath`，两条路径都不触发 Provider/LLM/付费调用；真实多账号成员 ACL 仍与 MCP 服务身份分开验收
