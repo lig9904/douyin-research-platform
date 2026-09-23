@@ -1,12 +1,20 @@
 # py: ==3.14.*
 from __future__ import annotations
 
+import json
+import os
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, TypedDict
+from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
+
+
+_ACTOR_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
+_ACCESS_DENIED = "RESEARCH_VIDEO_ACCESS_DENIED"
 
 
 class postgresql(TypedDict):
@@ -16,6 +24,67 @@ class postgresql(TypedDict):
     password: str
     dbname: str
     sslmode: str
+
+
+def _actor() -> str:
+    value = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
+    if not _ACTOR_RE.fullmatch(value) or len(value) > 254:
+        raise PermissionError(_ACCESS_DENIED)
+    return value
+
+
+def _project_id(value: object) -> UUID | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ValueError("project_id must be a UUID")
+    try:
+        return UUID(value)
+    except ValueError:
+        raise ValueError("project_id must be a UUID") from None
+
+
+def _legacy_reader_allowed(actor: str, allowlist: str | None) -> bool:
+    if not isinstance(allowlist, str) or not allowlist.strip():
+        return False
+    source = allowlist.strip()
+    try:
+        values = json.loads(source) if source.startswith("[") else re.split(r"[,\n]", source)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+        return False
+    return actor in {
+        value.strip().lower() for value in values
+        if _ACTOR_RE.fullmatch(value.strip().lower())
+    }
+
+
+def _get_legacy_allowlist() -> str:
+    """Read the server-owned legacy reader list; never trust caller input."""
+    import wmill
+
+    return wmill.get_variable("f/content_research/research_action_writers")
+
+
+def _can_read_project(cur, *, project_id: UUID, actor: str) -> bool:
+    cur.execute(
+        "select project_actor_can_read(%s::uuid, %s) as allowed",
+        (project_id, actor),
+    )
+    row = cur.fetchone()
+    return bool(row and row["allowed"])
+
+
+def _can_read_project_video(
+    cur, *, project_id: UUID, actor: str, video_id: UUID,
+) -> bool:
+    cur.execute(
+        "select project_video_can_read(%s::uuid, %s, %s::uuid) as allowed",
+        (project_id, actor, video_id),
+    )
+    row = cur.fetchone()
+    return bool(row and row["allowed"])
 
 
 def _json(value: Any) -> Any:
@@ -41,15 +110,27 @@ def _fetch_one(conn, sql: str, args=()) -> dict[str, Any]:
     return rows[0] if rows else {}
 
 
+def _legacy_analysis_row(
+    conn, *, project_id: UUID | None, sql: str, args=(),
+) -> dict[str, Any]:
+    """Never reuse globally scoped ASR/L3 records in a project view."""
+    if project_id is not None:
+        return {}
+    return _fetch_one(conn, sql, args)
+
+
 def _connect(db: postgresql):
-    return psycopg.connect(
-        host=db["host"],
-        port=int(db.get("port", 5432)),
-        user=db["user"],
-        password=db["password"],
-        dbname=db["dbname"],
-        sslmode=db.get("sslmode", "prefer"),
-    )
+    args: dict[str, Any] = {
+        "host": db["host"],
+        "port": int(db.get("port", 5432)),
+        "user": db["user"],
+        "password": db["password"],
+        "dbname": db["dbname"],
+        "sslmode": db.get("sslmode", "prefer"),
+    }
+    if db.get("options"):
+        args["options"] = db["options"]
+    return psycopg.connect(**args)
 
 
 _L3_OUTPUT_LIST_FIELDS = (
@@ -129,6 +210,7 @@ def main(
     page_size: int = 10,
     sort: str = "published_desc",
     selected_video_id: str = "",
+    project_id: str | None = None,
 ):
     platform = (platform or "all").strip()
     days = max(1, min(int(days or 30), 365))
@@ -141,6 +223,8 @@ def main(
     page = max(1, int(page or 1))
     page_size = min(50, max(10, int(page_size or 10)))
     query = (query or "").strip()
+    scoped_project_id = _project_id(project_id)
+    actor = _actor()
 
     sort_map = {
         "published_desc": "v.published_at desc nulls last, v.last_seen_at desc",
@@ -148,6 +232,12 @@ def main(
         "likes_desc": "m.like_count desc nulls last, v.last_seen_at desc",
         "plays_desc": "m.play_count desc nulls last, v.last_seen_at desc",
     }
+    if scoped_project_id is not None:
+        sort_map = {
+            "published_desc": "v.published_at desc nulls last, inclusion_row.last_seen_at desc",
+            "likes_desc": "m.like_count desc nulls last, inclusion_row.last_seen_at desc",
+            "plays_desc": "m.play_count desc nulls last, inclusion_row.last_seen_at desc",
+        }
     order_by = sort_map.get(sort, sort_map["published_desc"])
 
     where_sql = """
@@ -193,6 +283,31 @@ def main(
         source_type, source_type,
     )
 
+    scoped_where_sql = """
+      (%s='all' or v.platform=%s)
+      and inclusion_row.last_seen_at >= now() - (%s || ' days')::interval
+      and (%s < 0 or (m.play_count is not null and m.play_count >= %s))
+      and (%s < 0 or (m.play_count is not null and m.play_count <= %s))
+      and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count >= %s))
+      and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count <= %s))
+      and (
+        %s=''
+        or coalesce(v.title,'') ilike '%%' || %s || '%%'
+        or coalesce(v.description,'') ilike '%%' || %s || '%%'
+        or coalesce(a.nickname,'') ilike '%%' || %s || '%%'
+      )
+      and (%s='all' or inclusion_row.source_type=%s)
+    """
+    scoped_args = (
+        platform, platform, days,
+        play_min, play_min,
+        play_max, play_max,
+        follower_min, follower_min,
+        follower_max, follower_max,
+        query, query, query, query,
+        source_type, source_type,
+    )
+
     base_cte = """
     with latest_metric as (
       select * from merged_video_metric
@@ -219,7 +334,81 @@ def main(
     )
     """
 
+    scope_join = ""
+    scope_join_args: tuple[object, ...] = ()
+    active_where_sql = where_sql
+    active_args = args
+    total_private_joins = """
+            left join latest_score s on s.video_id=v.id
+            left join collections c on c.video_id=v.id
+    """
+    item_private_joins = """
+            left join latest_score s on s.video_id=v.id
+            left join source_hits h on h.video_id=v.id
+            left join collections c on c.video_id=v.id
+    """
+    item_research_fields = """
+              v.research_level,
+              v.monitoring_status,
+              v.monitoring_priority,
+    """
+    item_account_id_field = "a.id::text as account_id,"
+    item_priority_field = "coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,"
+    item_source_fields = """
+              coalesce(h.sources, array[]::text[]) as sources,
+              coalesce(h.source_count,0) as source_count,
+              coalesce(c.collection_count,0) as collection_count
+    """
+    if scoped_project_id is not None:
+        if (
+            research_level != -1
+            or priority_min != -1
+            or status != "all"
+            or collected != "all"
+            or sort == "priority_desc"
+        ):
+            raise PermissionError(_ACCESS_DENIED)
+        scope_join = """
+            join project_video_inclusion inclusion_row
+              on inclusion_row.video_id=v.id
+             and inclusion_row.project_id=%s::uuid
+             and inclusion_row.status <> 'archived'
+        """
+        scope_join_args = (scoped_project_id,)
+        active_where_sql = scoped_where_sql
+        active_args = scoped_args
+        total_private_joins = ""
+        item_private_joins = ""
+        item_research_fields = """
+              null::integer as research_level,
+              null::text as monitoring_status,
+              null::numeric as monitoring_priority,
+        """
+        item_account_id_field = "null::text as account_id,"
+        item_priority_field = "null::numeric as priority,"
+        item_source_fields = """
+              array[inclusion_row.source_type] as sources,
+              1::int as source_count,
+              null::int as collection_count
+        """
+
     with _connect(db) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute("set transaction read only")
+            if scoped_project_id is None:
+                try:
+                    legacy_allowed = _legacy_reader_allowed(actor, _get_legacy_allowlist())
+                except Exception:
+                    legacy_allowed = False
+                if not legacy_allowed:
+                    raise PermissionError(_ACCESS_DENIED)
+            elif not _can_read_project(
+                cur, project_id=scoped_project_id, actor=actor,
+            ):
+                # Do not distinguish a missing, paused, archived, or otherwise
+                # inaccessible project from a denied member.
+                raise PermissionError(_ACCESS_DENIED)
+
         platforms = _fetch_all(
             conn,
             """
@@ -229,17 +418,32 @@ def main(
             """,
         )
 
-        source_options = _fetch_all(
-            conn,
-            """
-            select distinct source_type as value
-            from discovery_event d
-            join source_video v on v.id=d.video_id
-            where (%s='all' or v.platform=%s)
-            order by source_type
-            """,
-            (platform, platform),
-        )
+        if scoped_project_id is None:
+            source_options = _fetch_all(
+                conn,
+                """
+                select distinct source_type as value
+                from discovery_event d
+                join source_video v on v.id=d.video_id
+                where (%s='all' or v.platform=%s)
+                order by source_type
+                """,
+                (platform, platform),
+            )
+        else:
+            source_options = _fetch_all(
+                conn,
+                """
+                select distinct inclusion_row.source_type as value
+                from project_video_inclusion inclusion_row
+                join source_video v on v.id=inclusion_row.video_id
+                where inclusion_row.project_id=%s::uuid
+                  and inclusion_row.status <> 'archived'
+                  and (%s='all' or v.platform=%s)
+                order by inclusion_row.source_type
+                """,
+                (scoped_project_id, platform, platform),
+            )
 
         total_row = _fetch_one(
             conn,
@@ -247,13 +451,13 @@ def main(
             + f"""
             select count(*)::int as total
             from source_video v
+            {scope_join}
             left join source_account a on a.id=v.account_id
             left join latest_metric m on m.video_id=v.id
-            left join latest_score s on s.video_id=v.id
-            left join collections c on c.video_id=v.id
-            where {where_sql}
+            {total_private_joins}
+            where {active_where_sql}
             """,
-            args,
+            scope_join_args + active_args,
         )
         total = int(total_row.get("total") or 0)
         offset = (page - 1) * page_size
@@ -271,10 +475,8 @@ def main(
               v.source_url,
               v.published_at,
               v.duration_ms,
-              v.research_level,
-              v.monitoring_status,
-              v.monitoring_priority,
-              a.id::text as account_id,
+              {item_research_fields}
+              {item_account_id_field}
               a.nickname as account_name,
               m.play_count,
               m.like_count,
@@ -285,7 +487,7 @@ def main(
               m.captured_at as metric_captured_at,
               m.metric_source_kind,
               m.metric_provenance,
-              coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,
+              {item_priority_field}
               case when coalesce(m.author_follower_count,0) > 0
                 then round(
                   100.0 * (
@@ -296,29 +498,56 @@ def main(
                 )
                 else null
               end as follower_efficiency,
-              coalesce(h.sources, array[]::text[]) as sources,
-              coalesce(h.source_count,0) as source_count,
-              coalesce(c.collection_count,0) as collection_count
+              {item_source_fields}
             from source_video v
+            {scope_join}
             left join source_account a on a.id=v.account_id
             left join latest_metric m on m.video_id=v.id
-            left join latest_score s on s.video_id=v.id
-            left join source_hits h on h.video_id=v.id
-            left join collections c on c.video_id=v.id
-            where {where_sql}
+            {item_private_joins}
+            where {active_where_sql}
             order by {order_by}
             limit %s offset %s
             """,
-            args + (page_size, offset),
+            scope_join_args + active_args + (page_size, offset),
         )
 
         selected_id = selected_video_id or (items[0]["id"] if items else "")
         detail = {}
         if selected_id:
+            scoped_sources: list[str] = []
+            try:
+                normalized_selected_id = UUID(selected_id)
+            except (TypeError, ValueError, AttributeError):
+                raise ValueError("selected_video_id must be a UUID") from None
+            if scoped_project_id is not None:
+                with conn.cursor(row_factory=dict_row) as cur:
+                    allowed = _can_read_project_video(
+                        cur,
+                        project_id=scoped_project_id,
+                        actor=actor,
+                        video_id=normalized_selected_id,
+                    )
+                if not allowed:
+                    # A known UUID from another project must not disclose whether it
+                    # exists, has comments, or has private review artifacts.
+                    raise PermissionError(_ACCESS_DENIED)
+                scoped_inclusion = _fetch_one(
+                    conn,
+                    """
+                    select source_type
+                    from project_video_inclusion
+                    where project_id=%s::uuid and video_id=%s::uuid
+                      and status <> 'archived'
+                    """,
+                    (scoped_project_id, normalized_selected_id),
+                )
+                if not scoped_inclusion:
+                    raise PermissionError(_ACCESS_DENIED)
+                scoped_sources = [scoped_inclusion["source_type"]]
             detail = _fetch_one(
                 conn,
                 base_cte
-                + """
+                + f"""
                 select
                   v.id::text,
                   v.platform,
@@ -328,8 +557,7 @@ def main(
                   v.source_url,
                   v.published_at,
                   v.duration_ms,
-                  v.research_level,
-                  v.monitoring_status,
+                  {item_research_fields}
                   a.nickname as account_name,
                   m.play_count,
                   m.like_count,
@@ -340,7 +568,7 @@ def main(
                   m.captured_at as metric_captured_at,
                   m.metric_source_kind,
                   m.metric_provenance,
-                  coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,
+                  {item_priority_field}
                   case when coalesce(m.author_follower_count,0) > 0
                     then round(
                       100.0 * (
@@ -351,32 +579,45 @@ def main(
                     )
                     else null
                   end as follower_efficiency,
-                  coalesce(h.sources, array[]::text[]) as sources,
-                  coalesce(h.source_count,0) as source_count,
-                  coalesce(c.collection_count,0) as collection_count
+                  {item_source_fields}
                 from source_video v
+                {scope_join}
                 left join source_account a on a.id=v.account_id
                 left join latest_metric m on m.video_id=v.id
-                left join latest_score s on s.video_id=v.id
-                left join source_hits h on h.video_id=v.id
-                left join collections c on c.video_id=v.id
+                {item_private_joins}
                 where v.id=%s::uuid
                 """,
-                (selected_id,),
+                scope_join_args + (selected_id,),
             )
 
-            evidence = _fetch_all(
-                conn,
-                """
-                select
-                  source_type, source_key, discovered_at, rank_value
-                from discovery_event
-                where video_id=%s::uuid
-                order by discovered_at desc
-                limit 8
-                """,
-                (selected_id,),
-            )
+            if scoped_project_id is None:
+                evidence = _fetch_all(
+                    conn,
+                    """
+                    select
+                      source_type, source_key, discovered_at, rank_value
+                    from discovery_event
+                    where video_id=%s::uuid
+                    order by discovered_at desc
+                    limit 8
+                    """,
+                    (selected_id,),
+                )
+            else:
+                evidence = []
+                # Scores, collection membership and discovery history are
+                # global research state.  A project view exposes none of them.
+                for field in (
+                    "research_level", "monitoring_status", "priority",
+                    "sources", "source_count", "collection_count",
+                ):
+                    detail.pop(field, None)
+                detail["research_level"] = None
+                detail["monitoring_status"] = None
+                detail["priority"] = None
+                detail["sources"] = scoped_sources
+                detail["source_count"] = len(scoped_sources)
+                detail["collection_count"] = None
 
             comments = _fetch_all(
                 conn,
@@ -390,8 +631,10 @@ def main(
                 """,
                 (selected_id,),
             )
-            asr_row = _fetch_one(
+            asr_row = _legacy_analysis_row(
                 conn,
+                project_id=scoped_project_id,
+                sql=
                 """
                 select
                   left(t.text_content, %s) as text,
@@ -420,10 +663,12 @@ def main(
                 order by t.created_at desc, t.id desc
                 limit 1
                 """,
-                (_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
+                args=(_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
             )
-            l3_row = _fetch_one(
+            l3_row = _legacy_analysis_row(
                 conn,
+                project_id=scoped_project_id,
+                sql=
                 """
                 select
                   a.analysis_type,
@@ -456,7 +701,7 @@ def main(
                 order by a.created_at desc, a.id desc
                 limit 1
                 """,
-                (
+                args=(
                     selected_id,
                     _L3_ANALYSIS_TYPE,
                     _L3_SCHEMA_VERSION,

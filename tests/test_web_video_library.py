@@ -12,6 +12,11 @@ DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
 
 
+@pytest.fixture(autouse=True)
+def legacy_reader_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WM_END_USER_EMAIL", "fixture@example.com")
+
+
 def load_backend():
     path = Path(
         "windmill/f/content_research/research_dashboard.raw_app/"
@@ -21,6 +26,7 @@ def load_backend():
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    module._get_legacy_allowlist = lambda: "fixture@example.com"
     return module
 
 
