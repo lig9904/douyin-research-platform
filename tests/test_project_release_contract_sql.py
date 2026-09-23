@@ -47,7 +47,7 @@ def test_project_release_gate_detects_missing_cursor_index_and_acl_function() ->
             )
             assert conn.execute(missing_acl).fetchone()[0] == "023.actor_acl,023.actor_body"
             conn.execute(sql.SQL("grant select on {}.project_account_relation to public").format(sql.Identifier(namespace)))
-            assert conn.execute(gate).fetchone()[0] == "project.no_public_grants"
+            assert conn.execute(gate).fetchone()[0] == "project.owner_only_grants"
             conn.execute(sql.SQL("revoke select on {}.project_account_relation from public").format(sql.Identifier(namespace)))
             conn.execute(sql.SQL("""
                 create or replace function {}.project_actor_can_read(p_project_id uuid, p_actor text)

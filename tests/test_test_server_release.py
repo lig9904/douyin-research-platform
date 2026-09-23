@@ -202,8 +202,8 @@ def test_release_verify_contract_covers_project_migration_chain_fail_closed() ->
     assert "tableowner=current_user" in contract
     assert "project.read_grants" in contract
     assert "has_table_privilege(current_user" in contract
-    assert "project.no_public_grants" in contract
-    assert "grant_row.grantee=0" in contract
+    assert "project.owner_only_grants" in contract
+    assert "grant_row.grantee<>relation_row.relowner" in contract
 
     # Keep the contract an all-or-nothing gate: a missing item must reach the
     # explicit non-zero verification failure rather than only being logged.
