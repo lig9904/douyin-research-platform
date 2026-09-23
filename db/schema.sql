@@ -1173,6 +1173,9 @@ create unique index if not exists uq_project_account_relation_idempotency
   on project_account_relation(project_id, idempotency_key);
 create index if not exists idx_project_account_relation_project_account
   on project_account_relation(project_id, source_account_id, verification_status, effective_until);
+create index if not exists idx_project_account_relation_verified_cursor
+  on project_account_relation(project_id, id)
+  where verification_status = 'verified';
 create index if not exists idx_project_account_relation_subject
   on project_account_relation(project_id, subject_id) where subject_id is not null;
 

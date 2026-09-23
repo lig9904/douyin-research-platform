@@ -11,6 +11,7 @@ import {
 import { backend } from './backend'
 import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
+import ProjectAccountMatrix from './ProjectAccountMatrix'
 import HotspotLibrary from './HotspotLibrary'
 import ResearchBriefs from './ResearchBriefs'
 import DailyBriefing from './DailyBriefing'
@@ -318,7 +319,7 @@ function App() {
 
   const scopeContext = { scope, projects, legacyAdmin, loading: scopeLoading, error: scopeError, chooseScope }
   const noScope = !scope
-  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs'
+  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs' && view !== 'accounts'
 
   if (noScope || projectViewBlocked) {
     const message = scopeLoading
@@ -326,7 +327,7 @@ function App() {
       : scopeError
         ? '项目范围暂时无法确认，系统不会回退加载全局历史数据。'
         : projectViewBlocked
-          ? '当前项目仅接通“视频库”和“研究任务”。其它全局页面尚未完成项目隔离，已停止加载。'
+          ? '当前项目仅接通“视频库”“研究任务”和“项目账号矩阵”。其它全局页面尚未完成项目隔离，已停止加载。'
           : '请先在右上角选择一个研究项目。'
     return (
       <ProjectScopeProvider value={scopeContext}>
@@ -366,7 +367,9 @@ function App() {
     return <ProjectScopeProvider value={scopeContext}><ResearchBriefs key={scope.mode === 'project' ? scope.projectId : 'legacy-admin'} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
   }
   if (view === 'accounts') {
-    return <ProjectScopeProvider value={scopeContext}><AccountLibrary onNavigate={setView} /></ProjectScopeProvider>
+    return <ProjectScopeProvider value={scopeContext}>{scope.mode === 'project'
+      ? <ProjectAccountMatrix key={scope.projectId} scope={scope} onNavigate={setView} />
+      : <AccountLibrary onNavigate={setView} />}</ProjectScopeProvider>
   }
   if (view === 'hotspots') {
     return <ProjectScopeProvider value={scopeContext}><HotspotLibrary onNavigate={setView} /></ProjectScopeProvider>

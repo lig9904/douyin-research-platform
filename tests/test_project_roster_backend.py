@@ -41,7 +41,7 @@ def test_project_roster_backends_are_inline_and_bind_only_research_db() -> None:
 def test_project_account_route_does_not_accept_actor_or_authorization_fields() -> None:
     module = _load("get_project_accounts")
     source = (BACKEND / "get_project_accounts.py").read_text(encoding="utf-8")
-    assert tuple(module.main.__annotations__) == ("db", "project_id", "limit")
+    assert tuple(module.main.__annotations__) == ("db", "project_id", "limit", "after_relation_id")
     assert "WM_END_USER_EMAIL" in source
     assert "credential_ref" not in source
     assert "account_authorization" not in source
@@ -50,6 +50,9 @@ def test_project_account_route_does_not_accept_actor_or_authorization_fields() -
         module._project_uuid("not-a-uuid")
     assert module._safe_limit(9999) == 100
     assert module._safe_limit(0) == 1
+    assert module._safe_cursor(None) is None
+    with pytest.raises(ValueError, match="PROJECT_ACCOUNT_CURSOR_INVALID"):
+        module._safe_cursor("bad-cursor")
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
@@ -83,6 +86,28 @@ def test_project_roster_enforces_actor_membership_org_project_and_relation_windo
                 prepare=False,
             )
             conn.execute(migration, prepare=False)
+            conn.execute(
+                """
+                create table source_video (
+                  id uuid primary key default gen_random_uuid(),
+                  account_id uuid references source_account(id)
+                );
+                create table project_video_inclusion (
+                  project_id uuid not null references research_project(id),
+                  video_id uuid not null references source_video(id),
+                  status text not null default 'candidate',
+                  last_seen_at timestamptz not null default now(),
+                  primary key (project_id, video_id)
+                );
+                create table account_metric_snapshot (
+                  id bigserial primary key,
+                  account_id uuid not null references source_account(id),
+                  captured_at timestamptz not null default now(),
+                  follower_count bigint
+                );
+                """,
+                prepare=False,
+            )
             org = conn.execute(
                 "insert into research_organization(slug, name) values ('roster-org', '名册组织') returning id"
             ).fetchone()[0]
@@ -283,6 +308,28 @@ def test_project_roster_returns_server_side_legacy_admin_without_leaking_allowli
                 prepare=False,
             )
             conn.execute(migration, prepare=False)
+            conn.execute(
+                """
+                create table source_video (
+                  id uuid primary key default gen_random_uuid(),
+                  account_id uuid references source_account(id)
+                );
+                create table project_video_inclusion (
+                  project_id uuid not null references research_project(id),
+                  video_id uuid not null references source_video(id),
+                  status text not null default 'candidate',
+                  last_seen_at timestamptz not null default now(),
+                  primary key (project_id, video_id)
+                );
+                create table account_metric_snapshot (
+                  id bigserial primary key,
+                  account_id uuid not null references source_account(id),
+                  captured_at timestamptz not null default now(),
+                  follower_count bigint
+                );
+                """,
+                prepare=False,
+            )
             org = conn.execute(
                 "insert into research_organization(slug, name) values ('admin-org', '管理员组织') returning id"
             ).fetchone()[0]
