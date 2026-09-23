@@ -14,8 +14,9 @@ def test_research_restore_inventory_includes_brief_control_plane():
         'research_organization', 'research_project', 'research_project_member',
         'research_subject', 'project_account_relation', 'account_group',
         'account_group_member', 'account_identity_link', 'account_authorization',
-        'project_video_inclusion',
+        'project_video_inclusion', 'project_video_share_grant', 'project_access_event',
     )
+    assert module.TARGETS['project_024'] == module.TARGETS['project'][:10]
 
 
 def test_copy_rows_not_field_values_or_escaped_newlines():
@@ -42,9 +43,12 @@ def test_project_archive_inventory_counts_each_scoped_table_without_returning_ro
             ('account_identity_link', ''),
             ('account_authorization', 'authorization-a\n'),
             ('project_video_inclusion', 'video-a\n'),
+            ('project_video_share_grant', 'grant-a\n'),
+            ('project_access_event', 'event-a\nevent-b\n'),
         )
     )
-    assert module.counts(lines.splitlines(True), module.TARGETS['project']) == '1|1|2|0|0|0|0|0|1|1'
+    assert module.counts(lines.splitlines(True), module.TARGETS['project']) == '1|1|2|0|0|0|0|0|1|1|1|2'
+    assert module.counts(lines.splitlines(True), module.TARGETS['project_024']) == '1|1|2|0|0|0|0|0|1|1'
 
 
 @pytest.mark.parametrize('value', ['', 'COPY public.source_video (id) FROM stdin;\n1\n',

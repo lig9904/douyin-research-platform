@@ -275,7 +275,26 @@ verify_contract() {
 }
 
 verify_project_contract() {
-  local database="${1:-$research_database}" failed
+  local database="${1:-$research_database}" mode="${2:-current}" failed
+  local collab_checks='' owner_count=10 owner_tables owner_only_tables
+  owner_tables="'research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion'"
+  owner_only_tables="$owner_tables,'effective_account_authorization'"
+  if [[ "$mode" == current ]]; then
+    owner_count=12
+    owner_tables="$owner_tables,'project_video_share_grant','project_access_event'"
+    owner_only_tables="$owner_only_tables,'project_video_share_grant','project_access_event'"
+    collab_checks=",
+      ('025.share_grant', to_regclass('public.project_video_share_grant') is not null),
+      ('025.access_event', to_regclass('public.project_access_event') is not null),
+      ('025.share_cursor', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_video_share_target_active') and indisvalid and indisready)),
+      ('025.share_acl', exists(select 1 from pg_proc where oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and not prosecdef and proconfig is null and provolatile='s' and prolang=(select oid from pg_language where lanname='sql') and prorettype='boolean'::regtype and pg_get_userbyid(proowner)=current_user)),
+      ('025.share_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and encode(sha256(convert_to(prosrc,'UTF8')),'hex')='4a5383d138f78822792366031a231e08cb93420874c7c2453608290265b2a79f')),
+      ('025.share_public_execute', not exists(select 1 from pg_proc function_row cross join lateral aclexplode(coalesce(function_row.proacl,acldefault('f',function_row.proowner))) grant_row where function_row.oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and grant_row.grantee=0 and grant_row.privilege_type='EXECUTE')),
+      ('025.share_denies_unknown', public.project_shared_video_can_read('00000000-0000-0000-0000-000000000000'::uuid,'00000000-0000-0000-0000-000000000000'::uuid,'nobody@example.invalid','00000000-0000-0000-0000-000000000000'::uuid)=false)"
+  elif [[ "$mode" != pre_collaboration ]]; then
+    echo 'ERROR: unknown project contract mode.' >&2
+    exit 2
+  fi
   # Migration SHA equality is checked separately.  These object checks make a
   # ledger-only success insufficient to release a project-scoped Raw App. The
   # function hashes are SHA-256 of pg_proc.prosrc after applying reviewed 023;
@@ -312,15 +331,15 @@ verify_project_contract() {
       ('023.video_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.project_video_can_read(uuid,text,uuid)') and encode(sha256(convert_to(prosrc,'UTF8')),'hex')='b552a65a73f582918ca91fae708192e14689db49e1977dddf72aaee70c789ca9')),
       ('023.actor_denies_unknown', public.project_actor_can_read('00000000-0000-0000-0000-000000000000'::uuid, 'nobody@example.invalid') = false),
       ('023.video_denies_unknown', public.project_video_can_read('00000000-0000-0000-0000-000000000000'::uuid, 'nobody@example.invalid', '00000000-0000-0000-0000-000000000000'::uuid) = false),
-      ('024.cursor_index', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_account_relation_verified_cursor') and indisvalid and indisready)),
-      ('project.table_owners', (select count(*)=10 from pg_tables where schemaname='public' and tableowner=current_user and tablename in ('research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion'))),
+      ('024.cursor_index', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_account_relation_verified_cursor') and indisvalid and indisready))$collab_checks,
+      ('project.table_owners', (select count(*)=$owner_count from pg_tables where schemaname='public' and tableowner=current_user and tablename in ($owner_tables))),
       ('project.read_grants', coalesce(has_table_privilege(current_user, to_regclass('public.research_project_member'), 'SELECT'),false) and coalesce(has_table_privilege(current_user, to_regclass('public.project_account_relation'), 'SELECT'),false) and coalesce(has_table_privilege(current_user, to_regclass('public.project_video_inclusion'), 'SELECT'),false)),
       ('project.owner_only_grants', not exists (
         select 1 from pg_class relation_row
         join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace
         cross join lateral aclexplode(coalesce(relation_row.relacl, acldefault('r',relation_row.relowner))) grant_row
         where namespace_row.nspname='public'
-          and relation_row.relname in ('research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion','effective_account_authorization')
+          and relation_row.relname in ($owner_only_tables)
           and grant_row.grantee<>relation_row.relowner
       ))
     )
@@ -424,14 +443,21 @@ cmd_restore_drill() (
   research_verified="$(research_query "$RESTORE_DATABASE" "select (to_regclass('public.schema_migrations') is not null)::int || '|' || (to_regclass('public.source_video') is not null)::int || '|' || (to_regclass('public.collection') is not null)::int || '|' || (to_regclass('public.collection_item') is not null)::int || '|' || (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || ((select count(*) from pg_tables where schemaname='public' and tablename in ('source_video','collection','collection_item','saved_research_filter','research_user_action','schema_migrations') and tableowner=current_user)=6)::int")"
   [[ "$research_verified" == '1|1|1|1|1|1|1' ]] || { echo 'ERROR: restored research database owner or key-object verification failed.' >&2; exit 1; }
   verify_migration_ledger prefix "$RESTORE_DATABASE"
-  project_state="$(research_query "$RESTORE_DATABASE" "select (select count(*) from schema_migrations where filename in ('021_project_account_foundation.sql','022_project_task_ownership.sql','023_project_video_read_acl.sql','024_project_account_relation_cursor.sql')) || '|' || (select count(*) from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace where namespace_row.nspname='public' and relation_row.relname in ('research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion','effective_account_authorization','idx_project_account_relation_verified_cursor')) + (select count(*) from pg_proc function_row join pg_namespace namespace_row on namespace_row.oid=function_row.pronamespace where namespace_row.nspname='public' and function_row.proname in ('project_actor_can_read','project_video_can_read'))")"
+  project_state="$(research_query "$RESTORE_DATABASE" "select (select count(*) from schema_migrations where filename in ('021_project_account_foundation.sql','022_project_task_ownership.sql','023_project_video_read_acl.sql','024_project_account_relation_cursor.sql','025_project_collaboration.sql')) || '|' || (select count(*) from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace where namespace_row.nspname='public' and relation_row.relname in ('research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion','effective_account_authorization','idx_project_account_relation_verified_cursor','project_video_share_grant','project_access_event')) + (select count(*) from pg_proc function_row join pg_namespace namespace_row on namespace_row.oid=function_row.pronamespace where namespace_row.nspname='public' and function_row.proname in ('project_actor_can_read','project_video_can_read','project_shared_video_can_read'))")"
   case "$project_state" in
     '0|0') project_contract=legacy_absent ;;
     '4|14')
+      verify_project_contract "$RESTORE_DATABASE" pre_collaboration
+      project_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project_024)"
+      project_restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from research_organization) || '|' || (select count(*) from research_project) || '|' || (select count(*) from research_project_member) || '|' || (select count(*) from research_subject) || '|' || (select count(*) from project_account_relation) || '|' || (select count(*) from account_group) || '|' || (select count(*) from account_group_member) || '|' || (select count(*) from account_identity_link) || '|' || (select count(*) from account_authorization) || '|' || (select count(*) from project_video_inclusion)")"
+      [[ "$project_source_counts" == "$project_restored_counts" ]] || { echo 'ERROR: pre-collaboration project restore counts do not match the backup archive.' >&2; exit 1; }
+      project_contract=pre_collaboration
+      ;;
+    '5|17')
       verify_migration_ledger required "$RESTORE_DATABASE"
       verify_project_contract "$RESTORE_DATABASE"
       project_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project)"
-      project_restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from research_organization) || '|' || (select count(*) from research_project) || '|' || (select count(*) from research_project_member) || '|' || (select count(*) from research_subject) || '|' || (select count(*) from project_account_relation) || '|' || (select count(*) from account_group) || '|' || (select count(*) from account_group_member) || '|' || (select count(*) from account_identity_link) || '|' || (select count(*) from account_authorization) || '|' || (select count(*) from project_video_inclusion)")"
+      project_restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from research_organization) || '|' || (select count(*) from research_project) || '|' || (select count(*) from research_project_member) || '|' || (select count(*) from research_subject) || '|' || (select count(*) from project_account_relation) || '|' || (select count(*) from account_group) || '|' || (select count(*) from account_group_member) || '|' || (select count(*) from account_identity_link) || '|' || (select count(*) from account_authorization) || '|' || (select count(*) from project_video_inclusion) || '|' || (select count(*) from project_video_share_grant) || '|' || (select count(*) from project_access_event)")"
       [[ "$project_source_counts" == "$project_restored_counts" ]] || { echo 'ERROR: project restore counts do not match the backup archive.' >&2; exit 1; }
       project_contract=present
       ;;

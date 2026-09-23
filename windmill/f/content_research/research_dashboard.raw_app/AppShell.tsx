@@ -10,6 +10,7 @@ export type ResearchView =
   | 'today'
   | 'videos'
   | 'accounts'
+  | 'collaboration'
   | 'hotspots'
   | 'history'
   | 'collections'
@@ -32,6 +33,7 @@ const navItems: NavItem[] = [
   { icon: '♨', label: '今日研判', view: 'today', enabled: true },
   { icon: '▶', label: '视频库', view: 'videos', enabled: true },
   { icon: '♟', label: '账号库', view: 'accounts', enabled: true },
+  { icon: '♙', label: '项目协作', view: 'collaboration', enabled: true },
   { icon: '◆', label: '热点库', view: 'hotspots', enabled: true },
   { icon: '▤', label: '历史研究', view: 'history', enabled: false },
   { icon: '★', label: '收藏专题', view: 'collections', enabled: false },
@@ -62,7 +64,7 @@ export default function AppShell({
   const { scope, projects, legacyAdmin, loading, error, chooseScope } = useProjectScope()
   const projectMode = scope?.mode === 'project'
   const allowedViews = projectMode
-    ? new Set<ResearchView>(['videos', 'briefs', 'accounts'])
+    ? new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration'])
     : scope
       ? null
       : new Set<ResearchView>()
@@ -90,7 +92,7 @@ export default function AppShell({
           </div>
 
           <nav className="nav" aria-label="研究台主导航">
-            {navItems.filter((item) => item.enabled && (!allowedViews || allowedViews.has(item.view))).map((item) => (
+            {navItems.filter((item) => item.enabled && (!allowedViews || allowedViews.has(item.view)) && (projectMode || item.view !== 'collaboration')).map((item) => (
               <button
                 key={item.view}
                 className={activeView === item.view ? 'nav-item active' : 'nav-item'}

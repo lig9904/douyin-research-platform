@@ -1,0 +1,25 @@
+.project-collaboration-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin: 12px 0 18px;
+}
+
+.project-collaboration-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 18px;
+}
+
+.project-collaboration-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 0;
+  border-bottom: 1px solid #edf0f4;
+  line-height: 1.6;
+}
+
+.project-collaboration-list li:last-child { border-bottom: 0; }

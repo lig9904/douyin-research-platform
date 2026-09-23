@@ -11,6 +11,12 @@ TARGETS = {
         'research_organization', 'research_project', 'research_project_member',
         'research_subject', 'project_account_relation', 'account_group',
         'account_group_member', 'account_identity_link', 'account_authorization',
+        'project_video_inclusion', 'project_video_share_grant', 'project_access_event',
+    ),
+    'project_024': (
+        'research_organization', 'research_project', 'research_project_member',
+        'research_subject', 'project_account_relation', 'account_group',
+        'account_group_member', 'account_identity_link', 'account_authorization',
         'project_video_inclusion',
     ),
     'windmill': ('workspace', 'usr'),
