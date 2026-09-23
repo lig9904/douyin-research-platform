@@ -41,6 +41,7 @@ def test_project_account_foundation_is_present_in_schema_and_migration() -> None
         assert "revoked_at timestamptz" in source
         assert "trg_revoke_authorizations_for_inactive_relation" in source
         assert "trg_enforce_authorization_relation_not_inactive" in source
+        assert "create or replace view effective_account_authorization" in source
         assert "cardinality(task_roles) > 0" in source
         assert "cardinality(field_allowlist) > 0" in source
         assert "cardinality(operation_allowlist) > 0" in source
@@ -227,6 +228,19 @@ def test_021_keeps_project_subject_and_authorization_boundaries_in_database() ->
             ).fetchone()
             assert grant_status == "revoked"
             assert grant_revoked_at is not None
+            conn.execute(
+                "update project_account_relation set verification_status = 'verified' where id = %s",
+                (relation,),
+            )
+            with pytest.raises(psycopg.errors.RaiseException, match="cannot be reactivated"):
+                conn.execute(
+                    "update account_authorization set status = 'active', revoked_at = null where id = %s",
+                    (authorization,),
+                )
+            conn.execute(
+                "update project_account_relation set verification_status = 'pending' where id = %s",
+                (relation,),
+            )
             future_status, future_revoked_at, future_effective_from = conn.execute(
                 "select status, revoked_at, effective_from from account_authorization where id = %s",
                 (future_authorization,),
@@ -260,6 +274,82 @@ def test_021_keeps_project_subject_and_authorization_boundaries_in_database() ->
                          array['video.metrics.read'], 'secret://controlled/reference', 'draft',
                          'owner-1', 'evidence://grant/after-relation-revoked-draft')""",
                     (org_a, project_a, relation, account),
+                )
+
+            bounded_relation = conn.execute(
+                """insert into project_account_relation(
+                     project_id, idempotency_key, source_account_id, relation_type,
+                     task_roles, evidence_ref, verification_status, verified_by,
+                     effective_from, effective_until
+                   ) values (%s, 'relation.bounded.001', %s, 'official',
+                     array['publish_channel'], 'evidence://relation/bounded', 'verified',
+                     'owner-1', now(), now() + interval '2 days') returning id""",
+                (project_a, account),
+            ).fetchone()[0]
+            with pytest.raises(psycopg.errors.RaiseException, match="within its relation window"):
+                conn.execute(
+                    """insert into account_authorization(
+                         organization_id, project_id, idempotency_key,
+                         project_account_relation_id, source_account_id, provider,
+                         authorization_kind, purpose, field_allowlist, operation_allowlist,
+                         credential_ref, status, granted_by, evidence_ref
+                       ) values (%s, %s, 'authorization.unbounded.001', %s, %s,
+                         'douyin', 'project_account', 'read_metrics', array['video.play_count'],
+                         array['video.metrics.read'], 'secret://controlled/reference',
+                         'active', 'owner-1', 'evidence://grant/unbounded')""",
+                    (org_a, project_a, bounded_relation, account),
+                )
+            bounded_grant = conn.execute(
+                """insert into account_authorization(
+                     organization_id, project_id, idempotency_key,
+                     project_account_relation_id, source_account_id, provider,
+                     authorization_kind, purpose, field_allowlist, operation_allowlist,
+                     credential_ref, status, effective_until, granted_by, evidence_ref
+                   ) values (%s, %s, 'authorization.bounded.001', %s, %s,
+                     'douyin', 'project_account', 'read_metrics', array['video.play_count'],
+                     array['video.metrics.read'], 'secret://controlled/reference',
+                     'active', now() + interval '1 day', 'owner-1',
+                     'evidence://grant/bounded') returning id""",
+                (org_a, project_a, bounded_relation, account),
+            ).fetchone()[0]
+            conn.execute("update research_project set status = 'active' where id = %s", (project_a,))
+            assert conn.execute(
+                "select count(*) from effective_account_authorization where id = %s",
+                (bounded_grant,),
+            ).fetchone()[0] == 1
+            conn.execute(
+                "update project_account_relation set effective_until = now() where id = %s",
+                (bounded_relation,),
+            )
+            assert conn.execute(
+                "select status from account_authorization where id = %s", (bounded_grant,)
+            ).fetchone()[0] == "revoked"
+            assert conn.execute(
+                "select count(*) from effective_account_authorization where id = %s",
+                (bounded_grant,),
+            ).fetchone()[0] == 0
+            future_relation = conn.execute(
+                """insert into project_account_relation(
+                     project_id, idempotency_key, source_account_id, relation_type,
+                     task_roles, evidence_ref, verification_status, verified_by,
+                     effective_from
+                   ) values (%s, 'relation.future.001', %s, 'official',
+                     array['publish_channel'], 'evidence://relation/future', 'verified',
+                     'owner-1', now() + interval '1 day') returning id""",
+                (project_a, account),
+            ).fetchone()[0]
+            with pytest.raises(psycopg.errors.RaiseException, match="effective window"):
+                conn.execute(
+                    """insert into account_authorization(
+                         organization_id, project_id, idempotency_key,
+                         project_account_relation_id, source_account_id, provider,
+                         authorization_kind, purpose, field_allowlist, operation_allowlist,
+                         credential_ref, status, granted_by, evidence_ref
+                       ) values (%s, %s, 'authorization.future.early.001', %s, %s,
+                         'douyin', 'project_account', 'read_metrics', array['video.play_count'],
+                         array['video.metrics.read'], 'secret://controlled/reference',
+                         'active', 'owner-1', 'evidence://grant/future-early')""",
+                    (org_a, project_a, future_relation, account),
                 )
 
             cross_left = conn.execute(

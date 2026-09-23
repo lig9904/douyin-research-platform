@@ -9,6 +9,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -186,13 +187,17 @@ def test_project_roster_enforces_actor_membership_org_project_and_relation_windo
                      'evidence://grant')""",
                 (org, visible_project, relation, account),
             )
+            # The backend opens a second connection.  Reuse the complete test
+            # DSN rather than assuming local peer authentication: GitHub's
+            # PostgreSQL service requires the password in TEST_DATABASE_URL.
+            conninfo = conninfo_to_dict(DSN)
             params = dict(
-                host=conn.info.host or "127.0.0.1",
-                port=conn.info.port or 5432,
-                user=conn.info.user,
-                password="",
-                dbname=conn.info.dbname,
-                sslmode="prefer",
+                host=conninfo.get("host") or conn.info.host or "127.0.0.1",
+                port=int(conninfo.get("port") or conn.info.port or 5432),
+                user=conninfo.get("user") or conn.info.user,
+                password=conninfo.get("password", ""),
+                dbname=conninfo.get("dbname") or conn.info.dbname,
+                sslmode=conninfo.get("sslmode", "prefer"),
                 options=f"-c search_path={namespace}",
             )
             monkeypatch.setenv("WM_END_USER_EMAIL", "VIEWER@example.com")

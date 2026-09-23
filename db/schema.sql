@@ -1314,8 +1314,10 @@ create index if not exists idx_account_authorization_active
 create or replace function revoke_authorizations_for_inactive_relation()
 returns trigger language plpgsql as $$
 begin
-  if new.verification_status <> 'verified'
-     and old.verification_status is distinct from new.verification_status then
+  if (new.verification_status <> 'verified'
+      and old.verification_status is distinct from new.verification_status)
+     or old.effective_from is distinct from new.effective_from
+     or old.effective_until is distinct from new.effective_until then
     update account_authorization
        set status = 'revoked',
            revoked_at = coalesce(revoked_at, now()),
@@ -1328,19 +1330,33 @@ end;
 $$;
 drop trigger if exists trg_revoke_authorizations_for_inactive_relation on project_account_relation;
 create trigger trg_revoke_authorizations_for_inactive_relation
-after update of verification_status on project_account_relation
+after update of verification_status, effective_from, effective_until on project_account_relation
 for each row execute function revoke_authorizations_for_inactive_relation();
 
 create or replace function enforce_authorization_relation_not_inactive()
 returns trigger language plpgsql as $$
 declare
   relation_status text;
+  relation_from timestamptz;
+  relation_until timestamptz;
 begin
+  if tg_op = 'UPDATE' and old.status in ('expired', 'revoked')
+     and new.status in ('draft', 'active') then
+    raise exception 'expired or revoked authorization cannot be reactivated';
+  end if;
   if new.status = 'active' then
-    select verification_status into relation_status
+    select verification_status, effective_from, effective_until
+      into relation_status, relation_from, relation_until
       from project_account_relation where id = new.project_account_relation_id for share;
-    if relation_status is distinct from 'verified' then
-      raise exception 'authorization can only be active for a verified relation';
+    if relation_status is distinct from 'verified'
+       or relation_from > now()
+       or (relation_until is not null and relation_until <= now()) then
+      raise exception 'authorization can only be active for a verified relation in its effective window';
+    end if;
+    if new.effective_from < relation_from
+       or (relation_until is not null
+           and (new.effective_until is null or new.effective_until > relation_until)) then
+      raise exception 'authorization window must be within its relation window';
     end if;
   elsif new.status = 'draft' then
     select verification_status into relation_status
@@ -1354,8 +1370,21 @@ end;
 $$;
 drop trigger if exists trg_enforce_authorization_relation_not_inactive on account_authorization;
 create trigger trg_enforce_authorization_relation_not_inactive
-before insert or update of status, project_account_relation_id on account_authorization
+before insert or update of status, project_account_relation_id, effective_from, effective_until on account_authorization
 for each row execute function enforce_authorization_relation_not_inactive();
+
+-- Status alone is never a usable grant: expiry is time-driven and cannot be
+-- maintained by a trigger. Provider adapters must resolve through this view.
+create or replace view effective_account_authorization as
+select a.* from account_authorization a
+join project_account_relation r on r.id = a.project_account_relation_id
+join research_project p on p.id = a.project_id
+join research_organization o on o.id = a.organization_id
+where a.status = 'active' and a.effective_from <= now()
+  and (a.effective_until is null or a.effective_until > now())
+  and r.verification_status = 'verified' and r.effective_from <= now()
+  and (r.effective_until is null or r.effective_until > now())
+  and p.status = 'active' and o.status = 'active';
 
 comment on table project_account_relation is
   'Project-scoped business relationship to one canonical public source_account; does not grant provider access.';
