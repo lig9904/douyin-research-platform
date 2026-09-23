@@ -45,14 +45,18 @@ class _Provider:
 
 
 class _Store:
-    def __init__(self, *, new_platform_ids: set[str]) -> None:
+    def __init__(self, *, new_platform_ids: set[str],
+                 new_project_platform_ids: set[str] | None = None) -> None:
         self.run_id = uuid4()
         self.ids = {"old": uuid4(), "new": uuid4()}
         self.new_platform_ids = new_platform_ids
+        self.new_project_platform_ids = new_project_platform_ids or set()
+        self.project_id = None
         self.flags: tuple[object, set[object]] | None = None
         self.finished: dict | None = None
 
     def create_run(self, *_args, **_kwargs):
+        self.project_id = _kwargs.get("project_id")
         return self.run_id
 
     def ingest(self, items, context):
@@ -69,6 +73,10 @@ class _Store:
             new_videos=len(new_platform_ids),
             discovery_inserted=len(platform_ids) if context.record_discovery else 0,
             metric_inserted=len(platform_ids),
+            new_project_video_ids=[
+                self.ids[item] for item in platform_ids
+                if context.record_discovery and item in self.new_project_platform_ids
+            ],
         )
 
     def set_new_candidate_flags(self, run_id, identifiers):
@@ -94,8 +102,12 @@ class _Budget:
         raise AssertionError("provider-reserved mode must not use legacy budget calls")
 
 
-def _run(new_platform_ids: set[str], *, enrich_new_only: bool = True):
-    store = _Store(new_platform_ids=new_platform_ids)
+def _run(new_platform_ids: set[str], *, enrich_new_only: bool = True,
+         new_project_platform_ids: set[str] | None = None, project_id=None):
+    store = _Store(
+        new_platform_ids=new_platform_ids,
+        new_project_platform_ids=new_project_platform_ids,
+    )
     provider = _Provider()
     summary = L0L1Runner(
         provider=provider,
@@ -106,6 +118,7 @@ def _run(new_platform_ids: set[str], *, enrich_new_only: bool = True):
     ).run(
         [DiscoverySource("low_fan", "golden_low_fan", "72h-page-1")],
         enrich_new_only=enrich_new_only,
+        project_id=project_id,
     )
     return summary, store, provider
 
@@ -139,3 +152,15 @@ def test_manual_default_still_enriches_existing_videos() -> None:
     assert store.flags == (store.run_id, set())
     assert store.finished["summary"]["enrich_new_only"] is False
     assert store.finished["summary"]["detail_enriched_count"] == 2
+
+
+def test_project_new_candidate_is_independent_of_global_video_novelty() -> None:
+    project_id = uuid4()
+    summary, store, provider = _run(
+        set(), new_project_platform_ids={"old"}, project_id=project_id,
+    )
+
+    assert store.project_id == project_id
+    assert summary.new_candidate_count == 1
+    assert store.flags == (store.run_id, {store.ids["old"]})
+    assert provider.detail_batches == []  # No duplicate paid detail fetch.

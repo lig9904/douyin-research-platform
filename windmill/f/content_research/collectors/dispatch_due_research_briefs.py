@@ -45,9 +45,18 @@ def _due(db: postgresql) -> list[str]:
         cur.execute("set transaction read only")
         cur.execute(
             """
-            select id from research_brief
-            where status='active' and next_due_at <= now()
-            order by next_due_at, id
+            select brief.id
+            from research_brief as brief
+            left join research_project as project on project.id = brief.project_id
+            left join research_organization as organization
+              on organization.id = project.organization_id
+            where brief.status='active' and brief.next_due_at <= now()
+              and (
+                brief.project_id is null
+                or (project.status='active' and organization.status='active')
+              )
+              and (brief.project_id is null or brief.depth='metadata')
+            order by brief.next_due_at, brief.id
             limit 5
             """
         )

@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from douyin_research.providers.contracts import PlatformResearchProvider
 from douyin_research.providers.types import ProviderPage, VideoObservation
@@ -53,16 +54,19 @@ class L0L1Runner:
         self.provider_reserves_budget = provider_reserves_budget
 
     def run(self, sources: list[DiscoverySource], *, enrich_details: bool = True,
-            triggered_by: str = "system", enrich_new_only: bool = False) -> RunSummary:
+            triggered_by: str = "system", enrich_new_only: bool = False,
+            project_id: UUID | None = None) -> RunSummary:
         run_id = self.store.create_run(
             "l0l1_discovery",
             "v1.0.0",
             triggered_by,
             platform=self.provider.platform_name,
+            project_id=project_id,
         )
         observation_count = 0
         unique_platform_ids: dict[str, VideoObservation] = {}
         new_video_ids: set[Any] = set()
+        new_project_video_ids: set[Any] = set()
         new_platform_video_ids: set[str] = set()
         detail_enriched_count = 0
         try:
@@ -98,9 +102,15 @@ class L0L1Runner:
                         request_fingerprint=page.request_fingerprint,
                         source_count=len(page.items),
                         ranks=ranks,
+                        project_id=project_id,
                     ),
                 )
                 new_video_ids.update(ingested.new_video_ids)
+                if project_id is not None:
+                    project_new = getattr(ingested, "new_project_video_ids", None)
+                    if project_new is None:
+                        raise RuntimeError("project-scoped ingestion result is missing")
+                    new_project_video_ids.update(project_new)
                 new_platform_video_ids.update(ingested.new_platform_video_ids)
                 observation_count += len(items)
                 for item in items:
@@ -146,11 +156,13 @@ class L0L1Runner:
                         request_fingerprint=f"detail:{run_id}",
                         source_count=len(details),
                         record_discovery=False,
+                        project_id=project_id,
                     ),
                 )
 
             scores = self.scorer.score_run(run_id)
-            self.store.set_new_candidate_flags(run_id, new_video_ids)
+            candidate_ids = new_project_video_ids if project_id is not None else new_video_ids
+            self.store.set_new_candidate_flags(run_id, candidate_ids)
             self.store.finish_run(
                 run_id,
                 input_count=observation_count,
@@ -160,7 +172,7 @@ class L0L1Runner:
                          "platform": self.provider.platform_name,
                          "enrich_details": enrich_details,
                          "enrich_new_only": enrich_new_only,
-                         "new_candidate_count": len(new_video_ids),
+                         "new_candidate_count": len(candidate_ids),
                          "detail_enriched_count": detail_enriched_count},
             )
             return RunSummary(
@@ -170,7 +182,7 @@ class L0L1Runner:
                 observations=observation_count,
                 unique_platform_videos=len(unique_platform_ids),
                 scores=scores,
-                new_candidate_count=len(new_video_ids),
+                new_candidate_count=len(candidate_ids),
             )
         except Exception as exc:
             self.store.finish_run(

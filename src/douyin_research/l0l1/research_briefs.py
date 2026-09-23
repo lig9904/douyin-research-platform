@@ -10,6 +10,9 @@ import hashlib
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from uuid import UUID
+
+import psycopg
 
 from douyin_research.providers.endpoints import EndpointSpec
 from douyin_research.providers.errors import ProviderBudgetError
@@ -196,6 +199,7 @@ def depth_plan(depth: str) -> dict[str, bool]:
 
 def _run_call_gate(
     daily_reserve: Callable[[EndpointSpec], None],
+    *, project_check: Callable[[], None] | None = None,
 ) -> Callable[[EndpointSpec], None]:
     count = 0
 
@@ -203,14 +207,31 @@ def _run_call_gate(
         nonlocal count
         if count >= RESEARCH_BRIEF_MAX_EXTERNAL_CALLS:
             raise ProviderBudgetError("research brief external-call limit exceeded")
+        if project_check is not None:
+            project_check()
         daily_reserve(spec)
         count += 1
 
     return reserve
 
 
+def _ensure_active_project(dsn: str, project_id: UUID) -> None:
+    # Recheck immediately before every uncached provider request. A project
+    # paused after the dispatch claim must not continue spending by default.
+    with psycopg.connect(dsn) as conn:
+        row = conn.execute(
+            """select 1 from research_project p
+               join research_organization o on o.id = p.organization_id
+               where p.id = %s and p.status = 'active' and o.status = 'active'""",
+            (project_id,),
+        ).fetchone()
+    if row is None:
+        raise PermissionError("research project is unavailable")
+
+
 def run_live(
     *, dsn: str, api_key: str, config: ResearchBriefConfig, triggered_by: str,
+    project_id: UUID | None = None,
 ) -> dict[str, Any]:
     validate_config(config)
     if not dsn or not api_key or not triggered_by:
@@ -233,7 +254,11 @@ def run_live(
         before_external_call=_run_call_gate(
             budget.make_before_external_call(
                 provider="tikhub", budget_key=RESEARCH_BRIEF_BUDGET_KEY,
-            )
+            ),
+            project_check=(
+                (lambda: _ensure_active_project(dsn, project_id))
+                if project_id is not None else None
+            ),
         ),
         detail_strategy="batch50",
     )
@@ -252,6 +277,7 @@ def run_live(
             enrich_details=True,
             triggered_by=triggered_by,
             enrich_new_only=True,
+            project_id=project_id,
         )
     finally:
         transport.close()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -48,6 +49,54 @@ def test_dispatcher_has_no_public_input_or_provider_secret() -> None:
     assert "enabled: false" in schedule
 
 
+def test_scoped_dispatch_only_selects_active_project_and_organization() -> None:
+    dispatch = _load("dispatch_due_research_briefs")
+    source = inspect.getsource(dispatch._due).lower()
+    assert "left join research_project as project" in source
+    assert "left join research_organization as organization" in source
+    assert "brief.project_id is null" in source
+    assert "project.status='active' and organization.status='active'" in source
+
+
+def test_dispatcher_keeps_legacy_due_briefs_but_excludes_paused_project_fixture(monkeypatch) -> None:
+    dispatch = _load("dispatch_due_research_briefs")
+    legacy_id = uuid4()
+    active_project_id = uuid4()
+
+    class Cursor:
+        def execute(self, statement: str, _params=None) -> None:
+            if statement.strip().lower().startswith("select brief.id"):
+                # The fake database only returns rows that satisfy the asserted
+                # SQL predicate: legacy and active-project briefs.  A paused
+                # project brief is deliberately absent.
+                assert "brief.project_id is null" in statement
+                assert "project.status='active' and organization.status='active'" in statement
+
+        def fetchall(self):
+            return [{"id": legacy_id}, {"id": active_project_id}]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    monkeypatch.setattr(dispatch.psycopg, "connect", lambda **_kwargs: Connection())
+    assert dispatch._due({"host": "db", "port": 5432, "user": "u", "password": "p", "dbname": "d", "sslmode": "prefer"}) == [
+        str(legacy_id), str(active_project_id)
+    ]
+
+
 def test_dispatcher_failure_category_does_not_leak_exception_message() -> None:
     dispatch = _load("dispatch_due_research_briefs")
     failure = dispatch._safe_failure("query", ValueError("password=do-not-leak"))
@@ -89,3 +138,67 @@ def test_runner_uses_fixed_server_resources_and_zero_retry_core() -> None:
     assert 'IDENTITY_PATH = "f/content_research/automation_worker_identity"' in source
     assert "max_external_calls" in source
     assert "raw_provider_payload_included" in source
+
+
+@pytest.mark.parametrize("project_id", [uuid4(), None])
+def test_runner_passes_project_scope_to_live_run(monkeypatch, project_id) -> None:
+    runner = _load("run_research_brief")
+    brief_run_id = uuid4()
+    received: dict[str, object] = {}
+
+    @contextmanager
+    def acquired(_dsn: str):
+        yield True
+
+    def live_run(**kwargs):
+        received.update(kwargs)
+        return {
+            "run_id": str(uuid4()),
+            "observations": 0,
+            "unique_platform_videos": 0,
+            "new_candidate_count": 0,
+            "scored_videos": 0,
+            "provider_call_count": 0,
+            "cached_call_count": 0,
+            "uncached_call_count": 0,
+            "max_external_calls": 2,
+            "sdk_retries": 0,
+            "collect_comments": False,
+            "collect_media": False,
+            "review_required": False,
+            "auto_submit_asr": False,
+            "auto_submit_l3": False,
+        }
+
+    monkeypatch.setattr(runner, "_resource", lambda: {})
+    monkeypatch.setattr(runner, "_dsn", lambda _resource: "postgresql://test")
+    monkeypatch.setattr(runner, "_variable", lambda _path: "secret" if "api_key" in _path else "worker")
+    monkeypatch.setattr(runner, "_single_paid_job", acquired)
+    monkeypatch.setattr(
+        runner,
+        "_claim",
+        lambda _dsn, _brief_id, _actor: {
+            "brief_run_id": brief_run_id,
+            "project_id": project_id,
+            "config": {
+                "source_type": "low_fan", "target": None,
+                "time_window_hours": 24, "max_items": 1,
+                "depth": "metadata", "cadence_hours": None,
+            },
+        },
+    )
+    monkeypatch.setattr(runner, "run_live", live_run)
+    monkeypatch.setattr(runner, "_finish", lambda *_args, **_kwargs: None)
+
+    result = runner.main(str(uuid4()))
+
+    assert result["status"] == "completed"
+    assert received["project_id"] == project_id
+
+
+def test_runner_claim_persists_the_same_project_scope_as_its_brief() -> None:
+    runner = _load("run_research_brief")
+    source = inspect.getsource(runner._claim)
+    assert "project_id = _project_id(row[\"project_id\"])" in source
+    assert "brief_id, project_id, brief_version" in source
+    assert "brief.project_id is null" in source

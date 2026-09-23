@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.14.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@159c06d0b97e52b6da6e122b51f0811a4a43ab16",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@c212c8c10f62f9b382300fb7ac02023d96eecbe9",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -66,6 +66,15 @@ def _brief_id(value: object) -> UUID:
         raise ValueError("brief_id is invalid") from None
 
 
+def _project_id(value: object) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        raise RuntimeError("research brief project scope is invalid") from None
+
+
 def _identity(value: object) -> str:
     if not isinstance(value, str):
         raise ValueError("worker identity is invalid")
@@ -97,11 +106,20 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
         )
         cur.execute(
             """
-            select id, platform, source_type, target, time_window_hours,
-              max_items, depth, cadence_hours, config_version, next_due_at
-            from research_brief
-            where id=%s and status='active' and next_due_at <= now()
-            for update
+            select brief.id, brief.project_id, brief.platform, brief.source_type,
+              brief.target, brief.time_window_hours, brief.max_items, brief.depth,
+              brief.cadence_hours, brief.config_version, brief.next_due_at
+            from research_brief as brief
+            left join research_project as project on project.id = brief.project_id
+            left join research_organization as organization
+              on organization.id = project.organization_id
+            where brief.id=%s and brief.status='active' and brief.next_due_at <= now()
+              and (
+                brief.project_id is null
+                or (project.status='active' and organization.status='active')
+              )
+              and (brief.project_id is null or brief.depth='metadata')
+            for update of brief
             """,
             (brief_id,),
         )
@@ -117,18 +135,19 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
             "depth": row["depth"],
             "cadence_hours": row["cadence_hours"],
         }
+        project_id = _project_id(row["project_id"])
         due_at: datetime = row["next_due_at"]
         dispatch_key = f"{brief_id}:{row['config_version']}:{due_at.isoformat()}"
         cur.execute(
             """
             insert into research_brief_run(
-              brief_id, brief_version, dispatch_key, trigger_kind,
+              brief_id, project_id, brief_version, dispatch_key, trigger_kind,
               triggered_by, status, config_snapshot
-            ) values (%s,%s,%s,'schedule',%s,'running',%s)
+            ) values (%s,%s,%s,%s,'schedule',%s,'running',%s)
             on conflict(dispatch_key) do nothing returning id
             """,
             (
-                brief_id, row["config_version"], dispatch_key, actor,
+                brief_id, project_id, row["config_version"], dispatch_key, actor,
                 Jsonb(snapshot),
             ),
         )
@@ -154,7 +173,11 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
                 """,
                 (brief_id,),
             )
-        return {"brief_run_id": run_row["id"], "config": snapshot}
+        return {
+            "brief_run_id": run_row["id"],
+            "project_id": project_id,
+            "config": snapshot,
+        }
 
 
 def _finish(
@@ -234,7 +257,13 @@ def main(brief_id: str) -> dict[str, Any]:
             api_key = (_variable(API_KEY_PATH) or "").strip()
             if not api_key:
                 raise RuntimeError("TikHub secret is not configured")
-            result = run_live(dsn=dsn, api_key=api_key, config=config, triggered_by=actor)
+            result = run_live(
+                dsn=dsn,
+                api_key=api_key,
+                config=config,
+                triggered_by=actor,
+                project_id=claim["project_id"],
+            )
             safe = _safe_result(result, brief_run_id)
             source_run_id = UUID(safe["run_id"])
             _finish(

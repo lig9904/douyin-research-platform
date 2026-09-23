@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
 from uuid import UUID
@@ -24,6 +24,7 @@ class DiscoveryContext:
     source_count: int | None = None
     ranks: dict[str, int] | None = None
     record_discovery: bool = True
+    project_id: UUID | None = None
 
 
 @dataclass(slots=True)
@@ -34,6 +35,7 @@ class IngestResult:
     new_videos: int
     discovery_inserted: int
     metric_inserted: int
+    new_project_video_ids: list[UUID] = field(default_factory=list)
 
 
 class L0L1Store:
@@ -47,15 +49,26 @@ class L0L1Store:
         triggered_by: str = "system",
         *,
         platform: str | None = None,
+        project_id: UUID | None = None,
     ) -> UUID:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            if project_id is not None:
+                cur.execute(
+                    """select 1 from research_project p
+                       join research_organization o on o.id = p.organization_id
+                       where p.id = %s and p.status = 'active' and o.status = 'active'
+                       for share of p, o""",
+                    (project_id,),
+                )
+                if cur.fetchone() is None:
+                    raise PermissionError("research project is unavailable")
             cur.execute(
                 """
-                insert into pipeline_run(run_type, run_version, platform, triggered_by)
-                values (%s, %s, %s, %s)
+                insert into pipeline_run(run_type, run_version, platform, triggered_by, project_id)
+                values (%s, %s, %s, %s, %s)
                 returning id
                 """,
-                (run_type, run_version, platform, triggered_by),
+                (run_type, run_version, platform, triggered_by, project_id),
             )
             run_id = cur.fetchone()[0]
             conn.commit()
@@ -108,12 +121,30 @@ class L0L1Store:
         observations = list(observations)
         video_ids: list[UUID] = []
         new_video_ids: list[UUID] = []
+        new_project_video_ids: list[UUID] = []
         new_platform_video_ids: list[str] = []
         new_videos = 0
         discovery_inserted = 0
         metric_inserted = 0
 
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "select project_id from pipeline_run where id = %s for share",
+                (context.run_id,),
+            )
+            run_scope = cur.fetchone()
+            if run_scope is None or run_scope[0] != context.project_id:
+                raise ValueError("discovery context does not match the run project")
+            if context.project_id is not None:
+                cur.execute(
+                    """select 1 from research_project p
+                       join research_organization o on o.id = p.organization_id
+                       where p.id = %s and p.status = 'active' and o.status = 'active'
+                       for share of p, o""",
+                    (context.project_id,),
+                )
+                if cur.fetchone() is None:
+                    raise PermissionError("research project is unavailable")
             for obs in observations:
                 self._validate_observation(obs)
                 account_id = None
@@ -121,6 +152,24 @@ class L0L1Store:
                     account_id = self._upsert_account(cur, obs, context)
 
                 video_id, inserted = self._upsert_video(cur, obs, account_id, context)
+                if context.project_id is not None and context.record_discovery:
+                    cur.execute(
+                        """insert into project_video_inclusion(
+                             project_id, video_id, source_run_id, source_type
+                           ) values (%s, %s, %s, 'pipeline_run')
+                           on conflict (project_id, video_id) do nothing
+                           returning video_id""",
+                        (context.project_id, video_id, context.run_id),
+                    )
+                    if cur.fetchone() is not None:
+                        new_project_video_ids.append(video_id)
+                    else:
+                        cur.execute(
+                            """update project_video_inclusion
+                               set last_seen_at = now()
+                               where project_id = %s and video_id = %s""",
+                            (context.project_id, video_id),
+                        )
                 new_videos += int(inserted)
                 video_ids.append(video_id)
                 if inserted:
@@ -234,6 +283,7 @@ class L0L1Store:
             new_videos=new_videos,
             discovery_inserted=discovery_inserted,
             metric_inserted=metric_inserted,
+            new_project_video_ids=list(dict.fromkeys(new_project_video_ids)),
         )
 
     def set_new_candidate_flags(
