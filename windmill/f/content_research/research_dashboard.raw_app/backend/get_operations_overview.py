@@ -265,6 +265,7 @@ def main(
               count(*)::int as task_count,
               count(*) filter (where c.status='completed')::int as completed_count,
               count(*) filter (where c.status='failed')::int as failed_count,
+              count(*) filter (where c.total_cost is null)::int as unknown_amount_count,
               coalesce(sum(c.api_cost), 0)::numeric as api_cost,
               coalesce(sum(c.asr_cost), 0)::numeric as asr_cost,
               coalesce(sum(c.llm_cost), 0)::numeric as llm_cost,

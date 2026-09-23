@@ -58,3 +58,8 @@ jobs:
         run: |
           npx esbuild tests/DailySpendDisplay.test.ts --bundle --platform=node --outfile=/tmp/daily-spend-display-test.cjs --log-level=warning
           node /tmp/daily-spend-display-test.cjs
+
+      - name: Verify unknown task costs stay unknown
+        run: |
+          npx esbuild tests/OperationsCostDisplay.test.ts --bundle --platform=node --outfile=/tmp/operations-cost-display-test.cjs --log-level=warning
+          node /tmp/operations-cost-display-test.cjs
