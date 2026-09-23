@@ -176,13 +176,13 @@ def main(db: postgresql, project_id: str, action: str,
                 return {**replay["outcome"], "idempotent_replay": True}
             cur.execute(
                 """insert into project_video_inclusion
-                     (project_id,video_id,source_type,source_ref,status,metadata)
+                   (project_id,video_id,source_type,source_ref,status,metadata)
                    values (%s,%s,'manual',%s,'accepted',
-                     jsonb_build_object('last_accepted_by',%s,'last_accepted_at',now()))
+                     jsonb_build_object('last_accepted_by',%s::text,'last_accepted_at',now()))
                    on conflict (project_id,video_id) do update
                      set status='accepted', updated_at=now(),
                          metadata=project_video_inclusion.metadata ||
-                           jsonb_build_object('last_accepted_by',%s,'last_accepted_at',now())
+                           jsonb_build_object('last_accepted_by',%s::text,'last_accepted_at',now())
                    where project_video_inclusion.status <> 'accepted'
                    returning video_id""",
                 (project, candidate["id"], f"douyin:{video_key}", actor, actor),
