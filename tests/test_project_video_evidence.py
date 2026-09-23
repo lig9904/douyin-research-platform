@@ -96,6 +96,21 @@ def test_project_video_evidence_requires_manager_and_exact_acceptance(monkeypatc
             assert preview["video"]["project_status"] is None
             assert "source_url" not in preview["video"]
             assert "raw_payload" not in preview["video"]
+            original_connect = module._connect
+
+            class TracedConnection:
+                def __init__(self, actual):
+                    self.actual = actual
+
+                def __enter__(self):
+                    return self.actual.__enter__()
+
+                def __exit__(self, error_type, error, traceback):
+                    if error is not None:
+                        print(f"evidence write diagnostic: {error_type.__name__}: {error}")
+                    return self.actual.__exit__(error_type, error, traceback)
+
+            monkeypatch.setattr(module, "_connect", lambda params: TracedConnection(original_connect(params)))
             key = str(uuid4())
             result = module.main(db, str(a), "accept", "1234567890123456789", key)
             assert result["changed"] and result["video_id"] == str(video)
