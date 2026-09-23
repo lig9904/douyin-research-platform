@@ -24,10 +24,16 @@ def _gate_sql(mode: str = "current") -> str:
     gate = source[start:end]
     common = re.search(r'owner_tables="([^"\n]+)"', source)
     extra = re.search(r'owner_tables="\$owner_tables,([^"\n]+)"', source)
-    collaboration = re.search(r'collab_checks="(.*?)"\n  elif', source, re.S)
+    collaboration = re.search(r'collab_checks="(.*?)"\n    if', source, re.S)
     assert common and extra and collaboration
-    if mode in {"current", "restored"}:
-        return (gate.replace("$collab_checks", collaboration.group(1))
+    if mode in {"current", "restored", "pre_accepted_share"}:
+        checks = collaboration.group(1)
+        if mode == "pre_accepted_share":
+            checks = checks.replace(
+                "8325f74b3627ea04a3a2fd5506ceeb8e5f00fd660923f7f877682151a7e0e1d1",
+                "3bf5615f5cbc79e1bd6d9f2865a4b28c84205bd8fc012742bfb9ac366c2cae62",
+            )
+        return (gate.replace("$collab_checks", checks)
                     .replace("$mode", mode)
                     .replace("$owner_count", "12")
                     .replace("$owner_only_tables", common.group(1) + ",'effective_account_authorization'," + extra.group(1))
@@ -65,7 +71,7 @@ def test_project_release_gate_detects_missing_cursor_index_and_acl_function() ->
                 f"to_regprocedure('{namespace}.project_shared_video_can_read(uuid,uuid,text,uuid)')",
                 f"to_regprocedure('{namespace}.missing_share_acl(uuid,uuid,text,uuid)')",
             )
-            assert conn.execute(missing_share_acl).fetchone()[0] == "025.share_acl,025.share_body"
+            assert conn.execute(missing_share_acl).fetchone()[0] == "025.share_acl,026.share_body"
             missing_acl = gate.replace(
                 f"to_regprocedure('{namespace}.project_actor_can_read(uuid,text)')",
                 f"to_regprocedure('{namespace}.missing_actor_acl(uuid,text)')",
@@ -81,6 +87,14 @@ def test_project_release_gate_detects_missing_cursor_index_and_acl_function() ->
             restored_gate = restored_gate.replace("nspname='public'", f"nspname='{namespace}'")
             assert conn.execute(restored_gate).fetchone()[0] == ""
             conn.execute(sql.SQL("revoke execute on function {}.project_shared_video_can_read(uuid,uuid,text,uuid) from public").format(sql.Identifier(namespace)))
+            conn.execute((ROOT / "db/migrations/025_project_collaboration.sql").read_text(encoding="utf-8"), prepare=False)
+            old_gate = _gate_sql("pre_accepted_share").replace("public.", f"{namespace}.")
+            old_gate = old_gate.replace("schemaname='public'", f"schemaname='{namespace}'")
+            old_gate = old_gate.replace("nspname='public'", f"nspname='{namespace}'")
+            assert conn.execute(old_gate).fetchone()[0] == ""
+            assert conn.execute(gate).fetchone()[0] == "026.share_body"
+            conn.execute((ROOT / "db/migrations/026_share_only_accepted_video.sql").read_text(encoding="utf-8"), prepare=False)
+            assert conn.execute(gate).fetchone()[0] == ""
             legacy_gate = _gate_sql("pre_collaboration").replace("public.", f"{namespace}.")
             legacy_gate = legacy_gate.replace("schemaname='public'", f"schemaname='{namespace}'")
             legacy_gate = legacy_gate.replace("nspname='public'", f"nspname='{namespace}'")

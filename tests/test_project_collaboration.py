@@ -37,6 +37,13 @@ def test_collaboration_backends_bind_only_research_db() -> None:
         assert "raw_payload" not in source
 
 
+def test_shared_video_requires_source_acceptance() -> None:
+    migration = (ROOT / "db/migrations/026_share_only_accepted_video.sql").read_text()
+    schema = (ROOT / "db/schema.sql").read_text()
+    assert "inclusion_row.status = 'accepted'" in migration
+    assert "inclusion_row.status = 'accepted'" in schema
+
+
 def test_collaboration_page_is_project_only_and_shows_narrow_share_scope() -> None:
     app = (BACKEND.parent / "App.tsx").read_text()
     shell = (BACKEND.parent / "AppShell.tsx").read_text()
@@ -96,6 +103,7 @@ def test_project_collaboration_members_and_explicit_share(monkeypatch) -> None:
             )
             conn.execute((ROOT / "db/migrations/023_project_video_read_acl.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/025_project_collaboration.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/026_share_only_accepted_video.sql").read_text(), prepare=False)
             org = conn.execute("insert into research_organization(slug,name) values('shared-org','共享组织') returning id").fetchone()[0]
             other_org = conn.execute("insert into research_organization(slug,name) values('other-org','其它组织') returning id").fetchone()[0]
             source = conn.execute(
@@ -157,6 +165,21 @@ def test_project_collaboration_members_and_explicit_share(monkeypatch) -> None:
             assert videos[0]["title"] == "公开视频"
             assert videos[0]["play_count"] == 100
             assert "raw_payload" not in videos[0]
+            for inclusion_status in ("candidate", "shortlisted", "rejected", "archived"):
+                conn.execute(
+                    "update project_video_inclusion set status=%s where project_id=%s and video_id=%s",
+                    (inclusion_status, source, video),
+                )
+                assert read.main(db, str(target))["shared_videos"] == []
+                assert conn.execute(
+                    "select project_shared_video_can_read(%s,%s,%s,%s)",
+                    (source, target, "b-viewer@example.com", video),
+                ).fetchone()[0] is False
+            conn.execute(
+                "update project_video_inclusion set status='accepted' where project_id=%s and video_id=%s",
+                (source, video),
+            )
+            assert len(read.main(db, str(target))["shared_videos"]) == 1
             conn.execute("update source_video set availability_status='unavailable' where id=%s", (video,))
             assert read.main(db, str(target))["shared_videos"] == []
             conn.execute("update source_video set availability_status='available' where id=%s", (video,))

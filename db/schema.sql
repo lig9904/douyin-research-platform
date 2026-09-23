@@ -1662,11 +1662,11 @@ create or replace function project_shared_video_can_read(
         and grant_row.status = 'active'
         and grant_row.scope = 'public_video_evidence'
         and grant_row.effective_until > now()
-        and inclusion_row.status <> 'archived'
+        and inclusion_row.status = 'accepted'
         and video.availability_status = 'available'
     ), false
   );
 $$;
 comment on function project_shared_video_can_read(uuid, uuid, text, uuid) is
-  'Fail-closed, accepted cross-project grant for public video evidence only.';
+  'Fail-closed, accepted cross-project grant for source-approved public video evidence only.';
 revoke all on function project_shared_video_can_read(uuid, uuid, text, uuid) from public;
