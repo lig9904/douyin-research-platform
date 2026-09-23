@@ -95,6 +95,8 @@ V2 增加“我们自己发出去以后究竟发生了什么”。
 
 ## 数据模型建议
 
+实现前应先与[多项目、多类型账号关系模型](GENERIC_PROJECT_ACCOUNT_MODEL_V1.md)对齐：下述 `owned_account` 应引用既有 `source_account` 的平台身份，并通过项目关系及授权记录判断是否可读，不再另造一份独立账号身份；自有、合作、竞品等角色不能塞进 `source_account.account_type`。以下字段与能力仍是 V2 规划，尚未自动接入。
+
 新增：
 
 - owned_account
