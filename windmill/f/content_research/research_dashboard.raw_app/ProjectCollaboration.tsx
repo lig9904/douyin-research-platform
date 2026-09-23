@@ -69,6 +69,7 @@ export default function ProjectCollaboration({ scope, onNavigate }: {
   const currentProject = useRef(projectId)
   currentProject.current = projectId
   const requestVersion = useRef(0)
+  const mutationVersion = useRef(0)
   const [data, setData] = useState<Collaboration | null>(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -109,30 +110,33 @@ export default function ProjectCollaboration({ scope, onNavigate }: {
     setNoticeWarning(false)
     setEmail('')
     setTarget(undefined)
+    setBusy(false)
+    mutationVersion.current += 1
     void refresh()
-    return () => { requestVersion.current += 1 }
+    return () => { requestVersion.current += 1; mutationVersion.current += 1 }
   }, [projectId])
 
   const mutate = async (action: string, extra: Record<string, unknown>) => {
     if (!projectId || currentProject.current !== projectId || busy) return
+    const version = ++mutationVersion.current
     setBusy(true)
     setError('')
     setNotice('')
     setNoticeWarning(false)
     try {
       await backend.mutate_project_collaboration({ project_id: projectId, action, ...extra })
-      if (currentProject.current !== projectId) return
+      if (currentProject.current !== projectId || version !== mutationVersion.current) return
       if (action === 'member_set') setEmail('')
       if (action === 'share_offer') setTarget(undefined)
       const refreshed = await refresh()
-      if (currentProject.current === projectId) {
+      if (currentProject.current === projectId && version === mutationVersion.current) {
         setNotice(refreshed ? actionMessages[action] || '操作已保存。' : '操作已提交，但最新状态未核验；请刷新权限核对。')
         setNoticeWarning(!refreshed)
       }
     } catch (e) {
-      if (currentProject.current === projectId) setError(e instanceof Error ? e.message : String(e))
+      if (currentProject.current === projectId && version === mutationVersion.current) setError(e instanceof Error ? e.message : String(e))
     } finally {
-      setBusy(false)
+      if (version === mutationVersion.current) setBusy(false)
     }
   }
 
