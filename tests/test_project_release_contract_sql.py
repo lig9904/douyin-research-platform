@@ -26,8 +26,9 @@ def _gate_sql(mode: str = "current") -> str:
     extra = re.search(r'owner_tables="\$owner_tables,([^"\n]+)"', source)
     collaboration = re.search(r'collab_checks="(.*?)"\n  elif', source, re.S)
     assert common and extra and collaboration
-    if mode == "current":
+    if mode in {"current", "restored"}:
         return (gate.replace("$collab_checks", collaboration.group(1))
+                    .replace("$mode", mode)
                     .replace("$owner_count", "12")
                     .replace("$owner_only_tables", common.group(1) + ",'effective_account_authorization'," + extra.group(1))
                     .replace("$owner_tables", common.group(1) + "," + extra.group(1)))
@@ -75,6 +76,10 @@ def test_project_release_gate_detects_missing_cursor_index_and_acl_function() ->
             conn.execute(sql.SQL("revoke select on {}.project_account_relation from public").format(sql.Identifier(namespace)))
             conn.execute(sql.SQL("grant execute on function {}.project_shared_video_can_read(uuid,uuid,text,uuid) to public").format(sql.Identifier(namespace)))
             assert conn.execute(gate).fetchone()[0] == "025.share_public_execute"
+            restored_gate = _gate_sql("restored").replace("public.", f"{namespace}.")
+            restored_gate = restored_gate.replace("schemaname='public'", f"schemaname='{namespace}'")
+            restored_gate = restored_gate.replace("nspname='public'", f"nspname='{namespace}'")
+            assert conn.execute(restored_gate).fetchone()[0] == ""
             conn.execute(sql.SQL("revoke execute on function {}.project_shared_video_can_read(uuid,uuid,text,uuid) from public").format(sql.Identifier(namespace)))
             legacy_gate = _gate_sql("pre_collaboration").replace("public.", f"{namespace}.")
             legacy_gate = legacy_gate.replace("schemaname='public'", f"schemaname='{namespace}'")

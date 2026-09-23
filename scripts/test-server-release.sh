@@ -279,7 +279,7 @@ verify_project_contract() {
   local collab_checks='' owner_count=10 owner_tables owner_only_tables
   owner_tables="'research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion'"
   owner_only_tables="$owner_tables,'effective_account_authorization'"
-  if [[ "$mode" == current ]]; then
+  if [[ "$mode" == current || "$mode" == restored ]]; then
     owner_count=12
     owner_tables="$owner_tables,'project_video_share_grant','project_access_event'"
     owner_only_tables="$owner_only_tables,'project_video_share_grant','project_access_event'"
@@ -289,7 +289,7 @@ verify_project_contract() {
       ('025.share_cursor', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_video_share_target_active') and indisvalid and indisready)),
       ('025.share_acl', exists(select 1 from pg_proc where oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and not prosecdef and proconfig is null and provolatile='s' and prolang=(select oid from pg_language where lanname='sql') and prorettype='boolean'::regtype and pg_get_userbyid(proowner)=current_user)),
       ('025.share_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and encode(sha256(convert_to(prosrc,'UTF8')),'hex')='3bf5615f5cbc79e1bd6d9f2865a4b28c84205bd8fc012742bfb9ac366c2cae62')),
-      ('025.share_public_execute', not exists(select 1 from pg_proc function_row cross join lateral aclexplode(coalesce(function_row.proacl,acldefault('f',function_row.proowner))) grant_row where function_row.oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and grant_row.grantee=0 and grant_row.privilege_type='EXECUTE')),
+      ('025.share_public_execute', ('$mode'='restored' or not exists(select 1 from pg_proc function_row cross join lateral aclexplode(coalesce(function_row.proacl,acldefault('f',function_row.proowner))) grant_row where function_row.oid=to_regprocedure('public.project_shared_video_can_read(uuid,uuid,text,uuid)') and grant_row.grantee=0 and grant_row.privilege_type='EXECUTE'))),
       ('025.share_denies_unknown', public.project_shared_video_can_read('00000000-0000-0000-0000-000000000000'::uuid,'00000000-0000-0000-0000-000000000000'::uuid,'nobody@example.invalid','00000000-0000-0000-0000-000000000000'::uuid)=false)"
   elif [[ "$mode" != pre_collaboration ]]; then
     echo 'ERROR: unknown project contract mode.' >&2
@@ -455,7 +455,7 @@ cmd_restore_drill() (
       ;;
     '5|17')
       verify_migration_ledger required "$RESTORE_DATABASE"
-      verify_project_contract "$RESTORE_DATABASE"
+      verify_project_contract "$RESTORE_DATABASE" restored
       project_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project)"
       project_restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from research_organization) || '|' || (select count(*) from research_project) || '|' || (select count(*) from research_project_member) || '|' || (select count(*) from research_subject) || '|' || (select count(*) from project_account_relation) || '|' || (select count(*) from account_group) || '|' || (select count(*) from account_group_member) || '|' || (select count(*) from account_identity_link) || '|' || (select count(*) from account_authorization) || '|' || (select count(*) from project_video_inclusion) || '|' || (select count(*) from project_video_share_grant) || '|' || (select count(*) from project_access_event)")"
       [[ "$project_source_counts" == "$project_restored_counts" ]] || { echo 'ERROR: project restore counts do not match the backup archive.' >&2; exit 1; }
