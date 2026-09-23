@@ -110,6 +110,20 @@ def test_safe_tool_replaces_input_and_runtime_errors() -> None:
     ) == {"ok": False, "error": "MCP_READ_UNAVAILABLE"}
 
 
+def test_private_briefs_fail_closed_before_database_or_resource_access(monkeypatch) -> None:
+    def unexpected(*args, **kwargs):
+        raise AssertionError("private MCP tool attempted database access")
+
+    monkeypatch.setattr(_queries, "_all", unexpected)
+    monkeypatch.setattr(_queries, "research_db", unexpected)
+    module = importlib.import_module(
+        "windmill.f.content_research.research_tools.get_research_briefs"
+    )
+    expected = {"ok": False, "error": "MCP_IDENTITY_SCOPE_UNAVAILABLE"}
+    assert _queries.get_research_briefs({}, limit=1) == expected
+    assert module.main(limit=1) == expected
+
+
 @pytest.mark.parametrize(
     ("call", "valid"),
     [

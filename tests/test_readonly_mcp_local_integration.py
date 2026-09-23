@@ -134,8 +134,7 @@ def test_local_readonly_mcp_end_to_end() -> None:
     )
     assert briefs is not None
     briefs_data = _tool_data(briefs)
-    assert briefs_data["read_only"] is True
-    assert isinstance(briefs_data["items"], list)
+    assert briefs_data == {"ok": False, "error": "MCP_IDENTITY_SCOPE_UNAVAILABLE"}
 
 
 def test_local_reviewer_database_write_is_rejected() -> None:

@@ -1,8 +1,9 @@
 # py: ==3.14.*
 from __future__ import annotations
 
-from ..research_tool_lib.queries import get_research_briefs, research_db, safe_tool
+from ..research_tool_lib.queries import get_research_briefs
 
 
 def main(limit: int = 20):
-    return safe_tool(lambda: get_research_briefs(research_db(), limit=limit))
+    # No verified actor is available to a shared MCP script token.
+    return get_research_briefs({}, limit=limit)

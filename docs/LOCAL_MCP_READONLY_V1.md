@@ -11,7 +11,8 @@
 - `get_case_detail`：一条案例及已完成 L3 结构化研究的白名单字段/成本；
 - `get_cost_summary`：任务成本和日预算状态。
 - `get_daily_briefing`：公开标题、合并指标、字段来源、规则优先级和 L3 完成状态；
-- `get_research_briefs`：研究任务范围、频率、下次执行与最近一次安全运行状态。
+- `get_research_briefs`：暂时固定返回 `MCP_IDENTITY_SCOPE_UNAVAILABLE`；stdio
+  MCP 无已核验最终用户身份，不得读取私人任务。待 actor/project 授权接通后再恢复。
 
 它允许返回公开视频标题和账号昵称，便于真正按内容检索；不会返回描述、转写、评论正文、L3 自由文本、URL、Provider 原始载荷、任务 key、证据指纹、人工标注、数据库错误或凭据。完整原始记录由研究台按视频 ID 下钻查看，不通过 MCP 一次性外发。L3 只返回各白名单输出字段的数量、推断/隐私布尔标记和成本元数据。没有 refresh、采集、模型执行、预算预占、Secret 或 Windmill 管理工具。
 
