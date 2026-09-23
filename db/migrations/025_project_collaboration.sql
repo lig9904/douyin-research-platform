@@ -70,12 +70,15 @@ create or replace function project_shared_video_can_read(
       join project_video_inclusion inclusion_row
         on inclusion_row.project_id = source_project.id
        and inclusion_row.video_id = p_video_id
+      join source_video video
+        on video.id = inclusion_row.video_id
       where source_project.id = p_source_project_id
         and source_project.status = 'active'
         and grant_row.status = 'active'
         and grant_row.scope = 'public_video_evidence'
         and grant_row.effective_until > now()
         and inclusion_row.status <> 'archived'
+        and video.availability_status = 'available'
     ), false
   );
 $$;

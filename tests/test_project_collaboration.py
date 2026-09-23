@@ -76,7 +76,8 @@ def test_project_collaboration_members_and_explicit_share(monkeypatch) -> None:
                      id uuid primary key default gen_random_uuid(),
                      account_id uuid references source_account(id),
                      platform text not null default 'douyin', title text,
-                     published_at timestamptz);
+                     published_at timestamptz,
+                     availability_status text not null default 'available');
                    create table project_video_inclusion (
                      project_id uuid references research_project(id),
                      video_id uuid references source_video(id),
@@ -152,6 +153,9 @@ def test_project_collaboration_members_and_explicit_share(monkeypatch) -> None:
             assert videos[0]["title"] == "公开视频"
             assert videos[0]["play_count"] == 100
             assert "raw_payload" not in videos[0]
+            conn.execute("update source_video set availability_status='unavailable' where id=%s", (video,))
+            assert read.main(db, str(target))["shared_videos"] == []
+            conn.execute("update source_video set availability_status='available' where id=%s", (video,))
             conn.execute("update research_project set status='paused' where id=%s", (source,))
             assert conn.execute(
                 "select project_shared_video_can_read(%s,%s,%s,%s)",
