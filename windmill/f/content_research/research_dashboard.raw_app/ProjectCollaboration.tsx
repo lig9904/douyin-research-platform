@@ -174,6 +174,11 @@ export default function ProjectCollaboration({ scope, onNavigate }: {
           </div>
         </section>
 
+        {!canManage ? <section className="card project-collaboration-panel project-collaboration-viewer-note">
+          <h2>当前为成员视图</h2>
+          <p>你可以查看已授权给本项目的公开依据。成员名单与跨项目授权由本项目负责人或管理员维护；加入本项目不会自动获得其它项目权限。</p>
+        </section> : null}
+
         <div className="project-collaboration-grid">
 
         {canManage ? <section className="card project-collaboration-panel" aria-labelledby="project-members-title">
