@@ -1,7 +1,7 @@
-summary: MCP read - research task scopes and runs
+summary: MCP private research briefs temporarily unavailable
 description: >
-  Read-only bounded list of research-task scope, cadence, next run and latest
-  safe run status. It never dispatches, pauses, edits or archives a task.
+  Returns MCP_IDENTITY_SCOPE_UNAVAILABLE without database access until the
+  Gateway can verify the end-user actor and project membership.
 lock: '!inline f/content_research/research_tools/get_research_briefs.script.lock'
 concurrency_time_window_s: 0
 concurrent_limit: 4
