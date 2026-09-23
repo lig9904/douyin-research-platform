@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Pagination, Select, Spin } from 'antd'
 import { backend } from '../../backend'
 
@@ -26,27 +26,47 @@ function time(value: string) {
   }).format(date)
 }
 
-export default function MetricTimeline({ videoId }: { videoId: string }) {
+export default function MetricTimeline({
+  videoId,
+  projectId,
+}: {
+  videoId: string
+  projectId?: string
+}) {
   const [days, setDays] = useState(30)
   const [data, setData] = useState<Timeline | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const requestVersion = useRef(0)
 
   const load = async (page = 1, nextDays = days) => {
+    const version = ++requestVersion.current
     setLoading(true)
     setError('')
+    setData(null)
     try {
-      setData(await backend.get_video_metric_timeline({
-        video_id: videoId, days: nextDays, page, page_size: 20,
-      }) as Timeline)
+      const result = await backend.get_video_metric_timeline({
+        video_id: videoId,
+        project_id: projectId,
+        days: nextDays,
+        page,
+        page_size: 20,
+      }) as Timeline
+      if (version === requestVersion.current) setData(result)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '指标历史暂不可用。')
+      if (version === requestVersion.current) {
+        setError(reason instanceof Error ? reason.message : '指标历史暂不可用。')
+      }
     } finally {
-      setLoading(false)
+      if (version === requestVersion.current) setLoading(false)
     }
   }
 
-  useEffect(() => { load(1) }, [videoId])
+  useEffect(() => {
+    setDays(30)
+    void load(1, 30)
+    return () => { requestVersion.current += 1 }
+  }, [videoId, projectId])
 
   return (
     <section className="detail-section metric-timeline-section">

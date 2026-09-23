@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Alert, Button, Spin, Tag } from 'antd'
 import { backend } from '../../backend'
 
@@ -12,12 +12,14 @@ type RawRow = Record<string, unknown> & {
 type RawRecords = {
   video_id: string
   canonical: Record<string, unknown>
-  provider_snapshots: RawRow[]
-  metric_snapshots: RawRow[]
-  discoveries: RawRow[]
+  provider_snapshots?: RawRow[]
+  metric_snapshots?: RawRow[]
+  discoveries?: RawRow[]
   comments: RawRow[]
   limits: Record<string, number>
   read_only: boolean
+  merged_metrics?: RawRow | null
+  project_inclusion?: RawRow | null
 }
 
 function rawText(value: unknown) {
@@ -58,26 +60,50 @@ function RawRows({ title, rows }: { title: string; rows: RawRow[] }) {
   )
 }
 
-export default function RawRecordPanel({ videoId }: { videoId: string }) {
+export default function RawRecordPanel({
+  videoId,
+  projectId,
+}: {
+  videoId: string
+  projectId?: string
+}) {
   const [open, setOpen] = useState(false)
   const [loadedFor, setLoadedFor] = useState('')
   const [data, setData] = useState<RawRecords | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const requestVersion = useRef(0)
+
+  useEffect(() => {
+    requestVersion.current += 1
+    setOpen(false)
+    setLoadedFor('')
+    setData(null)
+    setLoading(false)
+    setError('')
+  }, [videoId, projectId])
 
   const load = async () => {
+    const version = ++requestVersion.current
     setOpen(true)
     if (loadedFor === videoId && data) return
     setLoading(true)
     setError('')
     try {
-      const result = await backend.get_video_raw_records({ video_id: videoId }) as RawRecords
-      setData(result)
-      setLoadedFor(videoId)
+      const result = await backend.get_video_raw_records({
+        video_id: videoId,
+        project_id: projectId,
+      }) as RawRecords
+      if (version === requestVersion.current) {
+        setData(result)
+        setLoadedFor(videoId)
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (version === requestVersion.current) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
-      setLoading(false)
+      if (version === requestVersion.current) setLoading(false)
     }
   }
 
@@ -85,8 +111,10 @@ export default function RawRecordPanel({ videoId }: { videoId: string }) {
     <section className="detail-section raw-record-panel">
       <div className="detail-section-head">
         <div>
-          <h4>原始记录</h4>
-          <span>数据库已保存的来源快照与原始字段；只在展开时读取</span>
+          <h4>{projectId ? '项目原始依据' : '原始记录'}</h4>
+          <span>{projectId
+            ? '仅显示该项目可见的规范记录、合并指标、评论与项目纳入摘要；不包含 Provider 原始快照。'
+            : '数据库已保存的来源快照与原始字段；只在展开时读取'}</span>
         </div>
         <Button onClick={() => open ? setOpen(false) : load()}>
           {open ? '收起原始记录' : '展开原始记录'}
@@ -97,8 +125,10 @@ export default function RawRecordPanel({ videoId }: { videoId: string }) {
           <Alert
             type="warning"
             showIcon
-            message="这些是审计用原始数据，不等于最终合并口径。"
-            description="敏感键会脱敏，单个 JSON 字段最多显示 100,000 个字符；MCP 不返回本区域正文。"
+            message={projectId ? '这是项目可见的安全依据，不是全局 Provider 原始快照。' : '这些是审计用原始数据，不等于最终合并口径。'}
+            description={projectId
+              ? '显示规范视频、合并指标、公开评论和本项目纳入信息；不会显示原始响应、请求标识或其他项目的研究状态。'
+              : '敏感键会脱敏，单个 JSON 字段最多显示 100,000 个字符；MCP 不返回本区域正文。'}
           />
           {error && <Alert type="error" showIcon message="原始记录加载失败" description={error} />}
           {data && loadedFor === videoId && (
@@ -107,10 +137,20 @@ export default function RawRecordPanel({ videoId }: { videoId: string }) {
                 <h5>规范记录</h5>
                 <pre>{rawText(data.canonical)}</pre>
               </section>
-              <RawRows title="Provider 视频快照" rows={data.provider_snapshots} />
-              <RawRows title="指标快照" rows={data.metric_snapshots} />
-              <RawRows title="发现记录" rows={data.discoveries} />
-              <RawRows title="评论原始行" rows={data.comments} />
+              {projectId ? (
+                <>
+                  <RawRows title="合并指标" rows={data.merged_metrics ? [data.merged_metrics] : []} />
+                  <RawRows title="本项目纳入摘要" rows={data.project_inclusion ? [data.project_inclusion] : []} />
+                  <RawRows title="评论依据" rows={data.comments || []} />
+                </>
+              ) : (
+                <>
+                  <RawRows title="Provider 视频快照" rows={data.provider_snapshots || []} />
+                  <RawRows title="指标快照" rows={data.metric_snapshots || []} />
+                  <RawRows title="发现记录" rows={data.discoveries || []} />
+                  <RawRows title="评论原始行" rows={data.comments || []} />
+                </>
+              )}
             </div>
           )}
         </Spin>

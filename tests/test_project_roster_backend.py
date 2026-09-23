@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+import types
 from pathlib import Path
 from uuid import uuid4
 
@@ -246,6 +247,92 @@ def test_project_roster_enforces_actor_membership_org_project_and_relation_windo
             assert get_my_projects.main(params)["projects"] == []
             with pytest.raises(PermissionError, match="PROJECT_ACCESS_DENIED"):
                 get_project_accounts.main(params, str(unjoined_project))
+        finally:
+            conn.execute("set search_path to public")
+            conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
+def test_project_roster_returns_server_side_legacy_admin_without_leaking_allowlist(monkeypatch) -> None:
+    """The legacy-admin hint cannot be supplied by a caller or break roster reads."""
+    assert DSN
+    get_my_projects = _load("get_my_projects")
+    namespace = f"project_roster_admin_{uuid4().hex}"
+    migration = MIGRATION.read_text(encoding="utf-8")
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
+        try:
+            conn.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            conn.execute(
+                """
+                create extension if not exists pgcrypto;
+                create table source_account (
+                  id uuid primary key default gen_random_uuid(),
+                  platform text not null default 'douyin',
+                  platform_account_id text not null default '',
+                  nickname text,
+                  profile_url text,
+                  bio text,
+                  location_text text,
+                  account_type text,
+                  certification_type text,
+                  first_seen_at timestamptz not null default now(),
+                  last_seen_at timestamptz not null default now()
+                );
+                """,
+                prepare=False,
+            )
+            conn.execute(migration, prepare=False)
+            org = conn.execute(
+                "insert into research_organization(slug, name) values ('admin-org', '管理员组织') returning id"
+            ).fetchone()[0]
+            project = conn.execute(
+                """insert into research_project(organization_id, slug, name, status)
+                   values (%s, 'admin-project', '管理员项目', 'active') returning id""",
+                (org,),
+            ).fetchone()[0]
+            conn.execute(
+                """insert into research_project_member(project_id, actor_id, role)
+                   values (%s, 'writer@example.com', 'owner'),
+                          (%s, 'member@example.com', 'viewer')""",
+                (project, project),
+            )
+            conninfo = conninfo_to_dict(DSN)
+            params = dict(
+                host=conninfo.get("host") or conn.info.host or "127.0.0.1",
+                port=int(conninfo.get("port") or conn.info.port or 5432),
+                user=conninfo.get("user") or conn.info.user,
+                password=conninfo.get("password", ""),
+                dbname=conninfo.get("dbname") or conn.info.dbname,
+                sslmode=conninfo.get("sslmode", "prefer"),
+                options=f"-c search_path={namespace}",
+            )
+
+            wmill = types.ModuleType("wmill")
+            wmill.get_variable = lambda path: '["writer@example.com", "not-returned@example.com"]'  # type: ignore[attr-defined]
+            monkeypatch.setitem(sys.modules, "wmill", wmill)
+            monkeypatch.setenv("WM_END_USER_EMAIL", "WRITER@example.com")
+            writer = get_my_projects.main(params)
+            assert writer["legacy_admin"] is True
+            assert [item["id"] for item in writer["projects"]] == [str(project)]
+            assert "not-returned@example.com" not in repr(writer)
+
+            monkeypatch.setenv("WM_END_USER_EMAIL", "member@example.com")
+            member = get_my_projects.main(params)
+            assert member["legacy_admin"] is False
+            assert [item["id"] for item in member["projects"]] == [str(project)]
+
+            def unavailable(_path: str) -> str:
+                raise RuntimeError("variable service unavailable")
+
+            wmill.get_variable = unavailable  # type: ignore[attr-defined]
+            failed_variable = get_my_projects.main(params)
+            assert failed_variable["legacy_admin"] is False
+            assert [item["id"] for item in failed_variable["projects"]] == [str(project)]
+
+            monkeypatch.delenv("WM_END_USER_EMAIL")
+            with pytest.raises(PermissionError, match="RESEARCH_ACTION_IDENTITY_REQUIRED"):
+                get_my_projects.main(params)
         finally:
             conn.execute("set search_path to public")
             conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))

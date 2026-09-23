@@ -1,6 +1,7 @@
 import React, { ReactNode } from 'react'
-import { ConfigProvider } from 'antd'
+import { Alert, ConfigProvider, Select, Tag } from 'antd'
 import './shell.css'
+import { useProjectScope } from './src/projectScope'
 
 export type ResearchView =
   | 'home'
@@ -58,6 +59,15 @@ export default function AppShell({
   mainClassName?: string
   headerClassName?: string
 }) {
+  const { scope, projects, legacyAdmin, loading, error, chooseScope } = useProjectScope()
+  const projectMode = scope?.mode === 'project'
+  const allowedViews = projectMode
+    ? new Set<ResearchView>(['videos', 'briefs'])
+    : scope
+      ? null
+      : new Set<ResearchView>()
+  const scopeValue = scope?.mode === 'project' ? `project:${scope.projectId}` : scope?.mode === 'legacy-admin' ? 'legacy-admin' : undefined
+
   return (
     <ConfigProvider
       theme={{
@@ -80,7 +90,7 @@ export default function AppShell({
           </div>
 
           <nav className="nav" aria-label="研究台主导航">
-            {navItems.filter((item) => item.enabled).map((item) => (
+            {navItems.filter((item) => item.enabled && (!allowedViews || allowedViews.has(item.view))).map((item) => (
               <button
                 key={item.view}
                 className={activeView === item.view ? 'nav-item active' : 'nav-item'}
@@ -100,8 +110,38 @@ export default function AppShell({
               <h1>{title}</h1>
               <p>{subtitle}</p>
             </div>
-            {actions ? <div className="top-actions">{actions}</div> : null}
+            <div className="top-actions">
+              <div className="project-scope-control" aria-label="当前研究范围">
+                <span>研究范围</span>
+                <Select
+                  aria-label="选择研究项目"
+                  className="project-scope-select"
+                  value={scopeValue}
+                  loading={loading}
+                  placeholder={loading ? '正在加载可见项目…' : '请选择项目'}
+                  options={[
+                    ...projects.map((project) => ({
+                      value: `project:${project.id}`,
+                      label: project.organization_name ? `${project.name} · ${project.organization_name}` : project.name,
+                    })),
+                    ...(legacyAdmin ? [{ value: 'legacy-admin', label: '全局历史库（管理员）' }] : []),
+                  ]}
+                  onChange={(value) => {
+                    if (value === 'legacy-admin') {
+                      chooseScope({ mode: 'legacy-admin' })
+                      return
+                    }
+                    const project = projects.find((item) => `project:${item.id}` === value)
+                    if (project) chooseScope({ mode: 'project', projectId: project.id, projectName: project.name })
+                  }}
+                />
+                {scope?.mode === 'legacy-admin' ? <Tag color="gold">管理员历史范围</Tag> : null}
+              </div>
+              {actions ? <div className="top-actions-inline">{actions}</div> : null}
+            </div>
           </header>
+
+          {error ? <Alert className="project-scope-error" type="error" showIcon message="项目范围加载失败" description="未加载任何旧数据，请刷新页面后重试。" /> : null}
 
           {children}
         </main>
