@@ -1,4 +1,7 @@
-# py: ==3.14.*
+# /// script
+# requires-python = "==3.14.*"
+# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@31b3295c2aa3801eaf900b2a47a542dadb54de5c", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# ///
 """Controlled project L3 review preparation; this endpoint never calls a model."""
 from __future__ import annotations
 
