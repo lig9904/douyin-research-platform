@@ -131,6 +131,32 @@ def test_runner_summary_rejects_any_automatic_analysis_flag() -> None:
         runner._safe_result(result, uuid4())
 
 
+def test_runner_failure_summary_is_allowlisted_and_does_not_leak_message() -> None:
+    runner = _load("run_research_brief")
+    failure = RuntimeError("video=private url=https://private.invalid response=secret")
+    failure.research_failure_summary = {
+        "failure_schema": "provider_failure_v1",
+        "status": "failed",
+        "stage": "detail_enrichment",
+        "item_count": 5,
+        "error_type": "ProviderPermanentError",
+        "http_status": 400,
+        "provider_error_code": "INVALID_PARAMETER",
+        "provider_request_id": "req-safe-400",
+        "ledger_logical_call_id": str(uuid4()),
+        "response_body": "must not escape",
+    }
+
+    safe = runner._safe_failure_summary(failure)
+
+    assert safe["stage"] == "detail_enrichment"
+    assert safe["item_count"] == 5
+    assert safe["http_status"] == 400
+    assert safe["provider_error_code"] == "INVALID_PARAMETER"
+    assert "response_body" not in safe
+    assert "private" not in str(safe)
+
+
 def test_runner_uses_fixed_server_resources_and_zero_retry_core() -> None:
     source = (COLLECTORS / "run_research_brief.py").read_text()
     assert "WM_END_USER_EMAIL" not in source

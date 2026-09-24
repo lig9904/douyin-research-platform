@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import re
 from typing import Any, Iterator, Mapping, TypedDict
 from uuid import UUID
 
@@ -28,6 +29,11 @@ DATABASE_PATH = "f/content_research/research_db"
 IDENTITY_PATH = "f/content_research/automation_worker_identity"
 API_KEY_PATH = "f/content_research/tikhub_api_key"
 LOCK_NAME = "douyin_research:manual_golden_intake"
+_SAFE_ERROR_TOKEN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+_SAFE_LOGICAL_CALL_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z",
+    re.IGNORECASE,
+)
 
 
 class postgresql(TypedDict):
@@ -231,6 +237,51 @@ def _safe_result(result: Mapping[str, Any], brief_run_id: UUID) -> dict[str, Any
     }
 
 
+def _safe_failure_summary(exc: BaseException) -> dict[str, Any]:
+    """Keep Windmill results useful without copying provider exception text."""
+    fallback = {
+        "failure_schema": "provider_failure_v1",
+        "status": "failed",
+        "stage": "unknown",
+        "item_count": 0,
+        "error_type": type(exc).__name__,
+    }
+    candidate = getattr(exc, "research_failure_summary", None)
+    if not isinstance(candidate, Mapping):
+        return fallback
+    stage = candidate.get("stage")
+    item_count = candidate.get("item_count")
+    if stage not in {"discovery", "detail_enrichment", "finalize", "unknown"}:
+        return fallback
+    if isinstance(item_count, bool) or not isinstance(item_count, int) or item_count < 0:
+        return fallback
+    safe = {
+        "failure_schema": "provider_failure_v1",
+        "status": "failed",
+        "stage": stage,
+        "item_count": item_count,
+        "error_type": candidate.get("error_type")
+        if isinstance(candidate.get("error_type"), str)
+        and candidate["error_type"].isidentifier()
+        and len(candidate["error_type"]) <= 128
+        else type(exc).__name__,
+    }
+    if isinstance(candidate.get("http_status"), int) and 100 <= candidate["http_status"] <= 599:
+        safe["http_status"] = candidate["http_status"]
+    for key, limit in (("provider_error_code", 64), ("provider_request_id", 128)):
+        value = candidate.get(key)
+        if (
+            isinstance(value, str)
+            and len(value) <= limit
+            and _SAFE_ERROR_TOKEN.fullmatch(value)
+        ):
+            safe[key] = value
+    logical_call_id = candidate.get("ledger_logical_call_id")
+    if isinstance(logical_call_id, str) and _SAFE_LOGICAL_CALL_ID.fullmatch(logical_call_id):
+        safe["ledger_logical_call_id"] = logical_call_id.lower()
+    return safe
+
+
 def main(brief_id: str) -> dict[str, Any]:
     normalized_id = _brief_id(brief_id)
     try:
@@ -271,7 +322,7 @@ def main(brief_id: str) -> dict[str, Any]:
                 summary=safe,
             )
             return safe
-        except Exception:
+        except Exception as exc:
             _finish(
                 dsn, brief_run_id, status="failed",
                 error_code="RESEARCH_BRIEF_EXECUTION_FAILED",
@@ -279,6 +330,7 @@ def main(brief_id: str) -> dict[str, Any]:
                     "external_calls": None,
                     "call_count_status": "use_external_api_call_ledger",
                     "raw_provider_payload_included": False,
+                    **_safe_failure_summary(exc),
                 },
             )
             raise RuntimeError("research brief execution failed") from None

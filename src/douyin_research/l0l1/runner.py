@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from douyin_research.providers.contracts import PlatformResearchProvider
+from douyin_research.providers.errors import provider_failure_summary
 from douyin_research.providers.types import ProviderPage, VideoObservation
 
 from .budget import DailyBudgetGuard
@@ -69,8 +70,12 @@ class L0L1Runner:
         new_project_video_ids: set[Any] = set()
         new_platform_video_ids: set[str] = set()
         detail_enriched_count = 0
+        failure_stage = "discovery"
+        failure_item_count = 0
         try:
             for source in sources:
+                failure_stage = "discovery"
+                failure_item_count = 0
                 if not self.provider_reserves_budget:
                     self.budget.acquire(
                         provider=self.provider.provider_name,
@@ -78,6 +83,7 @@ class L0L1Runner:
                         requests=1,
                     )
                 page = self._fetch(source)
+                failure_item_count = len(page.items)
                 if page.cached and not self.provider_reserves_budget:
                     self.budget.refund(
                         provider=self.provider.provider_name,
@@ -134,6 +140,8 @@ class L0L1Runner:
                     for item in unique_platform_ids.values()
                     if item.video.platform_video_id in detail_platform_video_ids
                 ]
+                failure_stage = "detail_enrichment"
+                failure_item_count = len(ids)
                 if not self.provider_reserves_budget:
                     planner = getattr(self.provider, "plan_videos", None)
                     request_count = (len(planner(ids)) if planner is not None else
@@ -144,6 +152,7 @@ class L0L1Runner:
                         requests=request_count,
                     )
                 details = self.provider.fetch_videos(ids)
+                failure_item_count = len(details)
                 self._validate_platform(details)
                 detail_enriched_count = len(details)
                 self.store.ingest(
@@ -160,6 +169,8 @@ class L0L1Runner:
                     ),
                 )
 
+            failure_stage = "finalize"
+            failure_item_count = observation_count
             scores = self.scorer.score_run(run_id)
             candidate_ids = new_project_video_ids if project_id is not None else new_video_ids
             self.store.set_new_candidate_flags(run_id, candidate_ids)
@@ -185,10 +196,14 @@ class L0L1Runner:
                 new_candidate_count=len(candidate_ids),
             )
         except Exception as exc:
+            safe_failure = provider_failure_summary(
+                exc, stage=failure_stage, item_count=failure_item_count,
+            )
+            exc.research_failure_summary = safe_failure
             self.store.finish_run(
                 run_id,
                 status="failed",
-                summary={"llm_calls": 0, "error_type": type(exc).__name__},
+                summary={"llm_calls": 0, **safe_failure},
             )
             raise
 

@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from douyin_research.providers.store import MemoryProviderStore
+from douyin_research.providers.errors import ProviderPermanentError
 from douyin_research.providers.tikhub_provider import TikHubProvider
 from douyin_research.providers.transport import TransportResult
 
@@ -161,6 +162,33 @@ def test_force_refresh_bypasses_cache() -> None:
     provider.fetch_low_fan_billboard(force_refresh=True)
 
     assert len(transport.calls) == 2
+
+
+def test_failed_call_persists_only_safe_provider_failure_metadata() -> None:
+    class FailingTransport:
+        def call(self, _spec, _kwargs):
+            error = ProviderPermanentError("raw body video=secret url=https://private.invalid")
+            error.provider_diagnostic = {
+                "http_status": 400,
+                "provider_error_code": "INVALID_PARAMETER",
+                "provider_request_id": "req-safe-400",
+            }
+            raise error
+
+    store = MemoryProviderStore()
+    provider = TikHubProvider(transport=FailingTransport(), store=store)
+
+    with pytest.raises(ProviderPermanentError):
+        provider.fetch_videos(["sensitive-video-id"])
+
+    failure = store.calls[0].metadata["failure"]
+    assert failure["status"] == "failed"
+    assert failure["http_status"] == 400
+    assert failure["provider_error_code"] == "INVALID_PARAMETER"
+    assert failure["provider_request_id"] == "req-safe-400"
+    assert failure["ledger_logical_call_id"] == store.calls[0].metadata["logical_call_id"]
+    assert "secret" not in str(store.calls[0].metadata)
+    assert "private.invalid" not in str(store.calls[0].metadata)
 
 
 class FakeCommentTransport:

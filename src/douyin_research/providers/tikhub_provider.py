@@ -19,6 +19,7 @@ from .transport import ProviderTransport, TikHubTransport
 from .types import CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
 from .video_fetch_plan import plan_video_fetches
 from .cost_accounting import quote_call
+from .errors import attach_provider_diagnostic, provider_failure_summary
 
 
 class TikHubDouyinProvider:
@@ -475,6 +476,7 @@ class TikHubDouyinProvider:
         except Exception as exc:
             finished = utcnow()
             attempts = result.attempts if result is not None else getattr(exc, "provider_attempts", None)
+            attach_provider_diagnostic(exc, logical_call_id=logical_call_id)
             estimate, actual, cost_meta = quote_call(
                 spec, successful_response=result is not None and result.http_status == 200,
                 attempts=attempts,
@@ -496,6 +498,9 @@ class TikHubDouyinProvider:
                     retry_count=max(0, len(attempts) - 1) if attempts is not None else None,
                     metadata={
                         "error_type": type(exc).__name__,
+                        "failure": provider_failure_summary(
+                            exc, stage="unknown", item_count=0,
+                        ),
                         **cost_meta, "logical_call_id": logical_call_id,
                     },
                 )

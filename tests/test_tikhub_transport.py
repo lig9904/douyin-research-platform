@@ -7,6 +7,7 @@ from douyin_research.providers.endpoints import EndpointSpec
 from douyin_research.providers.errors import (
     ProviderAuthError,
     ProviderBalanceError,
+    ProviderPermanentError,
     ProviderRateLimitError,
     ProviderTemporaryError,
 )
@@ -136,3 +137,31 @@ def test_rest_fallback_does_not_retry_permanent_account_errors(status, error_typ
         transport.call(_rest_spec(), {})
 
     assert calls == 1
+
+
+def test_rest_400_exposes_only_bounded_failure_diagnostic() -> None:
+    client = httpx.Client(
+        base_url="https://api.tikhub.io",
+        transport=httpx.MockTransport(
+            lambda _request: httpx.Response(
+                400,
+                headers={"x-request-id": "req-400.safe"},
+                json={
+                    "code": "INVALID_PARAMETER",
+                    "message": "video=private-123 url=https://private.invalid",
+                },
+            )
+        ),
+    )
+    transport = TikHubTransport("fake", max_retries=0, http_client=client)
+
+    with pytest.raises(ProviderPermanentError) as captured:
+        transport.call(_rest_spec(), {})
+
+    assert captured.value.provider_diagnostic == {
+        "http_status": 400,
+        "provider_error_code": "INVALID_PARAMETER",
+        "provider_request_id": "req-400.safe",
+    }
+    assert "private-123" not in str(captured.value)
+    assert "private.invalid" not in str(captured.value)
