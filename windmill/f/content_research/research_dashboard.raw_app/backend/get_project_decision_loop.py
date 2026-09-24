@@ -102,8 +102,19 @@ def main(db: postgresql, project_id: str):
                           c.review_evidence, c.next_action, c.reviewed_by, c.reviewed_at, c.created_by,
                           c.review_observation_id, c.review_observation_version, c.review_metric_snapshot,
                           (i.project_id is null or i.status <> 'accepted' or v.availability_status <> 'available') as source_reference_withdrawn,
-                          c.created_at, c.updated_at
+                          c.created_at, c.updated_at,
+                          case when binding.decision_card_id is null then null else jsonb_build_object(
+                            'profile_id', binding.profile_id,
+                            'profile_kind', binding.profile_kind,
+                            'profile_version_no', binding.profile_version_no,
+                            'rights_status_at_binding', binding.rights_status_at_binding,
+                            'profile_current_status', bound_profile.status
+                          ) end as profile_binding
                    from project_decision_card c
+                   left join project_decision_card_profile_binding binding
+                     on binding.decision_card_id=c.id and binding.project_id=c.project_id
+                   left join research_subject_profile_version bound_profile
+                     on bound_profile.id=binding.profile_id and bound_profile.project_id=c.project_id
                    left join project_video_inclusion i
                      on i.project_id=c.project_id and i.video_id=c.source_video_id
                    join source_video v on v.id=c.source_video_id
@@ -149,6 +160,15 @@ def main(db: postgresql, project_id: str):
             )
             subjects = [_json(dict(row)) for row in cur.fetchall()]
             cur.execute(
+                """select id, subject_id, profile_kind, version_no, summary, rights_status
+                   from research_subject_profile_version
+                   where project_id=%s and status='approved'
+                   order by subject_id, profile_kind, version_no desc, id
+                   limit 200""",
+                (project,),
+            )
+            approved_profiles = [_json(dict(row)) for row in cur.fetchall()]
+            cur.execute(
                 """select p.id, p.decision_card_id, p.publication_date, p.title,
                           p.content_reference, p.status, p.created_by, p.created_at, p.updated_at,
                           coalesce(jsonb_agg(jsonb_build_object(
@@ -172,7 +192,8 @@ def main(db: postgresql, project_id: str):
             publications = [_json(dict(row)) for row in cur.fetchall()]
         return {
             "project_id": str(project), "project_name": access["name"], "role": access["role"],
-            "cards": cards, "events": events, "eligible_videos": eligible_videos, "subjects": subjects, "publications": publications,
+            "cards": cards, "events": events, "eligible_videos": eligible_videos, "subjects": subjects,
+            "approved_profiles": approved_profiles, "publications": publications,
             "boundaries": {
                 "card_source": "仅本项目已接受的公开视频；项目间共享依据不可建行动卡。",
                 "outcomes": "仅按日非个人汇总指标；不保存观众、评论原文或账号凭据。",

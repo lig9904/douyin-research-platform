@@ -92,11 +92,11 @@ def test_restore_drill_accepts_029_prefix_and_verifies_030_profile_counts() -> N
     prefix_start = restore.index("'9|43')")
     prefix_end = restore.index(";;", prefix_start)
     assert 'verify_migration_ledger prefix "$RESTORE_DATABASE"' in restore[prefix_start:prefix_end]
-    assert "'10|48')" in restore
-    current_start = restore.index("'10|48')")
+    assert "'10|48'|'11|54')" in restore
+    current_start = restore.index("'10|48'|'11|54')")
     current_end = restore.index(";;", current_start)
     current = restore[current_start:current_end]
-    assert 'verify_migration_ledger required "$RESTORE_DATABASE"' in current
+    assert 'verify_migration_ledger prefix "$RESTORE_DATABASE"' in current
     assert "verify_subject_profile_contract" in current
     assert "archive_profile_count" in current
     assert "research_subject_profile_version" in current
