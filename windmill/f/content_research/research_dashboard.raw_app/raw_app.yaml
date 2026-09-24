@@ -1,4 +1,8 @@
 summary: 多平台内容研究台 - 首页总览
+extra_perms:
+  u/liguo9904dya: false
+  u/liguo9904dyb: false
+  u/liguo9904dyc: false
 policy:
   execution_mode: publisher
   triggerables: {}
