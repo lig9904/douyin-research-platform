@@ -19,6 +19,10 @@ TARGETS = {
         'account_group_member', 'account_identity_link', 'account_authorization',
         'project_video_inclusion',
     ),
+    'subject_relevance_027': (
+        'research_subject_term', 'project_video_subject_relevance',
+        'project_video_subject_relevance_audit',
+    ),
     'windmill': ('workspace', 'usr'),
 }
 
