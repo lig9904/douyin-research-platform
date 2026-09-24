@@ -52,7 +52,7 @@ def test_subject_profile_routes_isolate_projects_drafts_and_replacement(monkeypa
     with psycopg.connect(DSN, autocommit=True) as admin:
         admin.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
         try:
-            admin.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            admin.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
             admin.execute((ROOT / "db/schema.sql").read_text(encoding="utf-8"), prepare=False)
             org = admin.execute(
                 "insert into research_organization(slug,name) values ('profile-backend','Profile Backend') returning id"
@@ -79,7 +79,7 @@ def test_subject_profile_routes_isolate_projects_drafts_and_replacement(monkeypa
                 "insert into research_subject(project_id,name,subject_type) values (%s,'跨项目主体','ip') returning id",
                 (project_b,),
             ).fetchone()[0]
-            scoped = make_conninfo(DSN, options=f"-c search_path={namespace}")
+            scoped = make_conninfo(DSN, options=f"-c search_path={namespace},public")
             monkeypatch.setattr(reader, "_connect", lambda _db: psycopg.connect(scoped, row_factory=dict_row))
             monkeypatch.setattr(writer, "_connect", lambda _db: psycopg.connect(scoped, row_factory=dict_row))
             monkeypatch.setenv("WM_END_USER_EMAIL", "owner@example.com")

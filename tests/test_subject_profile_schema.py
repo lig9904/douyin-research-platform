@@ -51,7 +51,7 @@ def test_030_upgrades_the_029_schema_without_a_fresh_bootstrap() -> None:
     with psycopg.connect(DSN, autocommit=True) as admin:
         admin.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
         try:
-            admin.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            admin.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
             admin.execute(baseline_029, prepare=False)
             assert admin.execute("select to_regclass('project_video_subject_score') is not null").fetchone()[0]
             assert admin.execute("select to_regclass('research_subject_profile_version') is null").fetchone()[0]
@@ -74,7 +74,7 @@ def test_subject_profile_lifecycle_is_scoped_and_approved_content_is_immutable()
     with psycopg.connect(DSN, autocommit=True) as admin:
         admin.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
         try:
-            admin.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            admin.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
             admin.execute(SCHEMA.read_text(encoding="utf-8"), prepare=False)
             admin.execute(MIGRATION.read_text(encoding="utf-8"), prepare=False)
             org = admin.execute(
