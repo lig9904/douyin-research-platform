@@ -53,10 +53,16 @@ def test_030_upgrades_the_029_schema_without_a_fresh_bootstrap() -> None:
         try:
             admin.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
             admin.execute(baseline_029, prepare=False)
-            assert admin.execute("select to_regclass('project_video_subject_score') is not null").fetchone()[0]
-            assert admin.execute("select to_regclass('research_subject_profile_version') is null").fetchone()[0]
+            assert admin.execute(
+                "select to_regclass(current_schema() || '.project_video_subject_score') is not null"
+            ).fetchone()[0]
+            assert admin.execute(
+                "select to_regclass(current_schema() || '.research_subject_profile_version') is null"
+            ).fetchone()[0]
             admin.execute(MIGRATION.read_text(encoding="utf-8"), prepare=False)
-            assert admin.execute("select to_regclass('research_subject_profile_version') is not null").fetchone()[0]
+            assert admin.execute(
+                "select to_regclass(current_schema() || '.research_subject_profile_version') is not null"
+            ).fetchone()[0]
             assert admin.execute(
                 "select count(*) from pg_trigger where tgrelid='research_subject_profile_version'::regclass and not tgisinternal"
             ).fetchone()[0] == 2
