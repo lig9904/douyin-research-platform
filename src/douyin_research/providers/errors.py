@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _ERROR_CODE = re.compile(r"[A-Za-z0-9._:-]{1,64}\Z")
 _LOGICAL_CALL_ID = re.compile(
@@ -26,26 +27,7 @@ def attach_provider_diagnostic(
     HTTP libraries can include request URLs or bodies.  Callers must persist
     only :func:`provider_failure_summary`.
     """
-    diagnostic: dict[str, object] = {}
-    existing = getattr(exc, "provider_diagnostic", {})
-    if isinstance(existing, Mapping):
-        existing_status = existing.get("http_status")
-        if (
-            isinstance(existing_status, int)
-            and not isinstance(existing_status, bool)
-            and 100 <= existing_status <= 599
-        ):
-            diagnostic["http_status"] = existing_status
-        for key, pattern in (
-            ("provider_error_code", _ERROR_CODE),
-            ("provider_request_id", _REQUEST_ID),
-        ):
-            token = _bounded_token(existing.get(key), pattern)
-            if token is not None:
-                diagnostic[key] = token
-        existing_logical_id = existing.get("ledger_logical_call_id")
-        if isinstance(existing_logical_id, str) and _LOGICAL_CALL_ID.fullmatch(existing_logical_id):
-            diagnostic["ledger_logical_call_id"] = existing_logical_id.lower()
+    diagnostic = _safe_diagnostic(getattr(exc, "provider_diagnostic", {}))
     if (
         isinstance(http_status, int)
         and not isinstance(http_status, bool)
@@ -75,9 +57,7 @@ def provider_failure_summary(
         stage = "unknown"
     if isinstance(item_count, bool) or not isinstance(item_count, int) or item_count < 0:
         item_count = 0
-    diagnostic = getattr(exc, "provider_diagnostic", {})
-    if not isinstance(diagnostic, Mapping):
-        diagnostic = {}
+    diagnostic = _safe_diagnostic(getattr(exc, "provider_diagnostic", {}))
     safe: dict[str, object] = {
         "failure_schema": "provider_failure_v1",
         "status": "failed",
@@ -85,14 +65,27 @@ def provider_failure_summary(
         "item_count": item_count,
         "error_type": type(exc).__name__,
     }
-    for key in (
-        "http_status",
-        "provider_error_code",
-        "provider_request_id",
-        "ledger_logical_call_id",
+    safe.update(diagnostic)
+    return safe
+
+
+def _safe_diagnostic(value: object) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {}
+    safe: dict[str, object] = {}
+    status = value.get("http_status")
+    if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+        safe["http_status"] = status
+    for key, pattern in (
+        ("provider_error_code", _ERROR_CODE),
+        ("provider_request_id", _REQUEST_ID),
     ):
-        if key in diagnostic:
-            safe[key] = diagnostic[key]
+        token = _bounded_token(value.get(key), pattern)
+        if token is not None:
+            safe[key] = token
+    logical_id = value.get("ledger_logical_call_id")
+    if isinstance(logical_id, str) and _LOGICAL_CALL_ID.fullmatch(logical_id):
+        safe["ledger_logical_call_id"] = logical_id.lower()
     return safe
 
 
