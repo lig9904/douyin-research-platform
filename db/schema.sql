@@ -1583,8 +1583,8 @@ create table if not exists project_video_subject_relevance_audit (
   rule_version text not null check (char_length(rule_version) between 1 and 80),
   match_detail jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  foreign key (project_id, video_id, subject_id)
-    references project_video_subject_relevance(project_id, video_id, subject_id) on delete cascade,
+  -- Historical audit deliberately does not reference the mutable current
+  -- decision row: deleting a project relationship must not erase audit facts.
   constraint fk_subject_relevance_audit_run_project foreign key (run_id, project_id)
     references pipeline_run(id, project_id) on delete restrict,
   check ((event_type = 'manual_override') = (actor is not null)),

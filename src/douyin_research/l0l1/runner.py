@@ -66,8 +66,8 @@ class L0L1Runner:
             triggered_by: str = "system", enrich_new_only: bool = False,
             project_id: UUID | None = None,
             subject_id: UUID | None = None) -> RunSummary:
-        if subject_id is not None and project_id is None:
-            raise ValueError("subject-scoped research requires a project")
+        if (project_id is None) != (subject_id is None):
+            raise ValueError("project research requires both project and subject")
         run_id = self.store.create_run(
             "l0l1_discovery",
             "v1.0.0",

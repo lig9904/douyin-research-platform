@@ -10,6 +10,8 @@ from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from douyin_research.l0l1.scoring import Candidate, L1Scorer
+from douyin_research.l0l1.research_briefs import make_config, run_live
+from douyin_research.l0l1.runner import L0L1Runner
 from douyin_research.l0l1.subject_relevance import SubjectRelevanceStore, SubjectTerms, classify
 
 
@@ -54,6 +56,20 @@ def test_manual_correction_validation_is_bounded_before_database_access() -> Non
         )
 
 
+def test_project_research_cannot_enter_runner_or_live_brief_without_subject() -> None:
+    project = uuid4()
+    runner = L0L1Runner(provider=object(), store=object(), scorer=object(), budget=object())
+    with pytest.raises(ValueError, match="both project and subject"):
+        runner.run([], project_id=project)
+    config = make_config(
+        source_type="keyword", target="渔岛", time_window_hours=24,
+        max_items=1, depth="metadata", cadence_hours=None,
+    )
+    with pytest.raises(ValueError, match="requires a subject"):
+        run_live(dsn="postgresql://unused", api_key="test", config=config,
+                 triggered_by="test", project_id=project)
+
+
 def test_schema_keeps_source_evidence_global_and_relevance_project_scoped() -> None:
     migration = MIGRATION.read_text(encoding="utf-8")
     schema = SCHEMA.read_text(encoding="utf-8")
@@ -70,6 +86,7 @@ def test_schema_keeps_source_evidence_global_and_relevance_project_scoped() -> N
         assert "delete from source_video" not in source.lower()
     assert "references project_video_inclusion(project_id, video_id)" in migration
     assert "subject_id uuid" in migration
+    assert "drop constraint if exists project_video_subject_relevance_audit_project_id_video_id_subject_id_fkey" in migration
 
 
 def test_subject_routes_are_actor_bound_and_ui_closes_project_brief_path() -> None:
@@ -102,6 +119,7 @@ def test_gate_rechecks_current_manual_decision_and_subject_activity() -> None:
     assert "s.status='active'" in brief
     assert "subject.status='active'" in collector
     assert "subject_gate_status='subject_required'" in collector
+    assert "unchanged conclusion is still an event" in relevance
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
@@ -152,6 +170,24 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
             ).fetchone()
             assert state == ("paused", "subject_required", True)
 
+            scoped_dsn = make_conninfo(DSN, options=f"-c search_path={namespace}")
+            run_one = admin.execute(
+                """insert into pipeline_run(run_type,platform,project_id)
+                   values ('subject_rule_one','douyin',%s) returning id""", (project,)
+            ).fetchone()[0]
+            run_two = admin.execute(
+                """insert into pipeline_run(run_type,platform,project_id)
+                   values ('subject_rule_two','douyin',%s) returning id""", (project,)
+            ).fetchone()[0]
+            store = SubjectRelevanceStore(scoped_dsn)
+            assert store.evaluate_run(project_id=project, subject_id=subject, run_id=run_one, video_ids=[video])[video] == "relevant"
+            assert store.evaluate_run(project_id=project, subject_id=subject, run_id=run_two, video_ids=[video])[video] == "relevant"
+            audit_runs = admin.execute(
+                """select run_id from project_video_subject_relevance_audit
+                   where event_type='rule_evaluated' order by id"""
+            ).fetchall()
+            assert audit_runs == [(run_one,), (run_two,)]
+
             scoped = f"-c search_path={namespace}"
             with psycopg.connect(DSN, options=scoped) as rule_conn, psycopg.connect(DSN, options=scoped) as manual_conn:
                 # Rule evaluation observed a rule row. A reviewer commits a
@@ -189,7 +225,7 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
                 """insert into pipeline_run_item(run_id,entity_type,entity_id,stage,outcome)
                    values (%s,'video',%s,'L0','ingested')""", (run, video)
             )
-            scorer = L1Scorer(make_conninfo(DSN, options=f"-c search_path={namespace}"))
+            scorer = L1Scorer(scoped_dsn)
             scorer._assert_single_platform = lambda _run: "douyin"  # type: ignore[method-assign]
             scorer._load_candidates = lambda *_args, **_kwargs: [Candidate(  # type: ignore[method-assign]
                 video, None, None, None, 0, 0, None, None, None, None, None,
@@ -199,6 +235,23 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
             # write a score after the same-transaction FOR SHARE gate check.
             assert scorer.score_run(run, project_id=project, subject_id=subject) == {}
             assert admin.execute("select count(*) from video_score where video_id=%s", (video,)).fetchone()[0] == 0
+            # The audit row is historical: removal of the mutable current
+            # decision must not cascade away the manual reason or run link.
+            store.correct(
+                project_id=project, subject_id=subject, video_id=video,
+                actor="reviewer@example.com", decision="irrelevant", reason="复核后排除",
+            )
+            before_delete = admin.execute(
+                "select count(*) from project_video_subject_relevance_audit"
+            ).fetchone()[0]
+            admin.execute(
+                """delete from project_video_subject_relevance
+                   where project_id=%s and subject_id=%s and video_id=%s""",
+                (project, subject, video),
+            )
+            assert admin.execute(
+                "select count(*) from project_video_subject_relevance_audit"
+            ).fetchone()[0] == before_delete
         finally:
             admin.execute("set search_path to public")
             admin.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))

@@ -252,8 +252,8 @@ def run_live(
     if not dsn or not api_key or not triggered_by:
         raise ValueError("database, API key and service identity are required")
     subject_id = UUID(config.subject_id) if config.subject_id is not None else None
-    if subject_id is not None and project_id is None:
-        raise ValueError("subject-scoped research requires a project")
+    if (project_id is None) != (subject_id is None):
+        raise ValueError("project research requires a subject")
     if project_id is not None:
         _ensure_active_project(dsn, project_id, subject_id)
 

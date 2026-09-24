@@ -63,8 +63,8 @@ create table if not exists project_video_subject_relevance_audit (
   rule_version text not null check (char_length(rule_version) between 1 and 80),
   match_detail jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
-  foreign key (project_id, video_id, subject_id)
-    references project_video_subject_relevance(project_id, video_id, subject_id) on delete cascade,
+  -- Historical audit intentionally has no FK to the mutable current-decision
+  -- row. Project/video/subject removals must not erase a decision record.
   constraint fk_subject_relevance_audit_run_project foreign key (run_id, project_id)
     references pipeline_run(id, project_id) on delete restrict,
   check ((event_type = 'manual_override') = (actor is not null)),
@@ -87,6 +87,10 @@ do $$ begin
       foreign key (run_id, project_id) references pipeline_run(id, project_id) on delete restrict;
   end if;
 end $$;
+alter table project_video_subject_relevance_audit
+  drop constraint if exists project_video_subject_relevance_audit_project_id_video_id_subject_id_fkey;
+alter table project_video_subject_relevance_audit
+  drop constraint if exists fk_subject_relevance_audit_current_decision;
 
 alter table research_brief add column if not exists subject_id uuid;
 alter table research_brief add column if not exists subject_gate_status text not null default 'not_applicable';

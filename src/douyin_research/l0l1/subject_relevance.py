@@ -140,8 +140,6 @@ class SubjectRelevanceStore:
                     if durable is None:
                         raise RuntimeError("subject relevance write disappeared")
                     decisions[video_id] = str(durable[0])
-                    continue
-                if prior != result.decision:
                     cur.execute(
                         """
                         insert into project_video_subject_relevance_audit(
@@ -150,10 +148,25 @@ class SubjectRelevanceStore:
                         ) values (%s,%s,%s,'rule_evaluated',%s,%s,%s,%s,%s)
                         """,
                         (
-                            project_id, video_id, subject_id, prior, result.decision,
+                            project_id, video_id, subject_id, prior, durable[0],
                             RELEVANCE_RULE_VERSION, Jsonb(match_detail), run_id,
                         ),
                     )
+                    continue
+                # An unchanged conclusion is still an event: the run ID and
+                # rule version answer when this candidate was re-evaluated.
+                cur.execute(
+                    """
+                    insert into project_video_subject_relevance_audit(
+                      project_id, video_id, subject_id, event_type, prior_decision,
+                      decision, rule_version, match_detail, run_id
+                    ) values (%s,%s,%s,'rule_evaluated',%s,%s,%s,%s,%s)
+                    """,
+                    (
+                        project_id, video_id, subject_id, prior, result.decision,
+                        RELEVANCE_RULE_VERSION, Jsonb(match_detail), run_id,
+                    ),
+                )
                 decisions[video_id] = result.decision
             conn.commit()
         return decisions
