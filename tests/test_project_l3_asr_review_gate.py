@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
@@ -50,13 +51,13 @@ def test_project_l3_rejects_revoked_or_cross_project_asr_transcript_before_provi
             org = conn.execute("insert into research_organization(slug,name) values('l3-gate-org','L3 门禁组织') returning id").fetchone()[0]
             project_a = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'l3-gate-a','项目 A','active') returning id", (org,)).fetchone()[0]
             project_b = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'l3-gate-b','项目 B','active') returning id", (org,)).fetchone()[0]
-            video = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','3200000000000000099','项目私有 L3 审核门禁') returning id").fetchone()[0]
+            video = conn.execute("insert into source_video(platform,platform_video_id,title,published_at) values('douyin','3200000000000000099','项目私有 L3 审核门禁','2026-09-16 11:05:56+00') returning id").fetchone()[0]
             for project in (project_a, project_b):
                 conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','test','accepted')", (project, video))
             conn.execute("""insert into video_comment_feature_snapshot(
                 video_id,feature_version,evidence_fingerprint,sampled_comment_count,root_comment_count,
                 sampled_reply_count,source_observation_count,text_present_count,question_text_count,
-                like_known_count,reply_known_count) values(%s,'test-v1',%s,0,0,0,0,0,0,0,0)""", (video, digest))
+                like_known_count,reply_known_count,like_median) values(%s,'test-v1',%s,0,0,0,0,0,0,0,0,%s)""", (video, digest, Decimal("2.5")))
             asset = conn.execute("""insert into media_asset(video_id,kind,storage_location,bucket,object_key,content_sha256,size_bytes,content_type)
                 values(%s,'audio','s3','test',%s,%s,64,'audio/wav') returning id""", (video, f"sha256/{digest[:2]}/{digest}", digest)).fetchone()[0]
             asr_review = conn.execute("""insert into project_asr_media_review(
@@ -125,6 +126,9 @@ def test_project_l3_rejects_revoked_or_cross_project_asr_transcript_before_provi
             evidence = ProjectL3EvidenceService(scoped_dsn).prepare(
                 project_id=project_a, video_id=video, transcript_id=transcript, review_version="privacy-v1"
             )
+            # The real Ark adapter calls json.dumps without a custom encoder.
+            # PostgreSQL timestamptz and numeric values must already be safe.
+            assert json.loads(json.dumps(evidence.bundle)) == evidence.bundle
             l3_review = conn.execute("""insert into project_l3_privacy_review(
                 project_id,video_id,transcript_id,review_version,evidence_fingerprint,evidence_manifest)
                 values(%s,%s,%s,'privacy-v1',%s,'{}') returning id""",
