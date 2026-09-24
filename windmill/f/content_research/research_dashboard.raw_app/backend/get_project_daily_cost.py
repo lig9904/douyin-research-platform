@@ -125,6 +125,31 @@ def main(db: postgresql, project_id: str, days: int = 30):
                 """with authorized_project as materialized (
                      select id from research_project
                      where id=%s and project_actor_can_read(id,%s)
+                   ), cutoff as (
+                     select ((((now() at time zone 'Asia/Shanghai')::date - (%s - 1))::timestamp)
+                       at time zone 'Asia/Shanghai') as start_at
+                   ), ledger as (
+                     select cost.created_at,cost.cost_currency,cost.task_type,cost.cost_basis,
+                            cost.total_cost,false as unbilled_job
+                       from project_research_task_cost cost
+                       join authorized_project project_row on project_row.id=cost.project_id
+                      where cost.created_at >= (select start_at from cutoff)
+                     union all
+                     select job.created_at,job.cost_currency,'asr_transcription','unknown',
+                            null::numeric,true
+                       from project_asr_execution_job job
+                       join authorized_project project_row on project_row.id=job.project_id
+                      where job.created_at >= (select start_at from cutoff)
+                        and not exists (select 1 from project_research_task_cost cost
+                                        where cost.task_key=job.task_key)
+                     union all
+                     select job.created_at,job.cost_currency,'l3_structured_research','unknown',
+                            null::numeric,true
+                       from project_l3_execution_job job
+                       join authorized_project project_row on project_row.id=job.project_id
+                      where job.created_at >= (select start_at from cutoff)
+                        and not exists (select 1 from project_research_task_cost cost
+                                        where cost.task_key=job.task_key)
                    ), daily_cost as (
                      select (cost.created_at at time zone 'Asia/Shanghai')::date as cost_date,
                             cost.cost_currency,
@@ -140,17 +165,14 @@ def main(db: postgresql, project_id: str, days: int = 30):
                               where cost.cost_basis='mixed' and cost.total_cost is not null) as mixed_amount,
                             count(*) filter (
                               where cost.cost_basis='unknown' or cost.total_cost is null
-                            )::integer as unknown_task_count
-                       from project_research_task_cost cost
-                       join authorized_project project_row on project_row.id=cost.project_id
-                      where cost.created_at >= (
-                        (((now() at time zone 'Asia/Shanghai')::date - (%s - 1))::timestamp)
-                        at time zone 'Asia/Shanghai'
-                      )
+                            )::integer as unknown_task_count,
+                            count(*) filter (where cost.unbilled_job)::integer as unbilled_job_count
+                       from ledger cost
                       group by cost_date, cost.cost_currency
                    )
                    select cost_date, cost_currency, task_count, asr_task_count, l3_task_count,
-                          known_amount, actual_amount, estimated_amount, mixed_amount, unknown_task_count
+                          known_amount, actual_amount, estimated_amount, mixed_amount,
+                          unknown_task_count, unbilled_job_count
                      from daily_cost
                     order by cost_date desc, cost_currency""",
                 (project, actor, report_days),

@@ -101,6 +101,24 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             add_cost(project_a, video_a, "unknown", "asr_transcription", "unknown", None, None, None)
             add_cost(project_a, video_a, "cny", "asr_transcription", "actual", "0.3", "0", "0", "CNY")
             add_cost(project_b, video_b, "other-project", "l3_structured_research", "actual", "99", "0", "0")
+            asset = conn.execute("""insert into media_asset(video_id,kind,storage_location,bucket,
+                object_key,content_sha256,size_bytes,content_type)
+                values(%s,'audio','s3','test',%s,%s,64,'audio/wav') returning id""",
+                (video_a, "sha256/aa/" + "a" * 64, "a" * 64)).fetchone()[0]
+            review = conn.execute("""insert into project_asr_media_review(project_id,video_id,asset_id,
+                review_version,media_fingerprint,asset_manifest_fingerprint,delivery_origin,
+                identity_source,review_statement)
+                values(%s,%s,%s,'v1',%s,%s,'test','windmill_end_user_email_allowlist_v1','{}')
+                returning id""", (project_a, video_a, asset, "a" * 64, "b" * 64)).fetchone()[0]
+            conn.execute("update project_asr_media_review set status='approved',reviewed_by='reviewer@example.com' where id=%s", (review,))
+            conn.execute("""insert into project_asr_execution_job(task_key,project_id,video_id,
+                media_review_id,reviewed_asset_id,review_version,media_fingerprint,
+                asset_manifest_fingerprint,provider,model_id,model_revision,engine_version,
+                source_fingerprint,status,provider_task_ref,submission_count,cost_currency)
+                values(%s,%s,%s,%s,%s,'v1',%s,%s,'test','test','1','wav-v1',%s,
+                'running','provider-ref',1,'USD')""",
+                ("daily-unbilled-" + uuid4().hex, project_a, video_a, review, asset,
+                 "a" * 64, "b" * 64, "a" * 64))
 
             db = {
                 "host": conninfo.get("host") or conn.info.host or "127.0.0.1",
@@ -123,14 +141,15 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert day == {
                 **day,
                 "cost_currency": "USD",
-                "task_count": 4,
-                "asr_task_count": 2,
+                "task_count": 5,
+                "asr_task_count": 3,
                 "l3_task_count": 2,
                 "known_amount": 2.5,
                 "actual_amount": 1.0,
                 "estimated_amount": 1.0,
                 "mixed_amount": 0.5,
-                "unknown_task_count": 1,
+                "unknown_task_count": 2,
+                "unbilled_job_count": 1,
                 "cost_status": "partial",
             }
             assert "unknown_amount" not in day
@@ -142,6 +161,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert cny["estimated_amount"] is None
             assert cny["mixed_amount"] is None
             assert cny["unknown_task_count"] == 0
+            assert cny["unbilled_job_count"] == 0
             assert cny["cost_status"] == "complete"
 
             monkeypatch.setenv("WM_END_USER_EMAIL", "reader-b@example.com")

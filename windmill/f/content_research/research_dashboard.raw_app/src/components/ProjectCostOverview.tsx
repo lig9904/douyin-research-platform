@@ -13,6 +13,7 @@ type CostDay = {
   estimated_amount: number | null
   mixed_amount: number | null
   unknown_task_count: number
+  unbilled_job_count: number
   cost_status: 'complete' | 'partial'
 }
 
@@ -73,7 +74,9 @@ export default function ProjectCostOverview({ projectId }: { projectId: string }
             { title: '任务', render: (_, row) => `${row.task_count}（ASR ${row.asr_task_count} / L3 ${row.l3_task_count}）` },
             { title: '已知金额', render: (_, row) => amount(row.known_amount, row.cost_currency) },
             { title: '口径拆分', render: (_, row) => `实扣 ${amount(row.actual_amount, row.cost_currency)} · 估算 ${amount(row.estimated_amount, row.cost_currency)} · 混合 ${amount(row.mixed_amount, row.cost_currency)}` },
-            { title: '待对账', render: (_, row) => row.unknown_task_count ? <Tag color="warning">{row.unknown_task_count} 项金额未知</Tag> : <Tag color="green">无未知项</Tag> },
+            { title: '待对账', render: (_, row) => row.unknown_task_count
+              ? <><Tag color="warning">{row.unknown_task_count} 项金额未知</Tag>{row.unbilled_job_count > 0 && <Tag color="error">含 {row.unbilled_job_count} 项执行中断/未落账</Tag>}</>
+              : <Tag color="green">无未知项</Tag> },
           ]} />
       </section>
     </>}
