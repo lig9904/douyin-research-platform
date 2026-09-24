@@ -45,6 +45,9 @@ def test_project_briefs_only_offer_metadata_and_carry_scope_on_mutation() -> Non
     assert "backend.get_research_briefs(projectId ? { project_id: projectId } : {})" in briefs
     assert "...(projectId ? { project_id: projectId } : {})" in briefs
     assert "if (projectId && values.depth !== 'metadata')" in briefs
+    assert "subject_id: values?.subject_id" in briefs
+    assert "请先创建或选择研究主体" in briefs
+    assert "SubjectRelevancePanel" in briefs
     assert ".filter(([value]) => !projectId || value === 'metadata')" in briefs
     assert "const version = ++requestVersion.current" in briefs
     assert "if (version === requestVersion.current)" in briefs

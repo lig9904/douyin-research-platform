@@ -133,6 +133,16 @@ def _project_role(cur, *, project_id: str, actor: str, write: bool) -> str:
     return str(row["role"])
 
 
+def _active_subject(cur, *, project_id: str, subject_id: str) -> None:
+    cur.execute(
+        """select 1 from research_subject
+           where id=%s::uuid and project_id=%s::uuid and status='active' for share""",
+        (subject_id, project_id),
+    )
+    if cur.fetchone() is None:
+        raise ResearchBriefError("subject_id is unavailable")
+
+
 def _uuid4(value: object, *, field: str) -> str:
     try:
         parsed = UUID(str(value))
@@ -275,6 +285,8 @@ def _mutate(
             _authorized_writer(actor, writer_allowlist)
         else:
             _project_role(cur, project_id=project_id, actor=actor, write=True)
+            if config is not None:
+                _active_subject(cur, project_id=project_id, subject_id=str(config["subject_id"]))
         replay = _claim(cur, actor=actor, action=action, key=key, payload=payload)
         if replay is not None:
             return replay
@@ -283,13 +295,13 @@ def _mutate(
             cur.execute(
                 """
                 insert into research_brief(
-                  owner_actor, project_id, subject_id, name, platform, source_type, target,
+                  owner_actor, project_id, subject_id, subject_gate_status, name, platform, source_type, target,
                   time_window_hours, max_items, depth, cadence_hours
-                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 returning id, status, config_version
                 """,
                 (
-                    actor, project_id, config["subject_id"], config["name"], config["platform"], config["source_type"],
+                    actor, project_id, config["subject_id"], "ready" if project_id else "not_applicable", config["name"], config["platform"], config["source_type"],
                     config["target"], config["time_window_hours"], config["max_items"],
                     config["depth"], config["cadence_hours"],
                 ),
@@ -302,6 +314,7 @@ def _mutate(
                   name=%s, platform=%s, source_type=%s, target=%s,
                   time_window_hours=%s, max_items=%s, depth=%s, cadence_hours=%s,
                   subject_id=%s,
+                  subject_gate_status=case when project_id is null then 'not_applicable' else 'ready' end,
                   config_version=config_version+1, updated_at=now()
                 where id=%s and project_id is not distinct from %s::uuid
                   and (%s::uuid is not null or owner_actor=%s)
@@ -322,7 +335,9 @@ def _mutate(
                 where id=%s and project_id is not distinct from %s::uuid
                   and (%s::uuid is not null or owner_actor=%s)
                   and status in ('draft','paused')
-                  and (project_id is null or depth='metadata')
+                  and (project_id is null or (depth='metadata' and subject_id is not null and subject_gate_status='ready'
+                       and exists (select 1 from research_subject s where s.id=research_brief.subject_id
+                                  and s.project_id=research_brief.project_id and s.status='active')))
                 returning id, status, config_version
                 """,
                 (normalized_id, project_id, project_id, actor),

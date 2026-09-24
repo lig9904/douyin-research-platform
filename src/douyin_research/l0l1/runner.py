@@ -203,7 +203,10 @@ class L0L1Runner:
             failure_stage = "finalize"
             failure_item_count = observation_count
             scores = (
-                self.scorer.score_run(run_id, video_ids=relevant_ids)
+                self.scorer.score_run(
+                    run_id, video_ids=relevant_ids,
+                    project_id=project_id, subject_id=subject_id,
+                )
                 if relevant_ids is not None
                 else self.scorer.score_run(run_id)
             )

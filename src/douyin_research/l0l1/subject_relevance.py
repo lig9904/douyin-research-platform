@@ -81,6 +81,7 @@ class SubjectRelevanceStore:
                 """
                 select video.id, concat_ws(' ', video.title, video.description, account.nickname),
                        current.decision, current.decision_source
+                       , current.run_id
                 from source_video video
                 join project_video_inclusion inclusion
                   on inclusion.video_id=video.id and inclusion.project_id=%s
@@ -96,7 +97,7 @@ class SubjectRelevanceStore:
             if len(rows) != len(identifiers):
                 raise ValueError("subject relevance candidates must be project-included videos")
             decisions: dict[UUID, str] = {}
-            for video_id, text, prior, source in rows:
+            for video_id, text, prior, source, prior_run_id in rows:
                 if source == "manual":
                     decisions[video_id] = str(prior)
                     continue
@@ -110,28 +111,48 @@ class SubjectRelevanceStore:
                     """
                     insert into project_video_subject_relevance(
                       project_id, video_id, subject_id, decision, decision_source,
-                      rule_version, match_detail
-                    ) values (%s,%s,%s,%s,'rule',%s,%s)
+                      rule_version, match_detail, run_id
+                    ) values (%s,%s,%s,%s,'rule',%s,%s,%s)
                     on conflict (project_id, video_id, subject_id) do update set
                       decision=excluded.decision, decision_source='rule',
-                      rule_version=excluded.rule_version, match_detail=excluded.match_detail,
+                      rule_version=excluded.rule_version, match_detail=excluded.match_detail, run_id=excluded.run_id,
                       updated_at=now()
                     where project_video_subject_relevance.decision_source='rule'
                     returning decision
                     """,
-                    (project_id, video_id, subject_id, result.decision,
-                     RELEVANCE_RULE_VERSION, Jsonb(match_detail)),
+                    (
+                        project_id, video_id, subject_id, result.decision,
+                        RELEVANCE_RULE_VERSION, Jsonb(match_detail), run_id,
+                    ),
                 )
-                if cur.fetchone() is not None and prior != result.decision:
+                applied = cur.fetchone()
+                if applied is None:
+                    # A reviewer may have changed this row to manual after our
+                    # initial read.  The conditional upsert deliberately does
+                    # not overwrite it; use the durable current decision for
+                    # the downstream gate instead of the stale rule result.
+                    cur.execute(
+                        """select decision from project_video_subject_relevance
+                           where project_id=%s and video_id=%s and subject_id=%s""",
+                        (project_id, video_id, subject_id),
+                    )
+                    durable = cur.fetchone()
+                    if durable is None:
+                        raise RuntimeError("subject relevance write disappeared")
+                    decisions[video_id] = str(durable[0])
+                    continue
+                if prior != result.decision:
                     cur.execute(
                         """
                         insert into project_video_subject_relevance_audit(
                           project_id, video_id, subject_id, event_type, prior_decision,
-                          decision, rule_version, match_detail
-                        ) values (%s,%s,%s,'rule_evaluated',%s,%s,%s,%s)
+                          decision, rule_version, match_detail, run_id
+                        ) values (%s,%s,%s,'rule_evaluated',%s,%s,%s,%s,%s)
                         """,
-                        (project_id, video_id, subject_id, prior, result.decision,
-                         RELEVANCE_RULE_VERSION, Jsonb(match_detail)),
+                        (
+                            project_id, video_id, subject_id, prior, result.decision,
+                            RELEVANCE_RULE_VERSION, Jsonb(match_detail), run_id,
+                        ),
                     )
                 decisions[video_id] = result.decision
             conn.commit()
@@ -156,14 +177,14 @@ class SubjectRelevanceStore:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             self._terms(cur, project_id=project_id, subject_id=subject_id)
             cur.execute(
-                """select decision from project_video_subject_relevance
+                """select decision, run_id from project_video_subject_relevance
                    where project_id=%s and video_id=%s and subject_id=%s for update""",
                 (project_id, video_id, subject_id),
             )
             existing = cur.fetchone()
             if existing is None:
                 raise ValueError("subject relevance must be evaluated before correction")
-            prior = existing[0]
+            prior, source_run_id = existing
             cur.execute(
                 """update project_video_subject_relevance set decision=%s,
                        decision_source='manual', reviewed_by=%s, reviewed_at=now(),
@@ -173,10 +194,12 @@ class SubjectRelevanceStore:
             cur.execute(
                 """insert into project_video_subject_relevance_audit(
                      project_id, video_id, subject_id, event_type, actor, prior_decision,
-                     decision, reason, rule_version
-                   ) values (%s,%s,%s,'manual_override',%s,%s,%s,%s,%s)""",
-                (project_id, video_id, subject_id, actor, prior, decision, reason,
-                 RELEVANCE_RULE_VERSION),
+                     decision, reason, rule_version, run_id
+                   ) values (%s,%s,%s,'manual_override',%s,%s,%s,%s,%s,%s)""",
+                (
+                    project_id, video_id, subject_id, actor, prior, decision, reason,
+                    RELEVANCE_RULE_VERSION, source_run_id,
+                ),
             )
             conn.commit()
         return decision

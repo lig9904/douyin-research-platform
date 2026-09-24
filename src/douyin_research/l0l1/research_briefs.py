@@ -228,15 +228,17 @@ def _run_call_gate(
     return reserve
 
 
-def _ensure_active_project(dsn: str, project_id: UUID) -> None:
+def _ensure_active_project(dsn: str, project_id: UUID, subject_id: UUID | None = None) -> None:
     # Recheck immediately before every uncached provider request. A project
     # paused after the dispatch claim must not continue spending by default.
     with psycopg.connect(dsn) as conn:
         row = conn.execute(
             """select 1 from research_project p
                join research_organization o on o.id = p.organization_id
-               where p.id = %s and p.status = 'active' and o.status = 'active'""",
-            (project_id,),
+               left join research_subject s on s.id=%s and s.project_id=p.id
+               where p.id = %s and p.status = 'active' and o.status = 'active'
+                 and (%s::uuid is null or s.status='active')""",
+            (subject_id, project_id, subject_id),
         ).fetchone()
     if row is None:
         raise PermissionError("research project is unavailable")
@@ -249,6 +251,11 @@ def run_live(
     validate_config(config)
     if not dsn or not api_key or not triggered_by:
         raise ValueError("database, API key and service identity are required")
+    subject_id = UUID(config.subject_id) if config.subject_id is not None else None
+    if subject_id is not None and project_id is None:
+        raise ValueError("subject-scoped research requires a project")
+    if project_id is not None:
+        _ensure_active_project(dsn, project_id, subject_id)
 
     budget = DailyBudgetGuard(dsn)
     budget.configure(
@@ -270,6 +277,8 @@ def run_live(
             ),
             project_check=(
                 (lambda: _ensure_active_project(dsn, project_id))
+                if project_id is not None and subject_id is None
+                else (lambda: _ensure_active_project(dsn, project_id, subject_id))
                 if project_id is not None else None
             ),
         ),
@@ -291,7 +300,7 @@ def run_live(
             triggered_by=triggered_by,
             enrich_new_only=True,
         project_id=project_id,
-        subject_id=UUID(config.subject_id) if config.subject_id is not None else None,
+        subject_id=subject_id,
         )
     finally:
         transport.close()

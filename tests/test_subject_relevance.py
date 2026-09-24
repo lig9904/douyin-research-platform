@@ -1,15 +1,22 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+from uuid import uuid4
 
+import psycopg
 import pytest
+from psycopg import sql
+from psycopg.conninfo import make_conninfo
 
+from douyin_research.l0l1.scoring import Candidate, L1Scorer
 from douyin_research.l0l1.subject_relevance import SubjectRelevanceStore, SubjectTerms, classify
 
 
 ROOT = Path(__file__).parents[1]
 MIGRATION = ROOT / "db/migrations/027_subject_relevance_gate.sql"
 SCHEMA = ROOT / "db/schema.sql"
+DSN = os.getenv("TEST_DATABASE_URL")
 
 
 def _terms(*, geography: tuple[str, ...] = ()) -> SubjectTerms:
@@ -57,8 +64,141 @@ def test_schema_keeps_source_evidence_global_and_relevance_project_scoped() -> N
         assert "decision in ('pending', 'relevant', 'irrelevant')" in source
         assert "decision_source in ('rule', 'manual')" in source
         assert "project_video_subject_relevance_audit" in source
+        assert "run_id uuid" in source
         assert "manual_override" in source
         assert "update source_video" not in source.lower()
         assert "delete from source_video" not in source.lower()
     assert "references project_video_inclusion(project_id, video_id)" in migration
     assert "subject_id uuid" in migration
+
+
+def test_subject_routes_are_actor_bound_and_ui_closes_project_brief_path() -> None:
+    app = ROOT / "windmill/f/content_research/research_dashboard.raw_app"
+    reader = (app / "backend/get_project_subjects.py").read_text(encoding="utf-8")
+    writer = (app / "backend/mutate_project_subject.py").read_text(encoding="utf-8")
+    panel = (app / "SubjectRelevancePanel.tsx").read_text(encoding="utf-8")
+    briefs = (app / "ResearchBriefs.tsx").read_text(encoding="utf-8")
+    for source in (reader, writer):
+        assert 'os.environ.get("WM_END_USER_EMAIL"' in source
+        assert "RESEARCH_PROJECT" in source
+        assert "httpx" not in source
+    assert "correct_relevance" in writer
+    assert "manual_override" in writer
+    assert "backend.get_project_subjects" in panel
+    assert "backend.mutate_project_subject" in panel
+    assert "subject_id: values?.subject_id" in briefs
+    assert "请选择研究主体" in briefs
+
+
+def test_gate_rechecks_current_manual_decision_and_subject_activity() -> None:
+    relevance = (ROOT / "src/douyin_research/l0l1/subject_relevance.py").read_text(encoding="utf-8")
+    scoring = (ROOT / "src/douyin_research/l0l1/scoring.py").read_text(encoding="utf-8")
+    brief = (ROOT / "src/douyin_research/l0l1/research_briefs.py").read_text(encoding="utf-8")
+    collector = (ROOT / "windmill/f/content_research/collectors/run_research_brief.py").read_text(encoding="utf-8")
+    assert "use the durable current decision" in relevance
+    assert "select decision from project_video_subject_relevance" in relevance
+    assert "for share" in scoring
+    assert "relevance.decision='relevant'" in scoring
+    assert "s.status='active'" in brief
+    assert "subject.status='active'" in collector
+    assert "subject_gate_status='subject_required'" in collector
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
+def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision() -> None:
+    """Exercise 027 and the conditional-upsert race with two DB connections."""
+    assert DSN
+    namespace = f"subject_gate_{uuid4().hex}"
+    migration = MIGRATION.read_text(encoding="utf-8")
+    with psycopg.connect(DSN, autocommit=True) as admin:
+        admin.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
+        try:
+            admin.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            admin.execute(SCHEMA.read_text(encoding="utf-8"), prepare=False)
+            org = admin.execute(
+                "insert into research_organization(slug,name) values ('subject-gate','Subject Gate') returning id"
+            ).fetchone()[0]
+            project = admin.execute(
+                """insert into research_project(organization_id,slug,name,status)
+                   values (%s,'subject-project','Subject Project','active') returning id""", (org,)
+            ).fetchone()[0]
+            subject = admin.execute(
+                """insert into research_subject(project_id,name,subject_type)
+                   values (%s,'渔岛','destination') returning id""", (project,)
+            ).fetchone()[0]
+            video = admin.execute(
+                """insert into source_video(platform,platform_video_id,title,availability_status)
+                   values ('douyin','98765432123456789','渔岛温泉','available') returning id"""
+            ).fetchone()[0]
+            admin.execute(
+                """insert into project_video_inclusion(project_id,video_id,source_type,status)
+                   values (%s,%s,'manual','accepted')""", (project, video)
+            )
+            admin.execute(
+                """insert into project_video_subject_relevance(
+                     project_id,video_id,subject_id,decision,decision_source,rule_version
+                   ) values (%s,%s,%s,'relevant','rule','subject-relevance-v1.0.0')""",
+                (project, video, subject),
+            )
+            brief = admin.execute(
+                """insert into research_brief(owner_actor,project_id,name,platform,source_type,target,
+                     time_window_hours,max_items,depth,cadence_hours,status,next_due_at)
+                   values ('owner@example.com',%s,'旧项目任务','douyin','keyword','渔岛',24,1,'metadata',6,'active',now())
+                   returning id""", (project,)
+            ).fetchone()[0]
+            admin.execute(migration, prepare=False)
+            state = admin.execute(
+                "select status,subject_gate_status,next_due_at is null from research_brief where id=%s", (brief,)
+            ).fetchone()
+            assert state == ("paused", "subject_required", True)
+
+            scoped = f"-c search_path={namespace}"
+            with psycopg.connect(DSN, options=scoped) as rule_conn, psycopg.connect(DSN, options=scoped) as manual_conn:
+                # Rule evaluation observed a rule row. A reviewer commits a
+                # correction before the conditional rule upsert obtains lock.
+                assert rule_conn.execute(
+                    "select decision from project_video_subject_relevance where project_id=%s and video_id=%s and subject_id=%s",
+                    (project, video, subject),
+                ).fetchone()[0] == "relevant"
+                manual_conn.execute(
+                    """update project_video_subject_relevance set decision='irrelevant', decision_source='manual',
+                         reviewed_by='reviewer@example.com', reviewed_at=now() where project_id=%s and video_id=%s and subject_id=%s""",
+                    (project, video, subject),
+                )
+                manual_conn.commit()
+                outcome = rule_conn.execute(
+                    """insert into project_video_subject_relevance(
+                         project_id,video_id,subject_id,decision,decision_source,rule_version
+                       ) values (%s,%s,%s,'relevant','rule','subject-relevance-v1.0.0')
+                       on conflict (project_id,video_id,subject_id) do update set decision=excluded.decision
+                       where project_video_subject_relevance.decision_source='rule'
+                       returning decision""",
+                    (project, video, subject),
+                ).fetchone()
+                assert outcome is None
+                durable = rule_conn.execute(
+                    "select decision from project_video_subject_relevance where project_id=%s and video_id=%s and subject_id=%s",
+                    (project, video, subject),
+                ).fetchone()[0]
+                assert durable == "irrelevant"
+            run = admin.execute(
+                """insert into pipeline_run(run_type,platform,project_id)
+                   values ('subject_test','douyin',%s) returning id""", (project,)
+            ).fetchone()[0]
+            admin.execute(
+                """insert into pipeline_run_item(run_id,entity_type,entity_id,stage,outcome)
+                   values (%s,'video',%s,'L0','ingested')""", (run, video)
+            )
+            scorer = L1Scorer(make_conninfo(DSN, options=f"-c search_path={namespace}"))
+            scorer._assert_single_platform = lambda _run: "douyin"  # type: ignore[method-assign]
+            scorer._load_candidates = lambda *_args, **_kwargs: [Candidate(  # type: ignore[method-assign]
+                video, None, None, None, 0, 0, None, None, None, None, None,
+                None, None, None, None, None, None, None, 0,
+            )]
+            # Even a candidate list constructed before the correction cannot
+            # write a score after the same-transaction FOR SHARE gate check.
+            assert scorer.score_run(run, project_id=project, subject_id=subject) == {}
+            assert admin.execute("select count(*) from video_score where video_id=%s", (video,)).fetchone()[0] == 0
+        finally:
+            admin.execute("set search_path to public")
+            admin.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))

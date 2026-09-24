@@ -100,7 +100,7 @@ def main(db: postgresql, project_id: str | None = None):
                 _project_readable(cur, project_id=normalized_project_id, actor=actor)
             cur.execute(
                 """
-                select id, subject_id, name, platform, source_type, target,
+                select id, subject_id, subject_gate_status, name, platform, source_type, target,
                   time_window_hours, max_items, depth, cadence_hours,
                   status, config_version, next_due_at, last_dispatched_at,
                   created_at, updated_at

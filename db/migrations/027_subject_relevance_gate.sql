@@ -26,6 +26,7 @@ create table if not exists project_video_subject_relevance (
   project_id uuid not null,
   video_id uuid not null,
   subject_id uuid not null,
+  run_id uuid,
   decision text not null check (decision in ('pending', 'relevant', 'irrelevant')),
   decision_source text not null check (decision_source in ('rule', 'manual')),
   rule_version text not null check (char_length(rule_version) between 1 and 80),
@@ -39,6 +40,8 @@ create table if not exists project_video_subject_relevance (
     references project_video_inclusion(project_id, video_id) on delete cascade,
   foreign key (subject_id, project_id)
     references research_subject(id, project_id) on delete cascade,
+  constraint fk_subject_relevance_run_project foreign key (run_id, project_id)
+    references pipeline_run(id, project_id) on delete restrict,
   check ((decision_source = 'manual') = (reviewed_by is not null)),
   check ((decision_source = 'manual') = (reviewed_at is not null))
 );
@@ -51,6 +54,7 @@ create table if not exists project_video_subject_relevance_audit (
   project_id uuid not null,
   video_id uuid not null,
   subject_id uuid not null,
+  run_id uuid,
   event_type text not null check (event_type in ('rule_evaluated', 'manual_override')),
   actor text check (actor is null or char_length(actor) between 3 and 254),
   prior_decision text check (prior_decision is null or prior_decision in ('pending', 'relevant', 'irrelevant')),
@@ -61,6 +65,8 @@ create table if not exists project_video_subject_relevance_audit (
   created_at timestamptz not null default now(),
   foreign key (project_id, video_id, subject_id)
     references project_video_subject_relevance(project_id, video_id, subject_id) on delete cascade,
+  constraint fk_subject_relevance_audit_run_project foreign key (run_id, project_id)
+    references pipeline_run(id, project_id) on delete restrict,
   check ((event_type = 'manual_override') = (actor is not null)),
   check ((event_type = 'manual_override') = (reason is not null))
 );
@@ -68,7 +74,25 @@ create table if not exists project_video_subject_relevance_audit (
 create index if not exists idx_project_video_subject_relevance_audit_video
   on project_video_subject_relevance_audit(project_id, video_id, subject_id, created_at desc);
 
+-- Keep replay idempotent for an installation that received an early 027 draft.
+alter table project_video_subject_relevance add column if not exists run_id uuid;
+alter table project_video_subject_relevance_audit add column if not exists run_id uuid;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid='project_video_subject_relevance'::regclass and conname='fk_subject_relevance_run_project') then
+    alter table project_video_subject_relevance add constraint fk_subject_relevance_run_project
+      foreign key (run_id, project_id) references pipeline_run(id, project_id) on delete restrict;
+  end if;
+  if not exists (select 1 from pg_constraint where conrelid='project_video_subject_relevance_audit'::regclass and conname='fk_subject_relevance_audit_run_project') then
+    alter table project_video_subject_relevance_audit add constraint fk_subject_relevance_audit_run_project
+      foreign key (run_id, project_id) references pipeline_run(id, project_id) on delete restrict;
+  end if;
+end $$;
+
 alter table research_brief add column if not exists subject_id uuid;
+alter table research_brief add column if not exists subject_gate_status text not null default 'not_applicable';
+alter table research_brief drop constraint if exists research_brief_subject_gate_status_check;
+alter table research_brief add constraint research_brief_subject_gate_status_check
+  check (subject_gate_status in ('not_applicable', 'ready', 'subject_required'));
 do $$ begin
   if not exists (
     select 1 from pg_constraint
@@ -82,6 +106,26 @@ end $$;
 alter table research_brief drop constraint if exists research_brief_subject_scope_check;
 alter table research_brief add constraint research_brief_subject_scope_check
   check (subject_id is null or project_id is not null);
+-- A pre-027 project brief has no safe subject interpretation.  Pause an active
+-- one explicitly rather than leaving it active and silently unclaimable.
+update research_brief
+set subject_gate_status = case
+      when project_id is null then 'not_applicable'
+      when subject_id is null then 'subject_required'
+      else 'ready'
+    end,
+    status = case
+      when project_id is not null and subject_id is null and status='active' then 'paused'
+      else status
+    end,
+    next_due_at = case
+      when project_id is not null and subject_id is null and status='active' then null
+      else next_due_at
+    end,
+    updated_at = case
+      when project_id is not null and subject_id is null and status='active' then now()
+      else updated_at
+    end;
 create index if not exists idx_research_brief_project_subject_due
   on research_brief(project_id, subject_id, next_due_at, id)
   where project_id is not null and subject_id is not null and status='active';

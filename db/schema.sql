@@ -1546,6 +1546,7 @@ create table if not exists project_video_subject_relevance (
   project_id uuid not null,
   video_id uuid not null,
   subject_id uuid not null,
+  run_id uuid,
   decision text not null check (decision in ('pending', 'relevant', 'irrelevant')),
   decision_source text not null check (decision_source in ('rule', 'manual')),
   rule_version text not null check (char_length(rule_version) between 1 and 80),
@@ -1559,6 +1560,8 @@ create table if not exists project_video_subject_relevance (
     references project_video_inclusion(project_id, video_id) on delete cascade,
   foreign key (subject_id, project_id)
     references research_subject(id, project_id) on delete cascade,
+  constraint fk_subject_relevance_run_project foreign key (run_id, project_id)
+    references pipeline_run(id, project_id) on delete restrict,
   check ((decision_source = 'manual') = (reviewed_by is not null)),
   check ((decision_source = 'manual') = (reviewed_at is not null))
 );
@@ -1571,6 +1574,7 @@ create table if not exists project_video_subject_relevance_audit (
   project_id uuid not null,
   video_id uuid not null,
   subject_id uuid not null,
+  run_id uuid,
   event_type text not null check (event_type in ('rule_evaluated', 'manual_override')),
   actor text check (actor is null or char_length(actor) between 3 and 254),
   prior_decision text check (prior_decision is null or prior_decision in ('pending', 'relevant', 'irrelevant')),
@@ -1581,6 +1585,8 @@ create table if not exists project_video_subject_relevance_audit (
   created_at timestamptz not null default now(),
   foreign key (project_id, video_id, subject_id)
     references project_video_subject_relevance(project_id, video_id, subject_id) on delete cascade,
+  constraint fk_subject_relevance_audit_run_project foreign key (run_id, project_id)
+    references pipeline_run(id, project_id) on delete restrict,
   check ((event_type = 'manual_override') = (actor is not null)),
   check ((event_type = 'manual_override') = (reason is not null))
 );
@@ -1589,6 +1595,7 @@ create index if not exists idx_project_video_subject_relevance_audit_video
   on project_video_subject_relevance_audit(project_id, video_id, subject_id, created_at desc);
 
 alter table research_brief add column if not exists subject_id uuid;
+alter table research_brief add column if not exists subject_gate_status text not null default 'not_applicable';
 alter table research_brief
   add constraint fk_research_brief_subject_project
   foreign key (subject_id, project_id)
@@ -1596,6 +1603,9 @@ alter table research_brief
 alter table research_brief
   add constraint research_brief_subject_scope_check
   check (subject_id is null or project_id is not null);
+alter table research_brief
+  add constraint research_brief_subject_gate_status_check
+  check (subject_gate_status in ('not_applicable', 'ready', 'subject_required'));
 create index if not exists idx_research_brief_project_subject_due
   on research_brief(project_id, subject_id, next_due_at, id)
   where project_id is not null and subject_id is not null and status='active';

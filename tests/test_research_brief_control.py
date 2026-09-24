@@ -103,6 +103,9 @@ def test_dashboard_exposes_briefs_as_a_first_class_research_view() -> None:
     assert "backend.get_research_briefs" in page
     assert "backend.mutate_research_brief" in page
     assert "project_id: projectId" in page
+    assert "subject_id: values?.subject_id" in page
+    assert "<SubjectRelevancePanel" in page
+    assert "请选择研究主体" in page
     assert "crypto.randomUUID" in page
     assert "确认激活" in page
     assert "ASR 与 L3 始终保留独立人工审核" in page
