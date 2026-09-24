@@ -1,12 +1,22 @@
 summary: Preview project-private ASR audio for review
-description: Authenticated read-only preview. Returns one 5-minute signed listening URL and exact manifest fingerprint; does not approve or call ASR.
-timeout: 30
+description: Authenticated read-only preview. Returns one 5-minute signed
+  listening URL and exact manifest fingerprint; does not approve or call ASR.
+lock: '!inline f/content_research/project_asr/media_review_preview.script.lock'
 concurrent_limit: 2
 schema:
   type: object
   properties:
-    project_id: {type: string}
-    video_id: {type: string}
-    asset_id: {type: string}
-    review_version: {type: string}
-  required: [project_id, video_id, asset_id, review_version]
+    asset_id:
+      type: string
+    project_id:
+      type: string
+    review_version:
+      type: string
+    video_id:
+      type: string
+  required:
+    - project_id
+    - video_id
+    - asset_id
+    - review_version
+timeout: 30
