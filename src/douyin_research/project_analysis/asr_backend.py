@@ -453,13 +453,13 @@ class ProjectASRService:
         raise PermissionError("authenticated Windmill end-user identity is required")
 
     def _execution_actor(self) -> str:
-        try:
-            return self._human_actor()
-        except PermissionError:
-            pass
+        # A worker constructed with the server-configured identity must keep
+        # that identity even if Windmill injects a valid publisher/end-user
+        # email into the scheduled job environment. Human review entrypoints
+        # construct the service without trusted_worker_actor.
         if self._trusted_worker_actor is not None:
             return self._trusted_worker_actor
-        raise PermissionError("authenticated Windmill end-user or worker identity is required")
+        return self._human_actor()
 
     @staticmethod
     def _assert_provider(provider: ProjectASRProvider, request: ProjectASRDispatch) -> None:

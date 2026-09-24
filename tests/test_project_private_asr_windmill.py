@@ -1,6 +1,22 @@
 from pathlib import Path
 
+import pytest
+
+from douyin_research.project_analysis.asr_backend import ProjectASRService
+
 ROOT = Path(__file__).resolve().parents[1] / "windmill/f/content_research/project_asr"
+
+
+def test_scheduled_asr_worker_identity_wins_over_injected_end_user(monkeypatch) -> None:
+    monkeypatch.setenv("WM_END_USER_EMAIL", "unrelated@example.com")
+    worker = ProjectASRService("postgresql://unused", delivery_origin="https://media.example.test",
+                               trusted_worker_actor="service@example.com")
+    assert worker._execution_actor() == "service@example.com"
+    human = ProjectASRService("postgresql://unused", delivery_origin="https://media.example.test")
+    assert human._execution_actor() == "unrelated@example.com"
+    monkeypatch.delenv("WM_END_USER_EMAIL")
+    with pytest.raises(PermissionError):
+        human._execution_actor()
 
 def test_project_asr_review_scripts_keep_identity_resources_and_secrets_server_side() -> None:
     preview = (ROOT / "media_review_preview.py").read_text()
