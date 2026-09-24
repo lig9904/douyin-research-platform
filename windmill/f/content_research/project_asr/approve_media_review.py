@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.14.*"
-# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@e0120bb3742bf636375f22fb0139d093e4ab2de7", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@34ce0706b2b937c04bac732413d5809ac271ed9c", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
 # ///
 """Human approval endpoint; identity comes only from WM_END_USER_EMAIL."""
 from uuid import UUID
