@@ -29,14 +29,16 @@ def _asset(**changes: object) -> MediaAssetReference:
 
 def test_manifest_binds_complete_asset_identity_not_only_content_hash() -> None:
     asset = _asset()
-    assert asset_manifest(asset) != asset_manifest(_asset(
+    origin = "https://media.example.test"
+    assert asset_manifest(asset, origin) != asset_manifest(_asset(
         id=asset.id, video_id=asset.video_id, object_key="sha256/aa/" + "b" * 64,
-    ))
-    assert asset_manifest(asset) != asset_manifest(_asset(
+    ), origin)
+    assert asset_manifest(asset, origin) != asset_manifest(_asset(
         id=asset.id, video_id=asset.video_id, storage_location="other-private-store",
-    ))
+    ), origin)
+    assert asset_manifest(asset, origin) != asset_manifest(asset, "https://other.example.test")
     with pytest.raises(ValueError, match="normalized WAV"):
-        asset_manifest(_asset(content_type="audio/mp4"))
+        asset_manifest(_asset(content_type="audio/mp4"), origin)
 
 
 def test_review_and_dispatch_inputs_reject_weak_or_secret_like_identity() -> None:

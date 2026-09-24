@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal
 from typing import Callable, Mapping, Protocol
 from uuid import UUID
+from urllib.parse import urlsplit
 
 import psycopg
 from psycopg.rows import dict_row
@@ -24,6 +25,7 @@ from psycopg.types.json import Jsonb
 from douyin_research.l2.asr_execution import ASRProvider, ASRProviderRequest
 from douyin_research.l2.transcripts import TaskCost, TranscriptEvidence
 from douyin_research.media_assets import MediaAssetReference
+from douyin_research.l2.media_review import _origin, asset_fingerprint
 
 
 GLOBAL_REVIEWERS_PATH = "f/content_research/project_asr_global_reviewers"
@@ -67,10 +69,12 @@ class ProjectASRService:
     only for their own project; active members may preview.
     """
 
-    def __init__(self, dsn: str, *, variable: Callable[[str], str] | None = None) -> None:
+    def __init__(self, dsn: str, *, delivery_origin: str,
+                 variable: Callable[[str], str] | None = None) -> None:
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("dsn is required")
         self._dsn = dsn
+        self._delivery_origin = _origin(delivery_origin)
         self._variable = variable or _windmill_variable
 
     def preview(self, request: ProjectMediaReviewInput) -> dict[str, object]:
@@ -78,8 +82,9 @@ class ProjectASRService:
         project_id, video_id, asset_id = _ids(request)
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             self._assert_member(conn, project_id, actor)
+            self._assert_dispatchable_video(conn, project_id, video_id)
             asset = self._asset(conn, video_id, asset_id)
-            manifest = asset_manifest(asset)
+            manifest = asset_manifest(asset, self._delivery_origin)
             row = conn.execute(
                 """select id,status,asset_manifest_fingerprint from project_asr_media_review
                    where project_id=%s and video_id=%s and asset_id=%s and review_version=%s""",
@@ -99,18 +104,19 @@ class ProjectASRService:
         _review_input(request, expected_manifest_fingerprint)
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             self._assert_reviewer(conn, project_id, actor)
+            self._assert_dispatchable_video(conn, project_id, video_id)
             asset = self._asset(conn, video_id, asset_id)
-            manifest = asset_manifest(asset)
+            manifest = asset_manifest(asset, self._delivery_origin)
             if manifest != expected_manifest_fingerprint:
                 raise ValueError("project media changed since preview")
             row = conn.execute(
                 """insert into project_asr_media_review(
                      project_id,video_id,asset_id,review_version,media_fingerprint,
                      asset_manifest_fingerprint,delivery_origin,identity_source,review_statement)
-                   values(%s,%s,%s,%s,%s,%s,'project-private-storage',%s,%s)
+                   values(%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    on conflict(project_id,asset_id,review_version) do nothing returning id""",
                 (project_id, video_id, asset_id, request.review_version, asset.content_sha256,
-                 manifest, IDENTITY_SOURCE, Jsonb(dict(request.review_statement))),
+                 manifest, self._delivery_origin, IDENTITY_SOURCE, Jsonb(dict(request.review_statement))),
             ).fetchone()
             if row is None:
                 row = conn.execute(
@@ -139,6 +145,13 @@ class ProjectASRService:
         project_id, review_id = _uuid(project_id, "project_id"), _uuid(media_review_id, "media_review_id")
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             self._assert_reviewer(conn, project_id, actor)
+            review_scope = conn.execute(
+                "select video_id from project_asr_media_review where id=%s and project_id=%s",
+                (review_id, project_id),
+            ).fetchone()
+            if review_scope is None:
+                raise ValueError("project media review is unavailable or already revoked")
+            self._assert_dispatchable_video(conn, project_id, review_scope["video_id"])
             row = conn.execute(
                 """update project_asr_media_review set status='revoked', revoked_by=%s
                    where id=%s and project_id=%s and status in ('draft','approved') returning id""",
@@ -163,6 +176,7 @@ class ProjectASRService:
         _dispatch_input(request)
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             self._assert_reviewer(conn, project_id, actor)
+            self._assert_dispatchable_video(conn, project_id, video_id)
             review = conn.execute(
                 """select * from project_asr_media_review where id=%s and project_id=%s and video_id=%s
                    for update""", (review_id, project_id, video_id),
@@ -170,7 +184,7 @@ class ProjectASRService:
             if review is None or review["status"] != "approved":
                 raise PermissionError("current approved project media review is required before ASR HTTP")
             asset = self._asset(conn, video_id, review["asset_id"])
-            manifest = asset_manifest(asset)
+            manifest = asset_manifest(asset, self._delivery_origin)
             if review["asset_manifest_fingerprint"] != manifest or review["media_fingerprint"] != asset.content_sha256:
                 raise PermissionError("approved project media review is stale")
             task_key = _task_key(project_id, video_id, review_id, review["asset_id"], review["review_version"],
@@ -190,13 +204,27 @@ class ProjectASRService:
             ).fetchone()
         # URL creation and provider construction happen only after approval
         # record was locked/rechecked; they are never persisted or returned.
-        media_url = media_url_factory(asset)
-        provider = provider_factory()
-        state = provider.submit(ASRProviderRequest(task_key=task_key, media_ref=media_url,
-            source_fingerprint=request.source_fingerprint, model_id=request.model_id,
-            model_revision=request.model_revision, engine_version=request.engine_version))
-        self._record_state(project_id, video_id, review_id, UUID(str(job["id"])), state, request.cost_currency)
-        return {"status": state.status, "task_key": task_key, "created": True, "external_calls": 1,
+        try:
+            media_url = media_url_factory(asset)
+            self._assert_delivery_url(media_url)
+            provider = provider_factory()
+            state = provider.submit(ASRProviderRequest(task_key=task_key, media_ref=media_url,
+                source_fingerprint=request.source_fingerprint, model_id=request.model_id,
+                model_revision=request.model_revision, engine_version=request.engine_version))
+            calls = 1
+            self._record_state(project_id, video_id, review_id, UUID(str(job["id"])), state, request.cost_currency)
+            # Bounded polling keeps the project-local transcript path usable;
+            # every result is persisted only in project_* tables.
+            for _ in range(3):
+                if state.status not in {"submitted", "running"}:
+                    break
+                state = provider.poll(state.provider_task_ref)
+                calls += 1
+                self._record_state(project_id, video_id, review_id, UUID(str(job["id"])), state, request.cost_currency)
+        except Exception:
+            self._mark_failed(UUID(str(job["id"])))
+            raise RuntimeError("project ASR provider execution failed") from None
+        return {"status": state.status, "task_key": task_key, "created": True, "external_calls": calls,
                 "project_private": True, "media_url_recorded": False, "storage_credentials_exposed": False}
 
     def _record_state(self, project_id: UUID, video_id: UUID, review_id: UUID, job_id: UUID,
@@ -220,6 +248,27 @@ class ProjectASRService:
             else:
                 conn.execute("update project_asr_execution_job set status=%s,provider_task_ref=%s,submission_count=1,error_code=%s where id=%s",
                              (state.status, state.provider_task_ref, state.error_code, job_id))
+
+    def _mark_failed(self, job_id: UUID) -> None:
+        with psycopg.connect(self._dsn) as conn:
+            conn.execute("""update project_asr_execution_job set status='failed',submission_count=1,
+                         error_code='project_asr_provider_failed' where id=%s and status='submitting'""", (job_id,))
+
+    def _assert_delivery_url(self, media_url: str) -> None:
+        parsed = urlsplit(media_url)
+        if (parsed.scheme != "https" or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or f"{parsed.scheme}://{parsed.netloc}" != self._delivery_origin):
+            raise PermissionError("media URL does not match reviewed delivery origin")
+
+    @staticmethod
+    def _assert_dispatchable_video(conn, project_id: UUID, video_id: UUID) -> None:
+        row = conn.execute("""select 1 from project_video_inclusion inclusion_row
+                            join source_video video_row on video_row.id=inclusion_row.video_id
+                            where inclusion_row.project_id=%s and inclusion_row.video_id=%s
+                            and inclusion_row.status='accepted' and video_row.availability_status='available'""",
+                           (project_id, video_id)).fetchone()
+        if row is None:
+            raise PermissionError("accepted available project video is required")
 
     def _asset(self, conn, video_id: UUID, asset_id: UUID) -> MediaAssetReference:
         row = conn.execute("""select id,video_id,kind,storage_location,bucket,object_key,content_sha256,size_bytes,
@@ -254,12 +303,13 @@ class ProjectASRService:
         return actor
 
 
-def asset_manifest(asset: MediaAssetReference) -> str:
+def asset_manifest(asset: MediaAssetReference, delivery_origin: str) -> str:
     """Hash every asset identity field that can affect ASR delivery, no secrets."""
     if asset.kind != "audio" or asset.content_type != "audio/wav" or not _SHA256.fullmatch(asset.content_sha256):
         raise ValueError("normalized WAV asset with SHA-256 is required")
-    return hashlib.sha256(json.dumps(asdict(asset), default=str, sort_keys=True,
-                                     separators=(",", ":")).encode()).hexdigest()
+    # Reuse L2's reviewed manifest contract, including the normalized actual
+    # delivery origin.  This is intentionally not an ad-hoc asdict hash.
+    return asset_fingerprint(asset, _origin(delivery_origin))
 
 
 def _insert_cost(conn, project_id, video_id, job_id, cost: TaskCost | None, currency: str):
