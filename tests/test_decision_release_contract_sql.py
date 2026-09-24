@@ -58,6 +58,11 @@ def test_fresh_schema_has_private_028_contract_and_restore_state() -> None:
                     "insert into schema_migrations(filename, sha256) values (%s, 'test')",
                     (migration.name,),
                 )
+            # Reconstruct the 028 archive, not today's fresh bootstrap: 029
+            # contributes a table, two indexes and two functions.
+            conn.execute("drop table project_video_subject_score")
+            conn.execute("drop function enforce_project_video_subject_score_eligible()")
+            conn.execute("drop function reject_project_video_subject_score_change()")
             state = _restore_state_sql().replace("public.", f"{namespace}.")
             state = state.replace("nspname='public'", f"nspname='{namespace}'")
             assert conn.execute(state).fetchone()[0] == "8|38"

@@ -21,11 +21,22 @@ type Review = {
   account_name?: string | null
   subject_name: string
   run_id?: string | null
-  match_detail?: { aliases?: string[]; geographic_contexts?: string[]; exclusions?: string[] }
+  match_detail?: { aliases?: string[]; geographic_contexts?: string[]; exclusions?: string[]; invalidated_by?: string }
   reviewed_by?: string | null
   reviewed_at?: string | null
 }
-type Data = { subjects: ProjectSubject[]; review_queue: Review[] }
+type ProjectScore = {
+  subject_id: string
+  video_id: string
+  score: number
+  confidence?: 'high' | 'medium' | 'low' | null
+  title: string
+  account_name?: string | null
+  rule_version: string
+  created_at: string
+  source_run_id: string
+}
+type Data = { subjects: ProjectSubject[]; review_queue: Review[]; top_scores: ProjectScore[] }
 type Values = { name: string; subject_type: string; aliases: string; geographic_contexts: string; exclusions: string }
 
 const typeNames: Record<string, string> = {
@@ -37,13 +48,14 @@ const decisionName = { relevant: '相关', pending: '待判定', irrelevant: '�
 const split = (value?: string) => Array.from(new Set((value || '').split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)))
 const join = (terms: Term[], kind: Term['term_type']) => terms.filter((term) => term.term_type === kind).map((term) => term.term).join('，')
 
-export default function SubjectRelevancePanel({ projectId, selectedSubjectId, onSelectSubject, onSubjectsChange }: {
+export default function SubjectRelevancePanel({ projectId, selectedSubjectId, onSelectSubject, onSubjectsChange, onOpenVideoLibrary }: {
   projectId: string
   selectedSubjectId?: string
   onSelectSubject: (id: string) => void
   onSubjectsChange?: (subjects: ProjectSubject[]) => void
+  onOpenVideoLibrary?: () => void
 }) {
-  const [data, setData] = useState<Data>({ subjects: [], review_queue: [] })
+  const [data, setData] = useState<Data>({ subjects: [], review_queue: [], top_scores: [] })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [modal, setModal] = useState<'create' | 'terms' | null>(null)
@@ -114,6 +126,7 @@ export default function SubjectRelevancePanel({ projectId, selectedSubjectId, on
     })
   }
   const review = data.review_queue.filter((item) => item.subject_id === selectedSubjectId)
+  const scores = (data.top_scores || []).filter((item) => item.subject_id === selectedSubjectId)
 
   return <>
     {contextHolder}
@@ -130,10 +143,19 @@ export default function SubjectRelevancePanel({ projectId, selectedSubjectId, on
         <div><Tag color="green">相关 {selected.relevant_count}</Tag><Tag color="gold">待判定 {selected.pending_count}</Tag><Tag>排除 {selected.irrelevant_count}</Tag></div>
       </div> : <p className="subject-empty">创建主体后，项目任务才能明确哪些候选值得进入决策。</p>}
     </Card>
+    {selected ? <Card className="subject-score-card" title={`相关候选优先级 · ${selected.name}`} extra={<Space><span>最近一批评分 · 最多前 20 条</span>{onOpenVideoLibrary ? <Button size="small" onClick={onOpenVideoLibrary}>到视频库核对原始依据</Button> : null}</Space>}>
+      <Alert type="info" showIcon message="批内相对排序，不是经营效果预测" description="只展示本项目本主体最近一批、当前仍相关的公开视频；不同运行批次的分数不能直接比较。低置信度或样本不足时先核对原始依据。评论、转写和大模型分析仍未在项目链路启用。" />
+      <Table<ProjectScore> rowKey={(row) => `${row.source_run_id}:${row.video_id}`} pagination={{ pageSize: 8 }} dataSource={scores} locale={{ emptyText: '暂无可展示的项目级评分。运行主体绑定任务并核对相关性后再查看。' }} columns={[
+        { title: '公开视频', key: 'video', render: (_, row) => <div><strong>{row.title}</strong><small>{row.account_name || '公开账号未提供名称'}</small></div> },
+        { title: 'L1 优先级', dataIndex: 'score', key: 'score', render: (value: number) => <strong>{Number(value).toFixed(2)} / 100</strong> },
+        { title: '数据置信度', dataIndex: 'confidence', key: 'confidence', render: (value?: string | null) => <Tag color={value === 'high' ? 'green' : value === 'medium' ? 'gold' : 'default'}>{value === 'high' ? '高' : value === 'medium' ? '中' : '低'}</Tag> },
+        { title: '可复核版本', key: 'evidence', render: (_, row) => <small>{row.rule_version} · 运行 {row.source_run_id.slice(0, 8)} · 北京时间 {new Date(row.created_at).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}</small> },
+      ]} />
+    </Card> : null}
     {selected ? <Card className="subject-review-card" title={`相关性审核 · ${selected.name}`} extra={<span>先看待判定与排除项；相关项已进入该主体决策队列</span>}>
       <Table<Review> rowKey={(row) => `${row.subject_id}:${row.video_id}`} pagination={{ pageSize: 8 }} dataSource={review} locale={{ emptyText: '暂时没有已判定候选。运行项目研究任务后会在这里出现。' }} columns={[
         { title: '候选公开内容', key: 'video', render: (_, row) => <div><strong>{row.title}</strong><small>{row.account_name || '公开账号未提供名称'}</small></div> },
-        { title: '规则依据', key: 'evidence', render: (_, row) => <small>命中：{[...(row.match_detail?.aliases || []), ...(row.match_detail?.geographic_contexts || [])].join('、') || '无'}{(row.match_detail?.exclusions || []).length ? `；排除：${row.match_detail?.exclusions?.join('、')}` : ''}{row.run_id ? `；运行 ${row.run_id.slice(0, 8)}` : '；历史人工记录'}</small> },
+        { title: '规则依据', key: 'evidence', render: (_, row) => <small>{row.match_detail?.invalidated_by === 'subject_terms_changed' ? '主体词已变更，等待重新判定' : <>命中：{[...(row.match_detail?.aliases || []), ...(row.match_detail?.geographic_contexts || [])].join('、') || '无'}{(row.match_detail?.exclusions || []).length ? `；排除：${row.match_detail?.exclusions?.join('、')}` : ''}</>}{row.run_id ? `；运行 ${row.run_id.slice(0, 8)}` : '；历史人工记录'}</small> },
         { title: '当前判断', key: 'decision', render: (_, row) => <Space direction="vertical" size={2}><Tag color={decisionColor[row.decision]}>{decisionName[row.decision]}{row.decision_source === 'manual' ? ' · 人工' : ' · 规则'}</Tag>{row.reviewed_by ? <small>{row.reviewed_by}</small> : null}</Space> },
         { title: '纠错', key: 'actions', render: (_, row) => <Space wrap><Button size="small" onClick={() => correct(row, 'relevant')}>标相关</Button><Button size="small" onClick={() => correct(row, 'pending')}>待判定</Button><Button size="small" danger onClick={() => correct(row, 'irrelevant')}>排除</Button></Space> },
       ]} />

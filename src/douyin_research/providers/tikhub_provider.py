@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime, timedelta
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, ContextManager, Iterable
 from uuid import uuid4
 
 from .endpoints import EndpointSpec, get_endpoint
@@ -44,12 +45,16 @@ class TikHubDouyinProvider:
         store: ProviderStore,
         auth_scope: str = "default",
         before_external_call: Callable[[EndpointSpec], None] | None = None,
+        uncached_transport_guard: Callable[
+            [EndpointSpec, tuple[str, ...] | None], ContextManager[None]
+        ] | None = None,
         detail_strategy: str = "batch50",
     ) -> None:
         self.transport = transport
         self.store = store
         self.auth_scope = auth_scope
         self.before_external_call = before_external_call
+        self.uncached_transport_guard = uncached_transport_guard
         if detail_strategy not in {"batch50", "cost_aware"}:
             raise ValueError("invalid detail strategy")
         self.detail_strategy = detail_strategy
@@ -155,6 +160,7 @@ class TikHubDouyinProvider:
             page = self._video_page(
                 spec, kwargs,
                 fingerprint_body=kwargs.get("body"),
+                request_video_ids=tuple(request.video_ids),
                 force_refresh=force_refresh,
             )
             # Do not ingest unrelated IDs if an upstream route returns extra data.
@@ -348,12 +354,14 @@ class TikHubDouyinProvider:
         kwargs: dict[str, Any],
         *,
         fingerprint_body: Any = None,
+        request_video_ids: tuple[str, ...] | None = None,
         force_refresh: bool = False,
     ) -> ProviderPage[VideoObservation]:
         payload, fp, cached, raw_ref, observed_at = self._call(
             spec,
             kwargs,
             fingerprint_body=fingerprint_body,
+            request_video_ids=request_video_ids,
             force_refresh=force_refresh,
         )
         items = normalize_video_observations(
@@ -377,6 +385,7 @@ class TikHubDouyinProvider:
         kwargs: dict[str, Any],
         *,
         fingerprint_body: Any = None,
+        request_video_ids: tuple[str, ...] | None = None,
         force_refresh: bool = False,
     ) -> tuple[dict[str, Any], str, bool, str | None, datetime]:
         started = utcnow()
@@ -420,18 +429,31 @@ class TikHubDouyinProvider:
                 )
                 return cached.payload, fp, True, cached.raw_ref or f"cache:{fp}", cached.requested_at
 
-        if self.before_external_call is not None:
-            # One reservation must correspond to at most one visible HTTP attempt.
-            # Check at the call boundary too: transport configuration is mutable.
-            if isinstance(self.transport, TikHubTransport) and (
-                self.transport.prefer_sdk or self.transport.max_retries > 1
-            ):
-                raise ValueError("guarded TikHub calls require single-attempt REST transport")
-            self.before_external_call(spec)
-
         result = None
+        call_attempted = False
         try:
-            result = self.transport.call(spec, kwargs)
+            # This guard starts only after the persistent-cache decision.  It is
+            # deliberately around both reservation and HTTP so a project gate can
+            # validate the exact batch that is about to leave the process.
+            guard = (
+                self.uncached_transport_guard(spec, request_video_ids)
+                if self.uncached_transport_guard is not None
+                else nullcontext()
+            )
+            with guard:
+                if self.before_external_call is not None:
+                    # One reservation must correspond to at most one visible HTTP
+                    # attempt. Check at the call boundary: transport configuration
+                    # is mutable after provider construction.
+                    if isinstance(self.transport, TikHubTransport) and (
+                        self.transport.prefer_sdk or self.transport.max_retries > 1
+                    ):
+                        raise ValueError(
+                            "guarded TikHub calls require single-attempt REST transport"
+                        )
+                    self.before_external_call(spec)
+                call_attempted = True
+                result = self.transport.call(spec, kwargs)
             payload = validate_tikhub_envelope(result.payload)
             requested_at = utcnow()
             expires_at = requested_at + timedelta(seconds=spec.cache_ttl_seconds)
@@ -474,6 +496,11 @@ class TikHubDouyinProvider:
             )
             return payload, fp, False, raw_ref, requested_at
         except Exception as exc:
+            # A project gate or budget refusal happened before transport.
+            # It is not a paid provider attempt and must not enter the call
+            # ledger as an unknown-cost failure.
+            if not call_attempted:
+                raise
             finished = utcnow()
             attempts = result.attempts if result is not None else getattr(exc, "provider_attempts", None)
             attach_provider_diagnostic(exc, logical_call_id=logical_call_id)

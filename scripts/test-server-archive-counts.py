@@ -27,6 +27,7 @@ TARGETS = {
         'project_decision_card', 'project_decision_card_event',
         'project_publication_record', 'project_publication_metric_observation',
     ),
+    'subject_score_029': ('project_video_subject_score',),
     'windmill': ('workspace', 'usr'),
 }
 

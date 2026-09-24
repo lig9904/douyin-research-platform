@@ -236,16 +236,21 @@ class L0L1Runner:
 
             failure_stage = "finalize"
             failure_item_count = observation_count
-            # Project/subject interpretations must not overwrite shared
-            # video_score or source_video monitoring fields. Project-specific
-            # ranking is deliberately deferred until it has its own storage.
-            scores = {} if project_id is not None else self.scorer.score_run(run_id)
+            # Project/subject interpretations have a separate score history.
+            # They cannot overwrite shared video_score or source_video fields.
+            scores = (
+                self.scorer.score_run(
+                    run_id, video_ids=set(relevant_ids or ()),
+                    project_id=project_id, subject_id=subject_id,
+                )
+                if project_id is not None
+                else self.scorer.score_run(run_id)
+            )
             candidate_ids = new_project_video_ids if project_id is not None else new_video_ids
             if relevant_ids is not None:
                 candidate_ids = [video_id for video_id in candidate_ids if video_id in relevant_ids]
-            # `new_candidate` is a legacy L1 flag.  A project relevance match
-            # is not an L1 promotion until its separate score storage exists.
-            # Do not write an empty/ambiguous L1 marker for project items.
+            # `new_candidate` is a legacy global L1 flag and remains absent
+            # from project runs even though a project score is now recorded.
             l1_candidate_ids = candidate_ids if project_id is None else []
             relevant_new_project_count = len(candidate_ids) if project_id is not None else 0
             if project_id is None:
@@ -263,7 +268,7 @@ class L0L1Runner:
                          "relevant_new_project_count": relevant_new_project_count,
                          "subject_relevance": relevance_counts if subject_id is not None else None,
                          "subject_scoring_status": (
-                             "deferred_project_score_storage" if project_id is not None else "global_l1"
+                             "project_subject_l1" if project_id is not None else "global_l1"
                          ),
                          "detail_enriched_count": detail_enriched_count},
             )

@@ -109,7 +109,7 @@ def test_subject_routes_are_actor_bound_and_ui_closes_project_brief_path() -> No
     assert "backend.mutate_project_subject" in panel
     assert "subject_id: values?.subject_id" in briefs
     assert "请选择研究主体" in briefs
-    assert "项目评分暂未启用" in briefs
+    assert "L1 不是经营效果预测" in briefs
 
 
 def test_gate_rechecks_current_manual_decision_and_subject_activity() -> None:
@@ -119,7 +119,7 @@ def test_gate_rechecks_current_manual_decision_and_subject_activity() -> None:
     collector = (ROOT / "windmill/f/content_research/collectors/run_research_brief.py").read_text(encoding="utf-8")
     assert "use the durable current decision" in relevance
     assert "select decision from project_video_subject_relevance" in relevance
-    assert "for share" in scoring
+    assert "for share of relevance, inclusion, subject" in scoring
     assert "relevance.decision='relevant'" in scoring
     assert "s.status='active'" in brief
     assert "subject.status='active'" in collector
@@ -249,8 +249,10 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
             # writer, including by a direct internal call that omits scope.
             with pytest.raises(ValueError, match="requires project and subject"):
                 scorer.score_run(run)
-            with pytest.raises(RuntimeError, match="project-specific score storage"):
-                scorer.score_run(run, project_id=project, subject_id=subject)
+            # The manual exclusion is re-read from the durable current row.
+            # The project scorer returns no result and never falls through to
+            # the shared global score writer.
+            assert scorer.score_run(run, project_id=project, subject_id=subject) == {}
             assert admin.execute("select count(*) from video_score where video_id=%s", (video,)).fetchone()[0] == 0
 
             # A historical global score cannot bypass the project scope into

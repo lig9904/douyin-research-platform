@@ -287,6 +287,7 @@ export default function ResearchBriefs({
           if (!editingId) form.setFieldValue('subject_id', id)
         }}
         onSubjectsChange={setProjectSubjects}
+        onOpenVideoLibrary={() => onNavigate('videos')}
       /> : null}
 
       <div className="brief-layout">
@@ -300,7 +301,7 @@ export default function ResearchBriefs({
             <Form.Item name="name" label="任务名称" rules={[{ required: true, max: 80 }]}>
               <Input placeholder="例如：神话文旅内容机会" />
             </Form.Item>
-            {projectId ? <Form.Item name="subject_id" label="研究主体" rules={[{ required: true, message: '请选择研究主体' }]} extra="只让“相关”候选进入项目相关候选/决策队列；待判定、排除项保留在审核区。项目评分暂未启用。">
+            {projectId ? <Form.Item name="subject_id" label="研究主体" rules={[{ required: true, message: '请选择研究主体' }]} extra="只让“相关”候选进入本项目本主体的 L1 排序与决策队列；待判定、排除项保留在审核区。L1 不是经营效果预测。">
               <Select placeholder="先在上方创建或选择主体" options={projectSubjects.map((subject) => ({ value: subject.id, label: `${subject.name} · ${subject.subject_type}` }))} />
             </Form.Item> : null}
             <div className="brief-form-grid">

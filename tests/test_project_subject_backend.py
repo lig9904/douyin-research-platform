@@ -94,6 +94,78 @@ def test_project_subject_routes_are_member_bound_and_audit_manual_correction(mon
                    from project_video_subject_relevance_audit"""
             ).fetchone()
             assert audit == ("manual_override", "owner@example.com", "pending", "relevant", "主体与地域均明确命中", run)
+            admin.execute(
+                """insert into pipeline_run_item(run_id,entity_type,entity_id)
+                   values (%s,'video',%s)""", (run, video)
+            )
+            admin.execute(
+                """insert into project_video_subject_score(
+                     project_id,video_id,subject_id,source_run_id,score,rule_version,components
+                   ) values (%s,%s,%s,%s,72.5,'blackhorse-v1.0.0',
+                     '{"data_confidence":"medium"}'::jsonb)""",
+                (project, video, subject, run),
+            )
+            ranked = reader.main({}, project_id=str(project))
+            assert len(ranked["top_scores"]) == 1
+            assert ranked["top_scores"][0]["score"] == 72.5
+            assert ranked["top_scores"][0]["confidence"] == "medium"
+            next_run = admin.execute(
+                """insert into pipeline_run(run_type,platform,project_id)
+                   values ('subject_test','douyin',%s) returning id""", (project,)
+            ).fetchone()[0]
+            admin.execute(
+                "insert into pipeline_run_item(run_id,entity_type,entity_id) values (%s,'video',%s)",
+                (next_run, video),
+            )
+            admin.execute(
+                """insert into project_video_subject_score(
+                     project_id,video_id,subject_id,source_run_id,score,rule_version,components
+                   ) values (%s,%s,%s,%s,81.0,'blackhorse-v1.0.0',
+                     '{"data_confidence":"high"}'::jsonb)""",
+                (project, video, subject, next_run),
+            )
+            latest = reader.main({}, project_id=str(project))["top_scores"]
+            assert len(latest) == 1
+            assert latest[0]["score"] == 81.0
+            assert latest[0]["source_run_id"] == str(next_run)
+            # Set up a rule-owned interpretation for the term-change path;
+            # the earlier manual correction and its audit were already checked.
+            admin.execute(
+                """update project_video_subject_relevance
+                   set decision_source='rule', reviewed_by=null, reviewed_at=null
+                   where project_id=%s and subject_id=%s and video_id=%s""",
+                (project, subject, video),
+            )
+            changed = writer.main(
+                {}, project_id=str(project), action="update_terms", idempotency_key=str(uuid4()),
+                subject_id=subject, aliases=["渔岛温泉"], geographic_contexts=["秦皇岛"],
+                exclusions=["招聘", "梦幻西游"],
+            )
+            assert changed["invalidated_rule_count"] == 1
+            invalidated = reader.main({}, project_id=str(project))
+            assert invalidated["top_scores"] == []
+            assert invalidated["review_queue"][0]["decision"] == "pending"
+            assert invalidated["review_queue"][0]["match_detail"]["invalidated_by"] == "subject_terms_changed"
+            writer.main(
+                {}, project_id=str(project), action="correct_relevance", idempotency_key=str(uuid4()),
+                subject_id=subject, video_id=str(video), decision="irrelevant", reason="复核后排除",
+            )
+            changed_again = writer.main(
+                {}, project_id=str(project), action="update_terms", idempotency_key=str(uuid4()),
+                subject_id=subject, aliases=["渔岛温泉"], geographic_contexts=["秦皇岛"],
+                exclusions=["招聘", "梦幻西游", "无关活动"],
+            )
+            assert changed_again["invalidated_rule_count"] == 0
+            assert reader.main({}, project_id=str(project))["review_queue"][0]["decision_source"] == "manual"
+            assert reader.main({}, project_id=str(project))["top_scores"] == []
+            admin.execute(
+                """update project_video_inclusion set status='archived'
+                   where project_id=%s and video_id=%s""", (project, video),
+            )
+            archived = reader.main({}, project_id=str(project))
+            assert archived["review_queue"] == []
+            assert archived["top_scores"] == []
+            assert archived["subjects"][0]["irrelevant_count"] == 0
             monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
             with pytest.raises(PermissionError, match="RESEARCH_PROJECT_MANAGE_DENIED"):
                 writer.main(

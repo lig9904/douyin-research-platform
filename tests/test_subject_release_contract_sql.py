@@ -75,8 +75,11 @@ def test_restore_state_distinguishes_026_prefix_from_027_archive() -> None:
             for filename in filenames:
                 conn.execute("insert into schema_migrations(filename,sha256) values (%s,'test')", (filename,))
             # Simulate an archive restored before 027/028: current bootstrap
-            # contains both, so remove their objects in reverse dependency
+            # contains both plus 029, so remove their objects in reverse dependency
             # order before checking the historical state classifier.
+            conn.execute("drop table project_video_subject_score")
+            conn.execute("drop function enforce_project_video_subject_score_eligible()")
+            conn.execute("drop function reject_project_video_subject_score_change()")
             conn.execute("drop table project_publication_metric_observation cascade")
             conn.execute("drop table project_publication_record cascade")
             conn.execute("drop table project_decision_card_event cascade")

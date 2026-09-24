@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, TypedDict
 from uuid import UUID
 
@@ -43,6 +44,8 @@ def _uuid(value: object) -> UUID:
 
 
 def _json(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, (UUID, datetime)):
         return str(value) if isinstance(value, UUID) else value.isoformat()
     if isinstance(value, dict):
@@ -93,13 +96,14 @@ def main(db: postgresql, project_id: str, review_limit: int = 100):
                          count(*) filter (where decision='irrelevant') as irrelevant_count
                   from project_video_subject_relevance
                   where project_id=subject.project_id and subject_id=subject.id
+                    and project_video_can_read(subject.project_id,%s,video_id)
                 ) relevance on true
                 where subject.project_id=%s and subject.status='active'
                 group by subject.id, subject.name, subject.subject_type, subject.status,
                          relevance.relevant_count, relevance.pending_count, relevance.irrelevant_count
                 order by lower(subject.name), subject.id
                 """,
-                (project,),
+                (actor, project),
             )
             subjects = [_json(dict(row)) for row in cur.fetchall()]
             cur.execute(
@@ -117,16 +121,65 @@ def main(db: postgresql, project_id: str, review_limit: int = 100):
                 join source_video video on video.id=relation.video_id
                 left join source_account account on account.id=video.account_id
                 where relation.project_id=%s
+                  and project_video_can_read(relation.project_id,%s,relation.video_id)
                 order by case relation.decision when 'pending' then 0 when 'irrelevant' then 1 else 2 end,
                          relation.updated_at desc, relation.video_id
                 limit %s
                 """,
-                (project, limit),
+                (project, actor, limit),
             )
             review_queue = [_json(dict(row)) for row in cur.fetchall()]
+            cur.execute(
+                """
+                with eligible as (
+                  select score.id, score.subject_id, score.video_id, score.score,
+                    score.rule_version, score.created_at, score.source_run_id,
+                    score.components->>'data_confidence' as confidence,
+                    video.platform_video_id,
+                    coalesce(video.title, video.description, '(无标题)') as title,
+                    account.nickname as account_name
+                  from project_video_subject_score score
+                  join project_video_subject_relevance relevance
+                    on relevance.project_id=score.project_id
+                   and relevance.subject_id=score.subject_id
+                   and relevance.video_id=score.video_id
+                   and relevance.decision='relevant'
+                   and score.created_at>=relevance.updated_at
+                  join research_subject subject
+                    on subject.id=score.subject_id and subject.project_id=score.project_id
+                   and subject.status='active'
+                  join project_video_inclusion inclusion
+                    on inclusion.project_id=score.project_id and inclusion.video_id=score.video_id
+                   and inclusion.status in ('candidate','shortlisted','accepted')
+                  join source_video video on video.id=score.video_id
+                   and video.availability_status='available'
+                  left join source_account account on account.id=video.account_id
+                  where score.project_id=%s
+                    and project_video_can_read(score.project_id,%s,score.video_id)
+                ), latest_batch as (
+                  select distinct on (subject_id) subject_id, source_run_id
+                  from eligible
+                  order by subject_id, created_at desc, id desc
+                ), ranked as (
+                  select eligible.*,
+                    row_number() over (
+                      partition by eligible.subject_id
+                      order by eligible.score desc, eligible.created_at desc, eligible.video_id
+                    ) as subject_rank
+                  from eligible
+                  join latest_batch
+                    on latest_batch.subject_id=eligible.subject_id
+                   and latest_batch.source_run_id=eligible.source_run_id
+                )
+                select * from ranked where subject_rank<=20
+                order by subject_id, subject_rank limit 500
+                """,
+                (project, actor),
+            )
+            top_scores = [_json(dict(row)) for row in cur.fetchall()]
         return {
             "project_id": str(project), "subjects": subjects,
-            "review_queue": review_queue, "read_only": True,
+            "review_queue": review_queue, "top_scores": top_scores, "read_only": True,
         }
     except (PermissionError, ValueError):
         raise

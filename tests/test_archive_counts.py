@@ -25,6 +25,7 @@ def test_research_restore_inventory_includes_brief_control_plane():
         'project_decision_card', 'project_decision_card_event',
         'project_publication_record', 'project_publication_metric_observation',
     )
+    assert module.TARGETS['subject_score_029'] == ('project_video_subject_score',)
 
 
 def test_copy_rows_not_field_values_or_escaped_newlines():
@@ -82,6 +83,14 @@ def test_decision_loop_archive_inventory_preserves_revisions_and_reviews():
         )
     )
     assert module.counts(lines.splitlines(True), module.TARGETS['decision_loop_028']) == '1|2|1|2'
+
+
+def test_subject_score_archive_inventory_preserves_run_scoped_rows():
+    lines = (
+        'COPY public.project_video_subject_score (id) FROM stdin;\n'
+        'score-a\nscore-b\n\\.\n'
+    )
+    assert module.counts(lines.splitlines(True), module.TARGETS['subject_score_029']) == '2'
 
 
 @pytest.mark.parametrize('value', ['', 'COPY public.source_video (id) FROM stdin;\n1\n',

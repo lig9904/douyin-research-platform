@@ -96,8 +96,16 @@ class _Relevance:
 
 
 class _Scorer:
-    def score_run(self, *_args, **_kwargs):
-        raise AssertionError("project path must not write shared L1 scores")
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def score_run(self, *_args, **kwargs):
+        self.calls.append(kwargs)
+        # This fake stands in for the separate project score table. The runner
+        # must still pass a project, subject, and relevance-filtered IDs.
+        assert kwargs["project_id"] is not None
+        assert kwargs["subject_id"] is not None
+        return {video_id: 75.0 for video_id in kwargs["video_ids"]}
 
 
 class _Budget:
@@ -112,14 +120,15 @@ def _runner(*, fail_detail: bool = False, preflight_decision: str = "relevant"):
     store = _Store()
     provider = _Provider(fail_detail=fail_detail)
     relevance = _Relevance(store, preflight_decision=preflight_decision)
+    scorer = _Scorer()
     runner = L0L1Runner(
-        provider=provider, store=store, scorer=_Scorer(), budget=_Budget(), relevance=relevance,
+        provider=provider, store=store, scorer=scorer, budget=_Budget(), relevance=relevance,
     )
-    return runner, store, provider, relevance
+    return runner, store, provider, relevance, scorer
 
 
 def test_subject_gate_runs_before_detail_and_preserves_pending_for_review() -> None:
-    runner, store, provider, relevance = _runner()
+    runner, store, provider, relevance, scorer = _runner()
 
     summary = runner.run(
         [DiscoverySource("low_fan", "golden_low_fan", "page")],
@@ -138,13 +147,14 @@ def test_subject_gate_runs_before_detail_and_preserves_pending_for_review() -> N
     assert summary.relevant_candidate_count == 1
     assert summary.pending_candidate_count == 1
     assert summary.irrelevant_candidate_count == 1
-    assert store.finished[-1]["summary"]["subject_scoring_status"] == "deferred_project_score_storage"
+    assert scorer.calls[-1]["video_ids"] == {store.ids["relevant"]}
+    assert store.finished[-1]["summary"]["subject_scoring_status"] == "project_subject_l1"
     assert store.finished[-1]["summary"]["new_candidate_count"] == 0
     assert store.finished[-1]["summary"]["relevant_new_project_count"] == 1
 
 
 def test_detail_failure_keeps_pre_gate_audit_and_does_not_claim_subject_scoring() -> None:
-    runner, store, provider, relevance = _runner(fail_detail=True)
+    runner, store, provider, relevance, _scorer = _runner(fail_detail=True)
 
     with pytest.raises(RuntimeError, match="supplier detail failure"):
         runner.run(
@@ -162,7 +172,7 @@ def test_detail_failure_keeps_pre_gate_audit_and_does_not_claim_subject_scoring(
 
 
 def test_manual_preflight_change_blocks_detail_before_budget_or_provider_call() -> None:
-    runner, store, provider, relevance = _runner(preflight_decision="irrelevant")
+    runner, store, provider, relevance, scorer = _runner(preflight_decision="irrelevant")
 
     summary = runner.run(
         [DiscoverySource("low_fan", "golden_low_fan", "page")],
@@ -176,3 +186,4 @@ def test_manual_preflight_change_blocks_detail_before_budget_or_provider_call() 
     ]
     assert summary.relevant_candidate_count == 0
     assert summary.irrelevant_candidate_count == 2
+    assert scorer.calls[-1]["video_ids"] == set()

@@ -225,24 +225,30 @@ class SubjectRelevanceStore:
     def _terms(cur, *, project_id: UUID, subject_id: UUID) -> SubjectTerms:
         cur.execute(
             """
-            select subject.name, term.term, term.term_type
+            select subject.name
             from research_subject subject
-            left join research_subject_term term
-              on term.subject_id=subject.id and term.project_id=subject.project_id
-             and term.status='active'
             where subject.id=%s and subject.project_id=%s and subject.status='active'
-            order by term.term_type, term.id
+            for share
             """,
             (subject_id, project_id),
         )
-        rows = cur.fetchall()
-        if not rows:
+        subject = cur.fetchone()
+        if subject is None:
             raise ValueError("research subject is unavailable in this project")
-        name = str(rows[0][0])
+        # The subject lock serializes with update_terms. Read the term rows in
+        # a subsequent READ COMMITTED statement so a wait on that lock cannot
+        # leave us evaluating a pre-change term snapshot.
+        cur.execute(
+            """select term, term_type from research_subject_term
+               where subject_id=%s and project_id=%s and status='active'
+               order by term_type, id""",
+            (subject_id, project_id),
+        )
+        rows = cur.fetchall()
+        name = str(subject[0])
         values: dict[str, list[str]] = {"alias": [name], "geographic_context": [], "exclusion": []}
-        for _, term, term_type in rows:
-            if term is not None:
-                values[str(term_type)].append(str(term))
+        for term, term_type in rows:
+            values[str(term_type)].append(str(term))
         return SubjectTerms(
             subject_name=name,
             aliases=tuple(dict.fromkeys(values["alias"])),

@@ -7,9 +7,10 @@ approvals and never submits content to an AI provider.
 from __future__ import annotations
 
 import hashlib
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable
+from typing import Any, Callable, ContextManager, Iterator
 from uuid import UUID
 
 import psycopg
@@ -29,6 +30,10 @@ from .scoring import L1Scorer
 
 RESEARCH_BRIEF_BUDGET_KEY = "research-brief"
 RESEARCH_BRIEF_MAX_EXTERNAL_CALLS = 2
+_DETAIL_ENDPOINTS = frozenset({
+    "douyin.app.multi_video_v2", "douyin.app.one_video", "douyin.app.multi_video",
+    "douyin.app.video_statistics", "douyin.app.multi_video_statistics",
+})
 _SOURCE_TYPES = frozenset({"low_fan", "keyword", "account"})
 _DEPTHS = frozenset({"metadata", "comments", "media", "review_ready"})
 _WINDOWS = frozenset({24, 72, 168, 720})
@@ -229,8 +234,8 @@ def _run_call_gate(
 
 
 def _ensure_active_project(dsn: str, project_id: UUID, subject_id: UUID | None = None) -> None:
-    # Recheck immediately before every uncached provider request. A project
-    # paused after the dispatch claim must not continue spending by default.
+    # Cheap preflight; the uncached transport guard below provides the
+    # serialized check at the actual external-call boundary.
     with psycopg.connect(dsn) as conn:
         row = conn.execute(
             """select 1 from research_project p
@@ -242,6 +247,90 @@ def _ensure_active_project(dsn: str, project_id: UUID, subject_id: UUID | None =
         ).fetchone()
     if row is None:
         raise PermissionError("research project is unavailable")
+
+
+@contextmanager
+def _project_detail_transport_guard(
+    dsn: str, project_id: UUID, subject_id: UUID, video_ids: tuple[str, ...],
+) -> Iterator[None]:
+    """Serialize an uncached paid detail call with project eligibility edits.
+
+    The transaction stays open through the single-attempt HTTP call (30s
+    timeout). A review or project pause committed first rejects the call;
+    a concurrent edit waits for the already-authorized call to finish.
+    """
+    if not video_ids or len(video_ids) != len(set(video_ids)):
+        raise PermissionError("project detail request has invalid video IDs")
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select video.platform_video_id
+                   from research_project project
+                   join research_organization organization
+                     on organization.id=project.organization_id
+                   join research_subject subject
+                     on subject.project_id=project.id
+                   join project_video_inclusion inclusion
+                     on inclusion.project_id=project.id
+                   join source_video video on video.id=inclusion.video_id
+                   join project_video_subject_relevance relevance
+                     on relevance.project_id=project.id
+                    and relevance.video_id=video.id
+                    and relevance.subject_id=subject.id
+                   where project.id=%s and subject.id=%s
+                     and project.status='active' and organization.status='active'
+                     and subject.status='active'
+                     and inclusion.status in ('candidate','shortlisted','accepted')
+                     and relevance.decision='relevant'
+                     and video.platform='douyin'
+                     and video.availability_status='available'
+                     and video.platform_video_id=any(%s::text[])
+                   for share of project, organization, subject, inclusion, video, relevance""",
+                (project_id, subject_id, list(video_ids)),
+            )
+            allowed = {row[0] for row in cur.fetchall()}
+            if allowed != set(video_ids):
+                raise PermissionError("project detail request is no longer eligible")
+            yield
+
+
+@contextmanager
+def _project_active_transport_guard(
+    dsn: str, project_id: UUID, subject_id: UUID,
+) -> Iterator[None]:
+    """Keep a paid discovery call serialized with project or subject pause."""
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """select 1 from research_project project
+                   join research_organization organization
+                     on organization.id=project.organization_id
+                   join research_subject subject
+                     on subject.project_id=project.id
+                   where project.id=%s and subject.id=%s
+                     and project.status='active' and organization.status='active'
+                     and subject.status='active'
+                   for share of project, organization, subject""",
+                (project_id, subject_id),
+            )
+            if cur.fetchone() is None:
+                raise PermissionError("research project is unavailable")
+            yield
+
+
+def _project_uncached_guard(
+    dsn: str, project_id: UUID, subject_id: UUID,
+) -> Callable[[EndpointSpec, tuple[str, ...] | None], ContextManager[None]]:
+    def guard(spec: EndpointSpec, video_ids: tuple[str, ...] | None) -> ContextManager[None]:
+        if spec.key in _DETAIL_ENDPOINTS:
+            if video_ids is None:
+                raise PermissionError("project detail request is missing exact video IDs")
+            return _project_detail_transport_guard(dsn, project_id, subject_id, video_ids)
+        if video_ids is not None:
+            raise PermissionError("project video IDs used on a non-detail endpoint")
+        return _project_active_transport_guard(dsn, project_id, subject_id)
+
+    return guard
 
 
 def run_live(
@@ -282,6 +371,10 @@ def run_live(
                 if project_id is not None else None
             ),
         ),
+        uncached_transport_guard=(
+            _project_uncached_guard(dsn, project_id, subject_id)
+            if project_id is not None and subject_id is not None else None
+        ),
         detail_strategy="batch50",
     )
     store = L0L1Store(dsn)
@@ -299,8 +392,8 @@ def run_live(
             enrich_details=True,
             triggered_by=triggered_by,
             enrich_new_only=True,
-        project_id=project_id,
-        subject_id=subject_id,
+            project_id=project_id,
+            subject_id=subject_id,
         )
     finally:
         transport.close()
@@ -331,6 +424,7 @@ def run_live(
         "unique_platform_videos": summary.unique_platform_videos,
         "new_candidate_count": summary.new_candidate_count,
         "relevant_new_project_count": summary.relevant_new_project_count,
+        "subject_scoring_status": "project_subject_l1" if project_id is not None else "global_l1",
         "relevant_candidate_count": summary.relevant_candidate_count,
         "pending_candidate_count": summary.pending_candidate_count,
         "irrelevant_candidate_count": summary.irrelevant_candidate_count,

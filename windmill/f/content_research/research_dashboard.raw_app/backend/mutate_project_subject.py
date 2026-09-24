@@ -188,8 +188,45 @@ def main(
                 cur.execute("select 1 from research_subject where id=%s and project_id=%s and status='active' for update", (subject, project))
                 if cur.fetchone() is None:
                     raise ValueError("SUBJECT_NOT_FOUND")
+                cur.execute(
+                    """select term_type, term from research_subject_term
+                       where project_id=%s and subject_id=%s and status='active'""",
+                    (project, subject),
+                )
+                before = {(row["term_type"], row["term"].casefold()) for row in cur.fetchall()}
+                after = {(kind, value.casefold()) for kind, values in groups.items() for value in values}
                 _replace_terms(cur, project=project, subject=subject, groups=groups)
-                outcome = {"status": "saved", "action": action, "subject_id": str(subject), "db_writes": 1}
+                invalidated = 0
+                if before != after:
+                    cur.execute(
+                        """select video_id, decision, run_id
+                           from project_video_subject_relevance
+                           where project_id=%s and subject_id=%s and decision_source='rule'
+                           for update""",
+                        (project, subject),
+                    )
+                    prior = cur.fetchall()
+                    cur.execute(
+                        """update project_video_subject_relevance
+                           set decision='pending', match_detail=%s,
+                               updated_at=clock_timestamp()
+                           where project_id=%s and subject_id=%s and decision_source='rule'""",
+                        (Jsonb({"invalidated_by": "subject_terms_changed"}), project, subject),
+                    )
+                    if prior:
+                        cur.executemany(
+                            """insert into project_video_subject_relevance_audit(
+                                 project_id,video_id,subject_id,run_id,event_type,
+                                 prior_decision,decision,rule_version,match_detail
+                               ) values (%s,%s,%s,%s,'rule_evaluated',%s,'pending',%s,%s)""",
+                            [
+                                (project, row["video_id"], subject, row["run_id"], row["decision"],
+                                 _RULE_VERSION, Jsonb({"invalidated_by": "subject_terms_changed"}))
+                                for row in prior
+                            ],
+                        )
+                    invalidated = len(prior)
+                outcome = {"status": "saved", "action": action, "subject_id": str(subject), "invalidated_rule_count": invalidated, "db_writes": 1 + invalidated}
             else:
                 cur.execute(
                     """select decision, run_id from project_video_subject_relevance

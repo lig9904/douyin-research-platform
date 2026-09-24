@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -90,6 +91,71 @@ def test_batch_detail_quote_is_not_reconciled_spend_and_cache_is_free():
     assert store.calls[0].estimated_cost == pytest.approx(0.05)
     assert store.calls[0].metadata["price_source"] == "tikhub.get_all_endpoints_info"
     assert store.calls[1].actual_cost == 0
+
+
+def test_uncached_transport_guard_receives_exact_detail_batches_and_wraps_call() -> None:
+    transport = FakeTransport()
+    events: list[tuple[str, object]] = []
+
+    @contextmanager
+    def guard(spec, video_ids):
+        events.append(("enter", (spec.key, video_ids)))
+        try:
+            yield
+        finally:
+            events.append(("exit", (spec.key, video_ids)))
+
+    provider = TikHubProvider(
+        transport=transport,
+        store=MemoryProviderStore(),
+        uncached_transport_guard=guard,
+        before_external_call=lambda spec: events.append(("budget", spec.key)),
+    )
+    ids = [str(index) for index in range(55)]
+
+    provider.fetch_videos(ids)
+    provider.fetch_videos(ids)
+
+    first_batch = tuple(ids[:50])
+    second_batch = tuple(ids[50:])
+    assert events == [
+        ("enter", ("douyin.app.multi_video_v2", first_batch)),
+        ("budget", "douyin.app.multi_video_v2"),
+        ("exit", ("douyin.app.multi_video_v2", first_batch)),
+        ("enter", ("douyin.app.multi_video_v2", second_batch)),
+        ("budget", "douyin.app.multi_video_v2"),
+        ("exit", ("douyin.app.multi_video_v2", second_batch)),
+    ]
+    assert [call[1]["body"] for call in transport.calls] == [
+        list(first_batch), list(second_batch),
+    ]
+
+
+def test_uncached_transport_guard_can_refuse_before_budget_or_http_attempt() -> None:
+    transport = FakeTransport()
+    store = MemoryProviderStore()
+    budget_calls: list[str] = []
+
+    @contextmanager
+    def refusing_guard(spec, video_ids):
+        assert spec.key == "douyin.app.multi_video_v2"
+        assert video_ids == ("only-id",)
+        raise PermissionError("project batch is no longer eligible")
+        yield
+
+    provider = TikHubProvider(
+        transport=transport,
+        store=store,
+        uncached_transport_guard=refusing_guard,
+        before_external_call=lambda spec: budget_calls.append(spec.key),
+    )
+
+    with pytest.raises(PermissionError, match="no longer eligible"):
+        provider.fetch_videos(["only-id"])
+
+    assert budget_calls == []
+    assert transport.calls == []
+    assert store.calls == []
 
 
 def test_low_fan_compact_billboard_schema_is_normalized() -> None:

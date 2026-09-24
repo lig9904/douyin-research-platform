@@ -129,17 +129,29 @@ def test_runner_summary_rejects_any_automatic_analysis_flag() -> None:
     project_result = {
         **result,
         "new_candidate_count": 0,
-        "scored_videos": 0,
+        "scored_videos": 2,
         "relevant_new_project_count": 2,
-        "subject_scoring_status": "deferred_project_score_storage",
+        "subject_scoring_status": "project_subject_l1",
+        "collect_comments": False,
+        "collect_media": False,
+        "review_required": False,
     }
-    project_safe = runner._safe_result(project_result, uuid4())
+    project_id = uuid4()
+    project_safe = runner._safe_result(project_result, uuid4(), project_id=project_id)
     assert project_safe["new_candidate_count"] == 0
     assert project_safe["relevant_new_project_count"] == 2
-    assert project_safe["subject_scoring_status"] == "deferred_project_score_storage"
+    assert project_safe["subject_scoring_status"] == "project_subject_l1"
     project_result["relevant_new_project_count"] = "2"
     with pytest.raises(RuntimeError, match="project candidate count"):
-        runner._safe_result(project_result, uuid4())
+        runner._safe_result(project_result, uuid4(), project_id=project_id)
+    project_result["relevant_new_project_count"] = 2
+    project_result["collect_comments"] = True
+    with pytest.raises(RuntimeError, match="project analysis boundary"):
+        runner._safe_result(project_result, uuid4(), project_id=project_id)
+    project_result["collect_comments"] = False
+    project_result.pop("subject_scoring_status")
+    with pytest.raises(RuntimeError, match="project scoring contract"):
+        runner._safe_result(project_result, uuid4(), project_id=project_id)
     result["auto_submit_l3"] = True
     with pytest.raises(RuntimeError, match="analysis boundary"):
         runner._safe_result(result, uuid4())
@@ -198,6 +210,7 @@ def test_runner_passes_project_scope_to_live_run(monkeypatch, project_id) -> Non
             "unique_platform_videos": 0,
             "new_candidate_count": 0,
             "scored_videos": 0,
+            "subject_scoring_status": "project_subject_l1" if project_id else "global_l1",
             "provider_call_count": 0,
             "cached_call_count": 0,
             "uncached_call_count": 0,

@@ -212,7 +212,9 @@ def _finish(
         )
 
 
-def _safe_result(result: Mapping[str, Any], brief_run_id: UUID) -> dict[str, Any]:
+def _safe_result(
+    result: Mapping[str, Any], brief_run_id: UUID, *, project_id: UUID | None = None,
+) -> dict[str, Any]:
     integer_fields = (
         "observations", "unique_platform_videos", "new_candidate_count",
         "scored_videos", "provider_call_count", "cached_call_count",
@@ -244,9 +246,22 @@ def _safe_result(result: Mapping[str, Any], brief_run_id: UUID) -> dict[str, Any
     scoring_status = result.get("subject_scoring_status")
     if scoring_status is not None and (
         not isinstance(scoring_status, str)
-        or scoring_status not in {"global_l1", "deferred_project_score_storage"}
+        or scoring_status not in {"global_l1", "project_subject_l1"}
     ):
         raise RuntimeError("research brief returned an invalid scoring status")
+    if project_id is not None and scoring_status != "project_subject_l1":
+        raise RuntimeError("research brief project scoring contract is unavailable")
+    if project_id is None and scoring_status == "project_subject_l1":
+        raise RuntimeError("research brief returned a project score for a global task")
+    if values["scored_videos"] > values["unique_platform_videos"]:
+        raise RuntimeError("research brief returned an invalid scored count")
+    if scoring_status == "project_subject_l1" and (
+        values["new_candidate_count"] != 0
+        or flags["collect_comments"]
+        or flags["collect_media"]
+        or flags["review_required"]
+    ):
+        raise RuntimeError("research brief project analysis boundary is invalid")
     return {
         "status": "completed",
         "brief_run_id": str(brief_run_id),
@@ -338,7 +353,7 @@ def main(brief_id: str) -> dict[str, Any]:
                 triggered_by=actor,
                 project_id=claim["project_id"],
             )
-            safe = _safe_result(result, brief_run_id)
+            safe = _safe_result(result, brief_run_id, project_id=claim["project_id"])
             source_run_id = UUID(safe["run_id"])
             _finish(
                 dsn, brief_run_id, status="success", source_run_id=source_run_id,
