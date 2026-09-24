@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 import pytest
 
@@ -17,6 +18,19 @@ def test_scheduled_asr_worker_identity_wins_over_injected_end_user(monkeypatch) 
     monkeypatch.delenv("WM_END_USER_EMAIL")
     with pytest.raises(PermissionError):
         human._execution_actor()
+
+
+def test_scheduled_asr_workers_pin_the_fixed_library_in_source_and_lock() -> None:
+    commits = set()
+    for name in ("dispatch_reviewed_asr", "poll_reviewed_asr"):
+        source = (ROOT / f"{name}.py").read_text()
+        lock = (ROOT / f"{name}.script.lock").read_text()
+        source_commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", source)
+        lock_commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", lock)
+        assert source_commit and lock_commit
+        assert source_commit.group(1) == lock_commit.group(1)
+        commits.add(source_commit.group(1))
+    assert commits == {"0d087ee3d82e627f73a97607c7d2f8a010931ae0"}
 
 def test_project_asr_review_scripts_keep_identity_resources_and_secrets_server_side() -> None:
     preview = (ROOT / "media_review_preview.py").read_text()

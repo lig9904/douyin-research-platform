@@ -573,6 +573,31 @@ verify_project_private_analysis_contract() {
   [[ -z "$failed" ]] || { printf 'ERROR: project private analysis migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
+verify_project_experiment_contract() {
+  # 033 turns a plan into an immutable, preregistered comparison rather than
+  # allowing retrospective success criteria or unverifiable publish records.
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with checks(name, ok) as (values
+      ('033.card_metric', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_decision_card') and attname='evaluation_metric' and not attisdropped)),
+      ('033.card_window', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_decision_card') and attname='observation_window_days' and not attisdropped)),
+      ('033.review_verdict', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_decision_card') and attname='review_verdict' and not attisdropped)),
+      ('033.card_check', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card') and conname='project_decision_card_experiment_contract_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%num_nulls%' and pg_get_constraintdef(oid) like '%btrim%' and pg_get_constraintdef(oid) like '%observation_window_days%' and pg_get_constraintdef(oid) like '%confounder_plan%')),
+      ('033.review_verdict_check', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card') and conname='project_decision_card_review_verdict_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%review_verdict%' and pg_get_constraintdef(oid) like '%inconclusive%' and pg_get_constraintdef(oid) like '%reviewed%')),
+      ('033.card_gate', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card') and tgname='trg_project_decision_card_experiment_contract' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.enforce_project_decision_card_experiment_contract()'))),
+      ('033.card_gate_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_experiment_contract()') and md5(prosrc)='ea5505b256d255406fe29daccf303dce')),
+      ('033.publication_id', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_publication_record') and attname='platform_content_id' and not attisdropped)),
+      ('033.publication_check', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_publication_record') and conname='project_publication_provenance_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%num_nulls%' and pg_get_constraintdef(oid) like '%btrim%' and pg_get_constraintdef(oid) like '%platform_content_id%' and pg_get_constraintdef(oid) like '%distribution_mode%')),
+      ('033.publication_gate', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_publication_record') and tgname='trg_project_publication_provenance' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.enforce_project_publication_provenance()'))),
+      ('033.publication_gate_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_publication_provenance()') and md5(prosrc)='a77dbe7fdad2fdccc890047a7315f685')),
+      ('033.publication_immutable', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_publication_record') and tgname='trg_preregistered_publication_immutable' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.reject_preregistered_publication_change()'))),
+      ('033.publication_immutable_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.reject_preregistered_publication_change()') and md5(prosrc)='fa4c55b186876adbfc3f327729d0d818')),
+      ('033.platform_work_unique', exists(select 1 from pg_index where indexrelid=to_regclass('public.uq_project_publication_platform_content') and indisunique and indisvalid and indisready and pg_get_indexdef(indexrelid) like '%(project_id, platform, platform_content_id)%' and pg_get_indexdef(indexrelid) like '%platform_content_id IS NOT NULL%'))
+    ) select coalesce(string_agg(name, ',' order by name), '') from checks where ok is distinct from true
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: project experiment migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
 archive_profile_count() {
   # Count only the profile COPY body while discarding every row.  The restore
   # drill compares counts without logging source content or references.
@@ -646,10 +671,11 @@ cmd_migrate() {
   verify_subject_profile_contract
   verify_decision_profile_binding_contract
   verify_project_private_analysis_contract
+  verify_project_experiment_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, decision binding, and private analysis migration contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, and experiment migration contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -662,6 +688,7 @@ cmd_restore_drill() (
   local subject_profile_contract=legacy_absent subject_profile_source_counts subject_profile_restored_counts
   local decision_binding_contract=legacy_absent decision_binding_source_counts decision_binding_restored_counts
   local private_analysis_contract=legacy_absent private_analysis_state private_analysis_source_counts private_analysis_restored_counts
+  local experiment_contract=legacy_absent experiment_state
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
@@ -847,6 +874,12 @@ cmd_restore_drill() (
       ;;
     *) echo 'ERROR: restored project private analysis schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
+  experiment_state="$(research_query "$RESTORE_DATABASE" "select exists(select 1 from schema_migrations where filename='033_project_experiment_contract.sql')::int || '|' || (select count(*) from pg_attribute where attrelid='project_decision_card'::regclass and attname in ('evaluation_metric','success_rule','observation_window_days','comparison_basis','confounder_plan','review_verdict') and not attisdropped) || '|' || (select count(*) from pg_attribute where attrelid='project_publication_record'::regclass and attname in ('platform','account_reference','platform_content_id','content_version','distribution_mode') and not attisdropped)")"
+  case "$experiment_state" in
+    '0|0|0') experiment_contract=legacy_absent ;;
+    '1|6|5') verify_project_experiment_contract "$RESTORE_DATABASE"; experiment_contract=present ;;
+    *) echo 'ERROR: restored experiment schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
   local business_sql business_result business_summary
@@ -870,8 +903,8 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   trap - EXIT
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   duration_seconds="$(( $(date +%s) - start_epoch ))"
-  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s\n' \
-    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract" "$decision_binding_contract" "$private_analysis_contract"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s experiment_contract=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract" "$decision_binding_contract" "$private_analysis_contract" "$experiment_contract"
 )
 
 case "$command_name" in

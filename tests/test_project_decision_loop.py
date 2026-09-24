@@ -42,6 +42,9 @@ def test_decision_loop_contract_is_project_local_and_strict() -> None:
     assert "backend.mutate_project_decision_loop" in page
     assert "核准档案版本" in page and "profile_id" in page
     assert "行动复盘" in (BACKEND.parent / "AppShell.tsx").read_text()
+    preregistration = (ROOT / "db/migrations/033_project_experiment_contract.sql").read_text()
+    assert "experiment contract is immutable" in preregistration
+    assert "requires linked action and real platform provenance" in preregistration
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
@@ -58,6 +61,8 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             conn.execute((ROOT / "db/schema.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/028_project_decision_loop.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/028_project_decision_loop.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/033_project_experiment_contract.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/033_project_experiment_contract.sql").read_text(), prepare=False)
             org = conn.execute("insert into research_organization(slug,name) values('loop-org','闭环组织') returning id").fetchone()[0]
             project = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'loop-a','项目 A','active') returning id", (org,)).fetchone()[0]
             other = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'loop-b','项目 B','active') returning id", (org,)).fetchone()[0]
@@ -65,6 +70,22 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             accepted = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','8888888888888888888','本项目已接受') returning id").fetchone()[0]
             shared_only = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','9999999999999999999','别的项目公开参考') returning id").fetchone()[0]
             conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','local','accepted'),(%s,%s,'manual','other','accepted')", (project, accepted, other, shared_only))
+            # Model a 028 row carried forward into 033: it remains readable,
+            # but cannot acquire a retrospective experiment verdict.
+            conn.execute("alter table project_decision_card disable trigger trg_project_decision_card_experiment_contract")
+            try:
+                legacy = conn.execute(
+                    """insert into project_decision_card
+                       (project_id,source_video_id,hypothesis,reference_point,adaptation_difference,
+                        owner_actor,decision,status,created_by)
+                       values (%s,%s,'旧卡','旧依据','旧差异','writer@example.com','observe','observing',
+                               'writer@example.com') returning id""",
+                    (project, accepted),
+                ).fetchone()[0]
+            finally:
+                conn.execute("alter table project_decision_card enable trigger trg_project_decision_card_experiment_contract")
+            with pytest.raises(psycopg.Error, match="legacy project decision card"):
+                conn.execute("update project_decision_card set status='reviewed' where id=%s", (legacy,))
             subject = conn.execute("insert into research_subject(project_id,name,subject_type) values(%s,'测试主体','ip') returning id", (project,)).fetchone()[0]
             profile = conn.execute(
                 """insert into research_subject_profile_version
@@ -80,12 +101,26 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
                 "sslmode": conninfo.get("sslmode", "prefer"), "options": f"-c search_path={namespace}",
             }
             monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")
-            payload = {"source_video_id": str(accepted), "subject_id": str(subject), "profile_id": str(profile), "hypothesis": "短视频开头的真实细节会提升停留", "reference_point": "开头三秒先给现场细节", "adaptation_difference": "我方用自有场景，不复制原视频人物或台词", "owner_actor": "writer@example.com", "decision": "adopt"}
+            with pytest.raises(ValueError, match="legacy card"):
+                mutate.main(db, str(project), "record_review", {"card_id": str(legacy), "observation_id": str(uuid4()), "verdict": "supported", "conclusion": "旧结论", "evidence": "旧依据", "next_action": "旧动作"}, str(uuid4()))
+            payload = {"source_video_id": str(accepted), "subject_id": str(subject), "profile_id": str(profile), "hypothesis": "短视频开头的真实细节会提升停留", "reference_point": "开头三秒先给现场细节", "adaptation_difference": "我方用自有场景，不复制原视频人物或台词", "owner_actor": "writer@example.com", "decision": "adopt", "evaluation_metric": "首日新增关注", "success_rule": "比同账号同期基线至少提高 10%", "observation_window_days": 1, "comparison_basis": "同账号同类型内容最近 5 条", "confounder_plan": "记录投流、活动和发布时间差异"}
             create_key = str(uuid4())
             created = mutate.main(db, str(project), "create_card", payload, create_key)
             assert created["changed"] and created["status"] == "active"
+            with pytest.raises(psycopg.Error, match="project_decision_card_experiment_contract_check"):
+                conn.execute(
+                    """insert into project_decision_card
+                       (project_id,source_video_id,hypothesis,reference_point,adaptation_difference,
+                        owner_actor,decision,status,created_by,evaluation_metric,success_rule,
+                        observation_window_days,comparison_basis,confounder_plan)
+                       values (%s,%s,'空白指标','参考','差异','writer@example.com','observe',
+                               'observing','writer@example.com','   ','预设成功规则',2,'同期对照','记录干扰')""",
+                    (project, accepted),
+                )
             assert mutate.main(db, str(project), "create_card", payload, create_key)["idempotent_replay"] is True
             assert conn.execute("select count(*) from project_decision_card_profile_binding where decision_card_id=%s", (created["card_id"],)).fetchone()[0] == 1
+            with pytest.raises(psycopg.Error, match="immutable"):
+                conn.execute("update project_decision_card set success_rule='事后改规则' where id=%s", (created["card_id"],))
             with pytest.raises(ValueError, match="requires an approved"):
                 mutate.main(db, str(project), "create_card", {**payload, "profile_id": None}, str(uuid4()))
             with pytest.raises(ValueError, match="current approved"):
@@ -95,6 +130,23 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
                 mutate.main(db, str(project), "create_card", payload, str(uuid4()))
             observed = mutate.main(db, str(project), "create_card", {**payload, "subject_id": None, "profile_id": None, "decision": "observe", "owner_actor": "researcher@example.com"}, str(uuid4()))
             assert observed["status"] == "observing"
+            excluded = mutate.main(db, str(project), "create_card", {**payload, "subject_id": None, "profile_id": None, "decision": "exclude"}, str(uuid4()))
+            rejected_publication = {"decision_card_id": excluded["card_id"], "publication_date": "2026-09-24", "title": "不得发布的排除卡", "content_reference": "internal:rejected", "platform": "douyin", "account_reference": "public-account-001", "platform_content_id": "6666666666666666666", "content_version": "script-approved-v1", "distribution_mode": "organic"}
+            with pytest.raises(ValueError, match="requires an active"):
+                mutate.main(db, str(project), "create_publication", rejected_publication, str(uuid4()))
+            with pytest.raises(psycopg.Error, match="requires active preregistered"):
+                conn.execute(
+                    """insert into project_publication_record
+                       (project_id,decision_card_id,publication_date,title,content_reference,status,created_by,
+                        platform,account_reference,platform_content_id,content_version,distribution_mode)
+                       values (%s,%s,'2026-09-24','不得发布的排除卡','internal:rejected','published',
+                               'writer@example.com','douyin','public-account-001','6666666666666666666',
+                               'script-approved-v1','organic')""",
+                    (project, excluded["card_id"]),
+                )
+            mutate.main(db, str(project), "set_card_status", {"card_id": observed["card_id"], "status": "archived"}, str(uuid4()))
+            with pytest.raises(ValueError, match="requires an active"):
+                mutate.main(db, str(project), "create_publication", {**rejected_publication, "decision_card_id": observed["card_id"]}, str(uuid4()))
             monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")
             second = mutate.main(db, str(project), "create_card", {**payload, "hypothesis": "同一参考也可验证另一条策略假设"}, str(uuid4()))
             assert second["card_id"] != created["card_id"]
@@ -114,11 +166,21 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             assert advanced == {"changed": True, "card_id": card_id, "status": "adopted"}
             with pytest.raises(psycopg.Error, match="active project member"):
                 conn.execute("update project_decision_card set owner_actor='outside@example.com' where id=%s", (card_id,))
-            publication = mutate.main(db, str(project), "create_publication", {"decision_card_id": card_id, "publication_date": "2026-09-24", "title": "我方测试内容", "content_reference": "internal:content-001"}, str(uuid4()))
+            publication_payload = {"decision_card_id": card_id, "publication_date": "2026-09-24", "title": "我方测试内容", "content_reference": "internal:content-001", "platform": "douyin", "account_reference": "public-account-001", "platform_content_id": "7777777777777777777", "content_version": "script-approved-v1", "distribution_mode": "organic"}
+            publication = mutate.main(db, str(project), "create_publication", publication_payload, str(uuid4()))
+            with pytest.raises(psycopg.Error, match="immutable"):
+                conn.execute("update project_publication_record set content_version='v2' where id=%s", (publication["publication_id"],))
+            with pytest.raises(RuntimeError, match="MUTATION_UNAVAILABLE"):
+                mutate.main(db, str(project), "create_publication", publication_payload, str(uuid4()))
             metrics = {"impressions": 1000, "engagements": 80, "likes": 50, "comments": 10, "shares": 8, "follows": 2, "conversions": 1}
             evidence = {"source": "manual", "source_reference": "internal:daily-sheet-001", "source_reported_at": "2026-09-24T10:00:00+00:00", "source_version_or_digest": "manual-v1", "measurement_scope": "发布后24小时累计"}
             saved = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": "2026-09-24", "metrics": metrics, **evidence}, str(uuid4()))
             assert saved["version"] == 1
+            windowed = mutate.main(db, str(project), "create_card", {**payload, "hypothesis": "至少观察两天才能复盘", "observation_window_days": 2}, str(uuid4()))
+            windowed_publication = mutate.main(db, str(project), "create_publication", {**publication_payload, "decision_card_id": windowed["card_id"], "platform_content_id": "7777777777777777778"}, str(uuid4()))
+            early_metric = mutate.main(db, str(project), "record_daily_metric", {"publication_id": windowed_publication["publication_id"], "metric_date": "2026-09-24", "metrics": metrics, **evidence}, str(uuid4()))
+            with pytest.raises(ValueError, match="observation window is not complete"):
+                mutate.main(db, str(project), "record_review", {"card_id": windowed["card_id"], "observation_id": early_metric["observation_id"], "verdict": "supported", "conclusion": "提前宣称成功", "evidence": "只有第一天数据", "next_action": "等待观察"}, str(uuid4()))
             corrected = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": "2026-09-24", "metrics": {**metrics, "impressions": 1100, "likes": None}, **{**evidence, "source_reference": "internal:daily-sheet-001-revision", "source_version_or_digest": "manual-v2", "measurement_scope": "发布后24小时累计，补录"}}, str(uuid4()))
             assert corrected["version"] == 2 and corrected["observation_id"] != saved["observation_id"]
             assert conn.execute("select likes from project_publication_metric_observation where id=%s", (corrected["observation_id"],)).fetchone()[0] is None
@@ -135,19 +197,23 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
                     (saved["observation_id"], card_id),
                 )
             conn.execute("delete from project_video_inclusion where project_id=%s and video_id=%s", (project, accepted))
-            reviewed = mutate.main(db, str(project), "record_review", {"card_id": card_id, "observation_id": saved["observation_id"], "conclusion": "保留现场开头的做法，但缩短铺垫", "evidence": "首日汇总曝光1000、互动80、转化1", "next_action": "下周制作两条不同开头版本"}, str(uuid4()))
+            reviewed = mutate.main(db, str(project), "record_review", {"card_id": card_id, "observation_id": saved["observation_id"], "verdict": "inconclusive", "conclusion": "保留现场开头的做法，但缩短铺垫", "evidence": "首日汇总曝光1000、互动80、转化1；缺同账号对照", "next_action": "下周制作两条不同开头版本"}, str(uuid4()))
             assert reviewed["status"] == "reviewed"
             monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
             result = read.main(db, str(project))
+            legacy_read = next(card for card in result["cards"] if card["id"] == str(legacy))
+            assert legacy_read["evaluation_metric"] is None and legacy_read["review_verdict"] is None
             reviewed_card = next(card for card in result["cards"] if card["id"] == card_id)
             assert reviewed_card["source_reference_withdrawn"] is True
             assert reviewed_card["review_conclusion"] == "保留现场开头的做法，但缩短铺垫"
+            assert reviewed_card["review_verdict"] == "inconclusive"
             assert reviewed_card["review_observation_id"] == saved["observation_id"]
             assert reviewed_card["review_observation_version"] == 1
             assert reviewed_card["review_metric_snapshot"]["impressions"] == 1000
             assert reviewed_card["review_metric_snapshot"]["source_reference"] == "internal:daily-sheet-001"
             assert reviewed_card["profile_binding"]["profile_version_no"] == 1
             assert reviewed_card["profile_binding"]["profile_current_status"] == "approved"
+            assert reviewed_card["evaluation_metric"] == "首日新增关注"
             assert len(result["approved_profiles"]) == 1
             assert result["approved_profiles"][0]["summary"]["current_facts"] == ["测试主体已确认"]
             assert not ({"source_reference", "source_digest", "approved_by"} & result["approved_profiles"][0].keys())
@@ -155,6 +221,7 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             conn.execute("update research_subject_profile_version set status='revoked' where id=%s", (profile,))
             assert next(card for card in read.main(db, str(project))["cards"] if card["id"] == card_id)["profile_binding"]["profile_current_status"] == "revoked"
             assert result["publications"][0]["daily_observations"][0]["impressions"] == 1100
+            assert result["publications"][0]["platform_content_id"] == "7777777777777777777"
             with pytest.raises(psycopg.Error, match="immutable"):
                 conn.execute("update project_decision_card set review_conclusion='篡改' where id=%s", (card_id,))
             with pytest.raises(psycopg.Error, match="immutable"):
@@ -179,5 +246,43 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             monkeypatch.setenv("WM_END_USER_EMAIL", "analyst@example.com")
             with pytest.raises(PermissionError):
                 mutate.main(db, str(project), "set_card_status", {"card_id": card_id, "status": "adopted"}, str(uuid4()))
+        finally:
+            conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
+def test_033_upgrade_keeps_legacy_cards_readable_without_backfilling_goals() -> None:
+    assert DSN
+    namespace = f"legacy_loop_{uuid4().hex}"
+    bootstrap_032 = (ROOT / "db/schema.sql").read_text().split(
+        "-- Fresh-volume bootstrap parity with migration 033.", 1
+    )[0]
+    migration = (ROOT / "db/migrations/033_project_experiment_contract.sql").read_text()
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
+        try:
+            conn.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
+            conn.execute(bootstrap_032, prepare=False)
+            org = conn.execute("insert into research_organization(slug,name) values('legacy-org','旧组织') returning id").fetchone()[0]
+            project = conn.execute("insert into research_project(organization_id,slug,name) values(%s,'legacy-project','旧项目') returning id", (org,)).fetchone()[0]
+            conn.execute("insert into research_project_member(project_id,actor_id,role) values(%s,'writer@example.com','owner')", (project,))
+            video = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','8888888888888888881','旧公开视频') returning id").fetchone()[0]
+            conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','legacy','accepted')", (project, video))
+            old_card = conn.execute(
+                """insert into project_decision_card
+                   (project_id,source_video_id,hypothesis,reference_point,adaptation_difference,
+                    owner_actor,decision,status,created_by)
+                   values (%s,%s,'既有假设','既有参考','既有差异','writer@example.com','observe',
+                           'observing','writer@example.com') returning id""",
+                (project, video),
+            ).fetchone()[0]
+            conn.execute(migration, prepare=False)
+            conn.execute(migration, prepare=False)
+            assert conn.execute(
+                "select status,evaluation_metric,success_rule,review_verdict from project_decision_card where id=%s",
+                (old_card,),
+            ).fetchone() == ("observing", None, None, None)
+            with pytest.raises(psycopg.Error, match="legacy project decision card"):
+                conn.execute("update project_decision_card set status='reviewed' where id=%s", (old_card,))
         finally:
             conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))

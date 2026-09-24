@@ -9,6 +9,7 @@ export type ProjectRosterItem = {
   name: string
   organization_name?: string | null
   member_role?: string | null
+  can_review_l3?: boolean
 }
 
 export type ProjectScopeContextValue = {

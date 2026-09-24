@@ -33,7 +33,8 @@ def test_project_review_runnable_is_server_scoped_and_review_only() -> None:
 def test_project_review_panels_are_not_global_fallbacks() -> None:
     library = (APP / "VideoLibrary.tsx").read_text(encoding="utf-8")
     assert "projectId && canReviewProject && <ProjectASRMediaReviewPanel" in library
-    assert "projectId && canReviewProject && detail.asr_transcript?.transcript_id" in library
+    assert "projectId && canReviewProjectL3 && detail.asr_transcript?.transcript_id" in library
+    assert "canReviewProjectL3 = canReviewProject && currentProject?.can_review_l3 === true" in library
     assert "{!isProject && <ASRMediaReviewPanel" in library
     assert "{!isProject && <L3ReviewPanel" in library
     assert "backend.project_approve_l3_review" in (

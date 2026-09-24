@@ -98,7 +98,9 @@ def main(db: postgresql, project_id: str):
                           v.platform, v.platform_video_id,
                           v.title as source_video_title, a.nickname as source_account_name,
                           c.hypothesis, c.reference_point, c.adaptation_difference,
-                          c.owner_actor, c.decision, c.status, c.review_conclusion,
+                          c.evaluation_metric, c.success_rule, c.observation_window_days,
+                          c.comparison_basis, c.confounder_plan,
+                          c.owner_actor, c.decision, c.status, c.review_verdict, c.review_conclusion,
                           c.review_evidence, c.next_action, c.reviewed_by, c.reviewed_at, c.created_by,
                           c.review_observation_id, c.review_observation_version, c.review_metric_snapshot,
                           (i.project_id is null or i.status <> 'accepted' or v.availability_status <> 'available') as source_reference_withdrawn,
@@ -170,6 +172,8 @@ def main(db: postgresql, project_id: str):
             approved_profiles = [_json(dict(row)) for row in cur.fetchall()]
             cur.execute(
                 """select p.id, p.decision_card_id, p.publication_date, p.title,
+                          p.platform, p.account_reference, p.platform_content_id,
+                          p.content_version, p.distribution_mode,
                           p.content_reference, p.status, p.created_by, p.created_at, p.updated_at,
                           coalesce(jsonb_agg(jsonb_build_object(
                             'id', m.id, 'metric_date', m.metric_date, 'version', m.version, 'impressions', m.impressions,

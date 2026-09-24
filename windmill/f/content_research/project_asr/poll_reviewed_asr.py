@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.14.*"
-# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@34ce0706b2b937c04bac732413d5809ac271ed9c", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@0d087ee3d82e627f73a97607c7d2f8a010931ae0", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
 # ///
 """Poll one already-submitted project ASR task; it can never submit media."""
 from __future__ import annotations

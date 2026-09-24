@@ -24,6 +24,7 @@ import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
 import ProjectVideoEvidence from './ProjectVideoEvidence'
 import { useProjectScope, type ProjectScope } from './src/projectScope'
+import { formatPlayInteractionRate } from './src/playInteractionRate'
 import {
   getResearchUserState,
   mutateResearchState,
@@ -61,7 +62,6 @@ type VideoItem = {
   metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'other' | null
   metric_provenance?: Record<string, { source_kind: string; captured_at: string }>
   priority: number | null
-  follower_efficiency?: number | null
   sources: string[]
   source_count: number
   collection_count: number | null
@@ -256,8 +256,10 @@ export default function VideoLibrary({
   const isProject = scope.mode === 'project'
   const projectId = isProject ? scope.projectId : undefined
   const { projects } = useProjectScope()
-  const projectRole = projects.find(item => item.id === projectId)?.member_role
+  const currentProject = projects.find(item => item.id === projectId)
+  const projectRole = currentProject?.member_role
   const canReviewProject = projectRole === 'owner' || projectRole === 'admin'
+  const canReviewProjectL3 = canReviewProject && currentProject?.can_review_l3 === true
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [draft, setDraft] = useState<Filters>(initialFilters)
   const [data, setData] = useState<VideoLibraryData | null>(null)
@@ -703,7 +705,7 @@ export default function VideoLibrary({
                         <th>评论</th>
                         <th>分享</th>
                         <th>粉丝数</th>
-                        <th>互动效率（合并估算）</th>
+                        <th><Tooltip title="点赞、评论、分享三项齐全且播放量大于零时计算；合并字段可能来自不同采集时间，不代表完播、增长或平台推荐效果。">互动/播放（合并估算）</Tooltip></th>
                         {!isProject && <th>优先级</th>}
                         {!isProject && <th>研究层级</th>}
                         {!isProject && <th>状态</th>}
@@ -761,11 +763,7 @@ export default function VideoLibrary({
                           <td>{formatCount(item.comment_count)}</td>
                           <td>{formatCount(item.share_count)}</td>
                           <td>{formatCount(item.author_follower_count)}</td>
-                          <td>
-                            {item.follower_efficiency == null
-                              ? '—'
-                              : `${Number(item.follower_efficiency).toFixed(1)}%`}
-                          </td>
+                          <td>{formatPlayInteractionRate(item)}</td>
                           {!isProject && <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
                               {priorityText(Number(item.priority || 0))}
@@ -880,12 +878,7 @@ export default function VideoLibrary({
                           [formatCount(detail.comment_count), '评论'],
                           [formatCount(detail.share_count), '分享'],
                           [formatCount(detail.author_follower_count), '账号粉丝'],
-                          [
-                            detail.follower_efficiency == null
-                              ? '—'
-                              : `${Number(detail.follower_efficiency).toFixed(1)}%`,
-                            '互动效率（合并估算）',
-                          ],
+                          [formatPlayInteractionRate(detail), '互动/播放（合并估算）'],
                           ...(!isProject ? [
                             [priorityText(Number(detail.priority || 0)), '优先级'],
                             [`L${detail.research_level}`, '研究层级'],
@@ -973,7 +966,9 @@ export default function VideoLibrary({
                       key={`project-media-${projectId}-${detail.id}`}
                       projectId={projectId} videoId={detail.id} />}
                     <ASRTranscriptPanel transcript={detail.asr_transcript} />
-                    {projectId && canReviewProject && detail.asr_transcript?.transcript_id &&
+                    {projectId && canReviewProject && !canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
+                      <p className="project-review-hint">本项目 L3 云端正文审核还需要服务端审核资质；当前账号不可提交。请由工作区管理员核对审核名单，不要借用其他项目的审核记录。</p>}
+                    {projectId && canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
                       <ProjectL3ReviewPanel
                         key={`project-l3-${projectId}-${detail.id}-${detail.asr_transcript.transcript_id}`}
                         projectId={projectId} videoId={detail.id}

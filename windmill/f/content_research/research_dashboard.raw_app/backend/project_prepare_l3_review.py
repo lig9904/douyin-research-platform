@@ -29,10 +29,10 @@ def _dsn(db: postgresql) -> str:
 def main(db: postgresql, reviewer_allowlist: str, project_id: str, video_id: str,
          transcript_id: str, review_version: str):
     # Both actor and allowlist originate in Windmill, never in Raw App fields.
-    actor = os.environ.get("WM_END_USER_EMAIL")
+    actor = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
     try:
         evidence = ProjectL3ReviewService(_dsn(db)).prepare(
-            actor=actor or "", reviewer_allowlist=reviewer_allowlist, project_id=project_id,
+            actor=actor, reviewer_allowlist=reviewer_allowlist, project_id=project_id,
             video_id=video_id, transcript_id=transcript_id, review_version=review_version,
         )
     except PermissionError:

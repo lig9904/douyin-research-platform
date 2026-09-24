@@ -22,6 +22,7 @@ import GlobalSearch from './src/components/GlobalSearch'
 import OperationsOverview from './src/components/OperationsOverview'
 import ProjectCostOverview from './src/components/ProjectCostOverview'
 import PlatformIcon from './src/components/PlatformIcon'
+import { formatPlayInteractionRate } from './src/playInteractionRate'
 import { supplierDailySpendFootnote } from './src/dailySpendDisplay'
 import {
   ProjectScopeProvider,
@@ -48,7 +49,6 @@ type BlackhorseItem = {
   comment_count?: number | null
   share_count?: number | null
   author_follower_count?: number | null
-  follower_efficiency?: number | null
   sources?: string[]
   source_count?: number
   research_level?: number
@@ -525,7 +525,7 @@ function App() {
                         <th>点赞</th>
                         <th>评论</th>
                         <th>分享</th>
-                        <th>互动/粉丝</th>
+                        <th><Tooltip title="点赞、评论、分享三项齐全且播放量大于零时计算；合并字段可能来自不同采集时间。">互动/播放（合并估算）</Tooltip></th>
                         <th>优先级</th>
                       </tr>
                     </thead>
@@ -555,7 +555,7 @@ function App() {
                           <td>{formatCount(item.like_count)}</td>
                           <td>{formatCount(item.comment_count)}</td>
                           <td>{formatCount(item.share_count)}</td>
-                          <td>{item.follower_efficiency == null ? '—' : `${Number(item.follower_efficiency).toFixed(1)}%`}</td>
+                          <td>{formatPlayInteractionRate(item)}</td>
                           <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
                               {Math.round(Number(item.priority || 0))}

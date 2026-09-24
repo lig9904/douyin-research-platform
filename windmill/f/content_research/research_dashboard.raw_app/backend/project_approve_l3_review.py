@@ -27,24 +27,24 @@ def _dsn(db: postgresql) -> str:
 
 def main(db: postgresql, reviewer_allowlist: str, action: str, project_id: str, video_id: str,
          transcript_id: str, review_version: str, evidence_fingerprint: str, review_id: str = ""):
-    actor = os.environ.get("WM_END_USER_EMAIL")
+    actor = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
     service = ProjectL3ReviewService(_dsn(db))
     try:
         if action == "revoke":
             if not review_id:
                 raise ValueError("review_id required")
-            service.revoke(actor=actor or "", reviewer_allowlist=reviewer_allowlist,
+            service.revoke(actor=actor, reviewer_allowlist=reviewer_allowlist,
                            project_id=project_id, video_id=video_id, review_id=review_id)
             return {"status": "review_revoked", "external_calls": 0, "llm_calls": 0,
                     "db_writes": 1, "paid_execution_available": False}
         if action != "approve":
             raise ValueError("unsupported action")
-        evidence = service.prepare(actor=actor or "", reviewer_allowlist=reviewer_allowlist,
+        evidence = service.prepare(actor=actor, reviewer_allowlist=reviewer_allowlist,
                                    project_id=project_id, video_id=video_id, transcript_id=transcript_id,
                                    review_version=review_version)
         if evidence.fingerprint != evidence_fingerprint:
             raise ValueError("candidate stale")
-        receipt = service.approve(actor=actor or "", reviewer_allowlist=reviewer_allowlist, evidence=evidence)
+        receipt = service.approve(actor=actor, reviewer_allowlist=reviewer_allowlist, evidence=evidence)
         return {"status": "review_saved", "review_id": str(receipt.review_id),
                 "evidence_fingerprint": receipt.evidence_fingerprint, "review_version": receipt.review_version,
                 "idempotent_replay": receipt.idempotent_replay, "external_calls": 0, "llm_calls": 0,

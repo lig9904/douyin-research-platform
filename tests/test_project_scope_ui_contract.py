@@ -41,7 +41,8 @@ def test_project_video_calls_carry_scope_and_hide_unscoped_review_paths() -> Non
         assert f"{{!isProject && <{component}" in library
     assert "<ASRTranscriptPanel transcript={detail.asr_transcript} />" in library
     assert "projectId && canReviewProject && <ProjectASRMediaReviewPanel" in library
-    assert "projectId && canReviewProject && detail.asr_transcript?.transcript_id" in library
+    assert "projectId && canReviewProjectL3 && detail.asr_transcript?.transcript_id" in library
+    assert "canReviewProjectL3 = canReviewProject && currentProject?.can_review_l3 === true" in library
     assert "<ProjectL3ReviewPanel" in library
     assert "if (!isProject) void loadUserState()" in library
     assert "{!isProject && <div className=\"bulk-actions\">" in library

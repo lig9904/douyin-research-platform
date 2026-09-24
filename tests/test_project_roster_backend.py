@@ -38,6 +38,19 @@ def test_project_roster_backends_are_inline_and_bind_only_research_db() -> None:
         )
 
 
+def test_project_l3_capability_bit_fails_closed_without_exposing_roster(monkeypatch) -> None:
+    roster = _load("get_my_projects")
+    wmill = types.ModuleType("wmill")
+    wmill.get_variable = lambda _path: '["owner@example.com", "other@example.com"]'  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "wmill", wmill)
+    assert roster._central_l3_reviewer("owner@example.com") is True
+    assert roster._central_l3_reviewer("viewer@example.com") is False
+    wmill.get_variable = lambda _path: '["owner@example.com", "UPPER@example.com"]'  # type: ignore[attr-defined]
+    assert roster._central_l3_reviewer("owner@example.com") is False
+    wmill.get_variable = lambda _path: 'invalid-json'  # type: ignore[attr-defined]
+    assert roster._central_l3_reviewer("owner@example.com") is False
+
+
 def test_project_account_route_does_not_accept_actor_or_authorization_fields() -> None:
     module = _load("get_project_accounts")
     source = (BACKEND / "get_project_accounts.py").read_text(encoding="utf-8")
