@@ -202,8 +202,8 @@ def _record_event(cur, project: UUID, card: UUID, actor: str, action: str,
     )
 
 
-def _create_card(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if set(payload) != {"source_video_id", "subject_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision"}:
+def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if set(payload) != {"source_video_id", "subject_id", "profile_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision"}:
         raise ValueError("create_card payload is invalid")
     video = _uuid(payload["source_video_id"], "source_video_id")
     decision = payload["decision"]
@@ -211,10 +211,28 @@ def _create_card(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dic
         raise ValueError("decision is invalid")
     status = {"adopt": "active", "observe": "observing", "exclude": "excluded"}[decision]
     subject = None if payload["subject_id"] is None else _uuid(payload["subject_id"], "subject_id")
+    profile = None if payload["profile_id"] is None else _uuid(payload["profile_id"], "profile_id")
+    if decision == "adopt":
+        if role not in {"owner", "admin"}:
+            raise PermissionError("RESEARCH_PROJECT_ADOPTION_DENIED")
+        if subject is None or profile is None:
+            raise ValueError("adopt requires an approved subject profile")
+    elif profile is not None:
+        raise ValueError("only adopt may bind a subject profile")
     if subject is not None:
         cur.execute("select 1 from research_subject where id=%s and project_id=%s and status='active'", (subject, project))
         if cur.fetchone() is None:
             raise ValueError("subject_id is invalid")
+    if profile is not None:
+        cur.execute(
+            """select 1 from research_subject_profile_version
+               where id=%s and project_id=%s and subject_id=%s
+                 and status='approved' and rights_status='cleared'
+               for share""",
+            (profile, project, subject),
+        )
+        if cur.fetchone() is None:
+            raise ValueError("profile_id must be the current approved, rights-cleared subject profile")
     values = {
         "hypothesis": _text(payload["hypothesis"], "hypothesis", 1200),
         "reference_point": _text(payload["reference_point"], "reference_point", 1200),
@@ -232,6 +250,13 @@ def _create_card(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dic
          values["owner_actor"], decision, status, actor),
     )
     card = cur.fetchone()["id"]
+    if profile is not None:
+        cur.execute(
+            """insert into project_decision_card_profile_binding
+               (project_id,decision_card_id,subject_id,profile_id,bound_by)
+               values (%s,%s,%s,%s,%s)""",
+            (project, card, subject, profile, actor),
+        )
     _record_event(cur, project, card, actor, "created", ["subject_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision"], None, status)
     return {"changed": True, "card_id": str(card), "status": status}
 
@@ -405,12 +430,12 @@ def main(db: postgresql, project_id: str, action: str, payload: dict[str, Any], 
         raise ValueError("action is invalid")
     try:
         with _connect(db) as conn, conn.cursor() as cur:
-            _writer(cur, project, actor)
+            role = _writer(cur, project, actor)
             replay = _begin_action(cur, key, actor, action, project, payload)
             if replay is not None:
                 return replay
             if action == "create_card":
-                outcome = _create_card(cur, project, actor, payload)
+                outcome = _create_card(cur, project, actor, role, payload)
             elif action == "update_card":
                 outcome = _update_card(cur, project, actor, payload)
             elif action == "set_card_status":

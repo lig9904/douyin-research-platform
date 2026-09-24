@@ -75,8 +75,16 @@ def test_restore_state_distinguishes_026_prefix_from_027_archive() -> None:
             for filename in filenames:
                 conn.execute("insert into schema_migrations(filename,sha256) values (%s,'test')", (filename,))
             # Simulate an archive restored before 027/028: current bootstrap
-            # contains both plus 029/030, so remove later objects in reverse dependency
+            # contains both plus 029-031, so remove later objects in reverse dependency
             # order before checking the historical state classifier.
+            conn.execute("drop table project_decision_card_profile_binding")
+            conn.execute("drop function enforce_project_decision_card_profile_binding()")
+            conn.execute("drop trigger trg_project_decision_card_adopt_profile_binding on project_decision_card")
+            conn.execute("drop trigger trg_project_decision_card_profile_requirement on project_decision_card")
+            conn.execute("drop function enforce_project_decision_card_adopt_profile_binding()")
+            conn.execute("drop function enforce_project_decision_card_profile_requirement()")
+            conn.execute("alter table project_decision_card drop constraint uq_project_decision_card_subject_scope")
+            conn.execute("alter table project_decision_card drop column profile_binding_required_at")
             conn.execute("drop table research_subject_profile_version")
             conn.execute("drop function enforce_research_subject_profile_version()")
             conn.execute("drop function reject_research_subject_profile_version_delete()")

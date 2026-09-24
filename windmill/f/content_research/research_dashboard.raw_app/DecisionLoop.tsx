@@ -10,18 +10,21 @@ type Card = {
   id: string; source_video_id: string; subject_id?: string | null; subject_name?: string | null; source_video_title?: string | null; source_account_name?: string | null
   hypothesis: string; reference_point: string; adaptation_difference: string; owner_actor: string
   decision: 'adopt' | 'observe' | 'exclude'; status: string; source_reference_withdrawn?: boolean; review_conclusion?: string | null; review_evidence?: string | null; next_action?: string | null; updated_at: string
+  profile_binding?: { profile_id: string; profile_kind: string; profile_version_no: number; rights_status_at_binding: string; profile_current_status: string } | null
 }
+type ApprovedProfile = { id: string; subject_id: string; profile_kind: string; version_no: number; rights_status: string; summary: Record<string, unknown> }
 type Event = { decision_card_id: string; action: string; from_status?: string | null; to_status?: string | null; actor_id: string; created_at: string }
 type Publication = {
   id: string; decision_card_id: string; publication_date: string; title: string; content_reference: string; status: string
   daily_observations: { id: string; metric_date: string; version: number; impressions: number | null; engagements: number | null; likes: number | null; comments: number | null; shares: number | null; follows: number | null; conversions: number | null; source: string; source_reference: string; source_reported_at: string; source_version_or_digest: string; measurement_scope: string }[]
 }
-type Loop = { project_name: string; role: string; cards: Card[]; events: Event[]; eligible_videos: Video[]; subjects: { id: string; name: string; subject_type: string }[]; publications: Publication[]; boundaries: { card_source: string; outcomes: string } }
+type Loop = { project_name: string; role: string; cards: Card[]; events: Event[]; eligible_videos: Video[]; subjects: { id: string; name: string; subject_type: string }[]; approved_profiles: ApprovedProfile[]; publications: Publication[]; boundaries: { card_source: string; outcomes: string } }
 type Review = { card_id: string; observation_id: string; conclusion: string; evidence: string; next_action: string }
 
 const decisions = [
   { value: 'adopt', label: '采用' }, { value: 'observe', label: '观察' }, { value: 'exclude', label: '排除' },
 ]
+const profileKindNames: Record<string, string> = { ip_narrative: 'IP 叙事', destination_experience: '景区体验', activity_conversion: '活动转化', other: '其他主体' }
 const statusNames: Record<string, string> = { draft: '草稿', active: '执行中', observing: '观察中', adopted: '已采用', excluded: '已排除', reviewed: '已复盘', archived: '已归档', published: '已发布' }
 const statusColors: Record<string, string> = { draft: 'default', active: 'blue', observing: 'gold', adopted: 'green', excluded: 'red', reviewed: 'cyan', archived: 'default', published: 'green' }
 const writable = new Set(['owner', 'admin', 'researcher'])
@@ -30,6 +33,7 @@ const emptyMetrics = () => ({ impressions: null as number | null, engagements: n
 
 function today() { return new Date().toISOString().slice(0, 10) }
 function dateTime(value: string) { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? '时间待核对' : parsed.toLocaleString('zh-CN') }
+function summaryText(value: unknown) { return Array.isArray(value) ? value.filter(item => typeof item === 'string').join('；').slice(0, 240) : typeof value === 'string' ? value.slice(0, 240) : '' }
 
 export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScope; onNavigate: (view: ResearchView) => void }) {
   const projectId = scope.mode === 'project' ? scope.projectId : null
@@ -38,7 +42,7 @@ export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScop
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
-  const [cardForm, setCardForm] = useState({ source_video_id: '', subject_id: null as string | null, hypothesis: '', reference_point: '', adaptation_difference: '', owner_actor: '', decision: 'observe' })
+  const [cardForm, setCardForm] = useState({ source_video_id: '', subject_id: null as string | null, profile_id: null as string | null, hypothesis: '', reference_point: '', adaptation_difference: '', owner_actor: '', decision: 'observe' })
   const [publication, setPublication] = useState({ decision_card_id: '', publication_date: today(), title: '', content_reference: '' })
   const [metric, setMetric] = useState({ publication_id: '', metric_date: today(), source: 'manual', source_reference: '', source_reported_at: new Date().toISOString(), source_version_or_digest: '', measurement_scope: '', ...emptyMetrics() })
   const [review, setReview] = useState<Review>({ card_id: '', observation_id: '', conclusion: '', evidence: '', next_action: '' })
@@ -58,6 +62,9 @@ export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScop
   }
   useEffect(() => { void refresh(); return () => { version.current += 1 } }, [projectId])
   const canWrite = data ? writable.has(data.role) : false
+  const canAdopt = data?.role === 'owner' || data?.role === 'admin'
+  const adoptProfiles = data?.approved_profiles.filter(profile => profile.subject_id === cardForm.subject_id && profile.rights_status === 'cleared') || []
+  const selectedProfile = adoptProfiles.find(profile => profile.id === cardForm.profile_id)
   const latestEvent = useMemo(() => new Map(data?.events.map(event => [event.decision_card_id, event]) || []), [data])
 
   const mutate = async (action: string, payload: Record<string, unknown>, done: () => void) => {
@@ -90,13 +97,15 @@ export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScop
           <div className="decision-loop-heading"><div><span>01 · 参考转行动</span><h2>新建行动卡</h2></div><Tag color="blue">仅本项目已接受视频</Tag></div>
           {!data.eligible_videos.length ? <p className="decision-loop-empty">没有可用参考视频。请先在“视频库”将公开视频明确纳入本项目；跨项目共享视频仅供阅读，不能在此建卡。</p> : <div className="decision-loop-form">
             <label>参考视频<Select aria-label="参考视频" value={cardForm.source_video_id || undefined} placeholder="选择已接受的公开视频" options={data.eligible_videos.map(video => ({ value: video.id, label: `${video.title || '未命名视频'} · ${video.account_name || '未知账号'}` }))} onChange={value => setCardForm({ ...cardForm, source_video_id: value })} /></label>
-            <label>决策<Select aria-label="决策" value={cardForm.decision} options={decisions} onChange={value => setCardForm({ ...cardForm, decision: value })} /></label>
-            <label>关联主体（可选）<Select aria-label="关联主体" allowClear value={cardForm.subject_id || undefined} placeholder="不关联主体" options={data.subjects.map(subject => ({ value: subject.id, label: `${subject.name} · ${subject.subject_type}` }))} onChange={value => setCardForm({ ...cardForm, subject_id: value || null })} /></label>
+            <label>决策<Select aria-label="决策" value={cardForm.decision} options={decisions.filter(item => item.value !== 'adopt' || canAdopt)} onChange={value => setCardForm({ ...cardForm, decision: value, profile_id: null })} /></label>
+            <label>关联主体{cardForm.decision === 'adopt' ? '（必选）' : '（可选）'}<Select aria-label="关联主体" allowClear={cardForm.decision !== 'adopt'} value={cardForm.subject_id || undefined} placeholder="选择本项目主体" options={data.subjects.map(subject => ({ value: subject.id, label: `${subject.name} · ${subject.subject_type}` }))} onChange={value => setCardForm({ ...cardForm, subject_id: value || null, profile_id: null })} /></label>
+            {cardForm.decision === 'adopt' ? <label>核准档案版本<Select aria-label="核准档案版本" value={cardForm.profile_id || undefined} placeholder="选择权利已核清的档案" options={adoptProfiles.map(profile => ({ value: profile.id, label: `${profileKindNames[profile.profile_kind] || profile.profile_kind} · v${profile.version_no} · 权利已核清` }))} onChange={value => setCardForm({ ...cardForm, profile_id: value })} />{cardForm.subject_id && !adoptProfiles.length ? <small>该主体暂无权利已核清的当前核准档案；请先完成主体档案审核。</small> : null}</label> : null}
+            {selectedProfile ? <div className="decision-loop-profile-summary"><strong>本次采用依据</strong><span>目标客群：{summaryText(selectedProfile.summary.target_audience) || '未注明'}</span><span>当前事实：{summaryText(selectedProfile.summary.current_facts) || '未注明'}</span><span>叙事约束：{summaryText(selectedProfile.summary.narrative_constraints) || '未注明'}</span><span>禁用表达：{summaryText(selectedProfile.summary.forbidden_expressions) || '未注明'}</span></div> : null}
             <label>负责人<Input aria-label="负责人" value={cardForm.owner_actor} placeholder="负责人邮箱" onChange={e => setCardForm({ ...cardForm, owner_actor: e.target.value })} /></label>
             <label>假设<Input.TextArea aria-label="假设" autoSize={{ minRows: 2, maxRows: 5 }} value={cardForm.hypothesis} onChange={e => setCardForm({ ...cardForm, hypothesis: e.target.value })} /></label>
             <label>可借鉴点<Input.TextArea aria-label="可借鉴点" autoSize={{ minRows: 2, maxRows: 5 }} value={cardForm.reference_point} onChange={e => setCardForm({ ...cardForm, reference_point: e.target.value })} /></label>
             <label>我方差异与边界<Input.TextArea aria-label="我方差异与边界" autoSize={{ minRows: 2, maxRows: 5 }} value={cardForm.adaptation_difference} onChange={e => setCardForm({ ...cardForm, adaptation_difference: e.target.value })} /></label>
-            <Button type="primary" loading={busy} disabled={!cardForm.source_video_id || !cardForm.hypothesis.trim() || !cardForm.reference_point.trim() || !cardForm.adaptation_difference.trim() || !cardForm.owner_actor.trim()} onClick={() => void mutate('create_card', cardForm, () => setCardForm({ source_video_id: '', subject_id: null, hypothesis: '', reference_point: '', adaptation_difference: '', owner_actor: '', decision: 'observe' }))}>保存行动卡</Button>
+            <Button type="primary" loading={busy} disabled={!cardForm.source_video_id || !cardForm.hypothesis.trim() || !cardForm.reference_point.trim() || !cardForm.adaptation_difference.trim() || !cardForm.owner_actor.trim() || (cardForm.decision === 'adopt' && (!canAdopt || !cardForm.subject_id || !cardForm.profile_id))} onClick={() => void mutate('create_card', cardForm, () => setCardForm({ source_video_id: '', subject_id: null, profile_id: null, hypothesis: '', reference_point: '', adaptation_difference: '', owner_actor: '', decision: 'observe' }))}>保存行动卡</Button>
           </div>}
         </section> : null}
         <section className="decision-loop-card-grid" aria-label="行动卡列表">
@@ -104,6 +113,7 @@ export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScop
             <div className="decision-card-head"><div><small>{card.source_account_name || '未知账号'} · {card.source_video_title || '未命名参考视频'}</small><h2>{card.hypothesis}</h2></div><Tag color={statusColors[card.status]}>{statusNames[card.status] || card.status}</Tag></div>
             <dl><div><dt>可借鉴点</dt><dd>{card.reference_point}</dd></div><div><dt>我方差异</dt><dd>{card.adaptation_difference}</dd></div></dl>
             {card.subject_name ? <p className="decision-card-subject">关联主体：{card.subject_name}</p> : null}
+            {card.profile_binding ? <p className="decision-card-subject">采用依据：{profileKindNames[card.profile_binding.profile_kind] || card.profile_binding.profile_kind} v{card.profile_binding.profile_version_no} · {card.profile_binding.profile_current_status === 'approved' ? '当前有效' : card.profile_binding.profile_current_status === 'revoked' ? '档案已撤销，仅留历史' : '档案已替换，仅留历史'}</p> : card.decision === 'adopt' ? <p className="decision-card-withdrawn">旧行动卡未绑定主体档案版本，仅作为历史记录，不代表当前可继续采用。</p> : null}
             {card.source_reference_withdrawn ? <p className="decision-card-withdrawn">参考已从当前项目接受列表撤回或公开源已不可用；保留此卡仅用于历史复盘，不会作为新建卡来源。</p> : null}
             {card.status === 'reviewed' ? <div className="decision-card-review"><strong>复盘结论</strong><p>{card.review_conclusion}</p><small>依据：{card.review_evidence}</small><small>下一动作：{card.next_action}</small></div> : null}
             <div className="decision-card-foot"><span>负责人：{card.owner_actor}</span><Tag color={card.decision === 'adopt' ? 'green' : card.decision === 'exclude' ? 'red' : 'gold'}>{decisions.find(item => item.value === card.decision)?.label}</Tag>{canWrite && statusTransitions[card.status]?.length ? <Select size="small" placeholder="推进状态" options={statusTransitions[card.status].map(value => ({ value, label: statusNames[value] }))} onChange={status => void mutate('set_card_status', { card_id: card.id, status }, () => undefined)} /> : null}</div>
