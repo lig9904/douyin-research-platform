@@ -83,9 +83,13 @@ def _configuration():
 
 def _preflight(dsn, source, settings):
     with psycopg.connect(dsn) as conn:
-        row = conn.execute("select run_type,status,platform from pipeline_run where id=%s", (source,)).fetchone()
-        if row != ("l0l1_discovery", "success", "douyin"):
+        row = conn.execute("select run_type,status,platform,project_id from pipeline_run where id=%s", (source,)).fetchone()
+        if row is None or row[:3] != ("l0l1_discovery", "success", "douyin"):
             raise ValueError("successful Douyin discovery batch required")
+        if row[3] is not None:
+            # Fail before budget preparation or credential lookup. Project
+            # comment/L2 must be introduced with its own subject gate.
+            raise ValueError("project discovery batch requires project-specific comment processing")
         novelty_clause = (
             " and coalesce((metadata->>'new_candidate')::boolean,false)"
             if getattr(settings, "new_candidates_only", False)

@@ -111,20 +111,29 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
             (f"research_brief:{brief_id}",),
         )
         cur.execute(
+            """update research_brief set status='paused', next_due_at=null,
+                 subject_gate_status='subject_required', updated_at=now()
+               where id=%s and status='active' and project_id is not null and subject_id is null""",
+            (brief_id,),
+        )
+        cur.execute(
             """
-            select brief.id, brief.project_id, brief.platform, brief.source_type,
+            select brief.id, brief.project_id, brief.subject_id, brief.platform, brief.source_type,
               brief.target, brief.time_window_hours, brief.max_items, brief.depth,
               brief.cadence_hours, brief.config_version, brief.next_due_at
             from research_brief as brief
             left join research_project as project on project.id = brief.project_id
             left join research_organization as organization
               on organization.id = project.organization_id
+            left join research_subject as subject
+              on subject.id = brief.subject_id and subject.project_id = brief.project_id
             where brief.id=%s and brief.status='active' and brief.next_due_at <= now()
               and (
                 brief.project_id is null
                 or (project.status='active' and organization.status='active')
               )
               and (brief.project_id is null or brief.depth='metadata')
+              and (brief.project_id is null or (brief.subject_id is not null and brief.subject_gate_status='ready' and subject.status='active'))
             for update of brief
             """,
             (brief_id,),
@@ -140,6 +149,7 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
             "max_items": row["max_items"],
             "depth": row["depth"],
             "cadence_hours": row["cadence_hours"],
+            "subject_id": str(row["subject_id"]) if row["subject_id"] is not None else None,
         }
         project_id = _project_id(row["project_id"])
         due_at: datetime = row["next_due_at"]

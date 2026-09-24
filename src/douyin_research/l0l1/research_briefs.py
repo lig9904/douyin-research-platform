@@ -44,6 +44,7 @@ class ResearchBriefConfig:
     max_items: int
     depth: str
     cadence_hours: int | None
+    subject_id: str | None = None
 
 
 class _RecordingProviderStore(PostgresProviderStore):
@@ -89,6 +90,11 @@ def validate_config(config: ResearchBriefConfig) -> ResearchBriefConfig:
             raise ValueError("target is invalid")
         if normalized != config.target:
             raise ValueError("target must be normalized")
+    if config.subject_id is not None:
+        try:
+            UUID(config.subject_id)
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("subject_id is invalid") from None
     return config
 
 
@@ -101,6 +107,7 @@ def make_config(
     max_items: int,
     depth: str,
     cadence_hours: int | None,
+    subject_id: str | None = None,
 ) -> ResearchBriefConfig:
     normalized_target = None
     if source_type != "low_fan" and isinstance(target, str):
@@ -114,6 +121,7 @@ def make_config(
             max_items=max_items,
             depth=depth,
             cadence_hours=cadence_hours,
+            subject_id=subject_id,
         )
     )
 
@@ -121,7 +129,12 @@ def make_config(
 def config_snapshot(config: ResearchBriefConfig) -> dict[str, Any]:
     """Durable server-side snapshot; never returned in paid job summaries."""
     validate_config(config)
-    return asdict(config)
+    snapshot = asdict(config)
+    # Preserve the exact legacy snapshot shape until a project brief opts into
+    # a subject gate.  That makes old scheduled records replayable.
+    if snapshot["subject_id"] is None:
+        del snapshot["subject_id"]
+    return snapshot
 
 
 def discovery_source(
@@ -215,15 +228,17 @@ def _run_call_gate(
     return reserve
 
 
-def _ensure_active_project(dsn: str, project_id: UUID) -> None:
+def _ensure_active_project(dsn: str, project_id: UUID, subject_id: UUID | None = None) -> None:
     # Recheck immediately before every uncached provider request. A project
     # paused after the dispatch claim must not continue spending by default.
     with psycopg.connect(dsn) as conn:
         row = conn.execute(
             """select 1 from research_project p
                join research_organization o on o.id = p.organization_id
-               where p.id = %s and p.status = 'active' and o.status = 'active'""",
-            (project_id,),
+               left join research_subject s on s.id=%s and s.project_id=p.id
+               where p.id = %s and p.status = 'active' and o.status = 'active'
+                 and (%s::uuid is null or s.status='active')""",
+            (subject_id, project_id, subject_id),
         ).fetchone()
     if row is None:
         raise PermissionError("research project is unavailable")
@@ -236,6 +251,11 @@ def run_live(
     validate_config(config)
     if not dsn or not api_key or not triggered_by:
         raise ValueError("database, API key and service identity are required")
+    subject_id = UUID(config.subject_id) if config.subject_id is not None else None
+    if (project_id is None) != (subject_id is None):
+        raise ValueError("project research requires a subject")
+    if project_id is not None:
+        _ensure_active_project(dsn, project_id, subject_id)
 
     budget = DailyBudgetGuard(dsn)
     budget.configure(
@@ -257,6 +277,8 @@ def run_live(
             ),
             project_check=(
                 (lambda: _ensure_active_project(dsn, project_id))
+                if project_id is not None and subject_id is None
+                else (lambda: _ensure_active_project(dsn, project_id, subject_id))
                 if project_id is not None else None
             ),
         ),
@@ -277,7 +299,8 @@ def run_live(
             enrich_details=True,
             triggered_by=triggered_by,
             enrich_new_only=True,
-            project_id=project_id,
+        project_id=project_id,
+        subject_id=subject_id,
         )
     finally:
         transport.close()
@@ -307,6 +330,10 @@ def run_live(
         "observations": summary.observations,
         "unique_platform_videos": summary.unique_platform_videos,
         "new_candidate_count": summary.new_candidate_count,
+        "relevant_new_project_count": summary.relevant_new_project_count,
+        "relevant_candidate_count": summary.relevant_candidate_count,
+        "pending_candidate_count": summary.pending_candidate_count,
+        "irrelevant_candidate_count": summary.irrelevant_candidate_count,
         "scored_videos": len(summary.scores),
         "provider_call_count": len(calls),
         "cached_call_count": cached_calls,

@@ -94,6 +94,19 @@ def _project_id(value: object) -> str | None:
         raise ResearchBriefError("project_id is invalid") from None
 
 
+def _subject_id(value: object, *, project_scoped: bool) -> str | None:
+    if value in (None, ""):
+        if project_scoped:
+            raise ResearchBriefError("project research requires subject_id")
+        return None
+    if not project_scoped:
+        raise ResearchBriefError("subject_id requires project_id")
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        raise ResearchBriefError("subject_id is invalid") from None
+
+
 def _project_role(cur, *, project_id: str, actor: str, write: bool) -> str:
     cur.execute(
         """
@@ -118,6 +131,16 @@ def _project_role(cur, *, project_id: str, actor: str, write: bool) -> str:
         # Do not disclose whether the project exists, is inactive, or is not visible.
         raise PermissionError("RESEARCH_PROJECT_ACCESS_DENIED")
     return str(row["role"])
+
+
+def _active_subject(cur, *, project_id: str, subject_id: str) -> None:
+    cur.execute(
+        """select 1 from research_subject
+           where id=%s::uuid and project_id=%s::uuid and status='active' for share""",
+        (subject_id, project_id),
+    )
+    if cur.fetchone() is None:
+        raise ResearchBriefError("subject_id is unavailable")
 
 
 def _uuid4(value: object, *, field: str) -> str:
@@ -149,7 +172,7 @@ def _normalized_text(value: object, *, field: str, maximum: int) -> str:
 def _config(
     *, name: object, platform: object, source_type: object, target: object,
     time_window_hours: object, max_items: object, depth: object,
-    cadence_hours: object, project_scoped: bool = False,
+    cadence_hours: object, subject_id: object = None, project_scoped: bool = False,
 ) -> dict[str, object]:
     normalized_name = _normalized_text(name, field="name", maximum=80)
     if platform != "douyin" or source_type not in _SOURCES or depth not in _DEPTHS:
@@ -183,6 +206,7 @@ def _config(
         "max_items": max_items,
         "depth": depth,
         "cadence_hours": normalized_cadence,
+        "subject_id": _subject_id(subject_id, project_scoped=project_scoped),
     }
 
 
@@ -237,6 +261,7 @@ def _mutate(
     brief_id: str, name: str, platform: str, source_type: str, target: str,
     time_window_hours: int, max_items: int, depth: str,
     cadence_hours: int | None, project_id: str | None, writer_allowlist: str | None,
+    subject_id: object = None,
 ):
     if action not in _ACTIONS:
         raise ResearchBriefError("action is invalid")
@@ -250,7 +275,8 @@ def _mutate(
         config = _config(
             name=name, platform=platform, source_type=source_type, target=target,
             time_window_hours=time_window_hours, max_items=max_items, depth=depth,
-            cadence_hours=cadence_hours, project_scoped=project_id is not None,
+            cadence_hours=cadence_hours, subject_id=subject_id,
+            project_scoped=project_id is not None,
         )
         payload["config"] = config
 
@@ -259,6 +285,8 @@ def _mutate(
             _authorized_writer(actor, writer_allowlist)
         else:
             _project_role(cur, project_id=project_id, actor=actor, write=True)
+            if config is not None:
+                _active_subject(cur, project_id=project_id, subject_id=str(config["subject_id"]))
         replay = _claim(cur, actor=actor, action=action, key=key, payload=payload)
         if replay is not None:
             return replay
@@ -267,13 +295,13 @@ def _mutate(
             cur.execute(
                 """
                 insert into research_brief(
-                  owner_actor, project_id, name, platform, source_type, target,
+                  owner_actor, project_id, subject_id, subject_gate_status, name, platform, source_type, target,
                   time_window_hours, max_items, depth, cadence_hours
-                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 returning id, status, config_version
                 """,
                 (
-                    actor, project_id, config["name"], config["platform"], config["source_type"],
+                    actor, project_id, config["subject_id"], "ready" if project_id else "not_applicable", config["name"], config["platform"], config["source_type"],
                     config["target"], config["time_window_hours"], config["max_items"],
                     config["depth"], config["cadence_hours"],
                 ),
@@ -285,6 +313,8 @@ def _mutate(
                 update research_brief set
                   name=%s, platform=%s, source_type=%s, target=%s,
                   time_window_hours=%s, max_items=%s, depth=%s, cadence_hours=%s,
+                  subject_id=%s,
+                  subject_gate_status=case when project_id is null then 'not_applicable' else 'ready' end,
                   config_version=config_version+1, updated_at=now()
                 where id=%s and project_id is not distinct from %s::uuid
                   and (%s::uuid is not null or owner_actor=%s)
@@ -294,7 +324,7 @@ def _mutate(
                 (
                     config["name"], config["platform"], config["source_type"],
                     config["target"], config["time_window_hours"], config["max_items"],
-                    config["depth"], config["cadence_hours"], normalized_id, project_id,
+                    config["depth"], config["cadence_hours"], config["subject_id"], normalized_id, project_id,
                     project_id, actor,
                 ),
             )
@@ -305,7 +335,9 @@ def _mutate(
                 where id=%s and project_id is not distinct from %s::uuid
                   and (%s::uuid is not null or owner_actor=%s)
                   and status in ('draft','paused')
-                  and (project_id is null or depth='metadata')
+                  and (project_id is null or (depth='metadata' and subject_id is not null and subject_gate_status='ready'
+                       and exists (select 1 from research_subject s where s.id=research_brief.subject_id
+                                  and s.project_id=research_brief.project_id and s.status='active')))
                 returning id, status, config_version
                 """,
                 (normalized_id, project_id, project_id, actor),
@@ -362,6 +394,7 @@ def main(
     cadence_hours: int | None = None,
     writer_allowlist: str = "",
     project_id: str | None = None,
+    subject_id: str | None = None,
 ):
     try:
         return _mutate(
@@ -371,6 +404,7 @@ def main(
             time_window_hours=time_window_hours, max_items=max_items, depth=depth,
             cadence_hours=cadence_hours, project_id=_project_id(project_id),
             writer_allowlist=writer_allowlist,
+            subject_id=subject_id,
         )
     except (PermissionError, ResearchBriefConflict, ResearchBriefError):
         raise
