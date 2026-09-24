@@ -153,6 +153,10 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "docker-compose.test-server-external-proxy.yml" in source
     assert "reviewed test-server overlay filename" in source
     assert "test-server-external-proxy-validate.sh" in source
+    assert "verify_subject_relevance_contract" in source
+    assert "subject_relevance_contract=%s" in source
+    assert "subject_relevance_027" in source
+    assert "'7|24'" in source
 
 
 def test_release_verify_contract_covers_project_migration_chain_fail_closed() -> None:

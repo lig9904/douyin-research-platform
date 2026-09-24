@@ -17,6 +17,10 @@ def test_research_restore_inventory_includes_brief_control_plane():
         'project_video_inclusion', 'project_video_share_grant', 'project_access_event',
     )
     assert module.TARGETS['project_024'] == module.TARGETS['project'][:10]
+    assert module.TARGETS['subject_relevance_027'] == (
+        'research_subject_term', 'project_video_subject_relevance',
+        'project_video_subject_relevance_audit',
+    )
 
 
 def test_copy_rows_not_field_values_or_escaped_newlines():
@@ -49,6 +53,18 @@ def test_project_archive_inventory_counts_each_scoped_table_without_returning_ro
     )
     assert module.counts(lines.splitlines(True), module.TARGETS['project']) == '1|1|2|0|0|0|0|0|1|1|1|2'
     assert module.counts(lines.splitlines(True), module.TARGETS['project_024']) == '1|1|2|0|0|0|0|0|1|1'
+
+
+def test_subject_relevance_archive_inventory_counts_current_and_historical_rows():
+    lines = ''.join(
+        f'COPY public.{table} (id) FROM stdin;\n{rows}\\.\n'
+        for table, rows in (
+            ('research_subject_term', 'term-a\nterm-b\n'),
+            ('project_video_subject_relevance', 'current-a\n'),
+            ('project_video_subject_relevance_audit', 'audit-a\naudit-b\naudit-c\n'),
+        )
+    )
+    assert module.counts(lines.splitlines(True), module.TARGETS['subject_relevance_027']) == '2|1|3'
 
 
 @pytest.mark.parametrize('value', ['', 'COPY public.source_video (id) FROM stdin;\n1\n',
