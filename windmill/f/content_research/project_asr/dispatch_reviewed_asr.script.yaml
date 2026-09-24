@@ -1,0 +1,11 @@
+summary: Background dispatch for reviewed project ASR
+description: Runnable background endpoint only; no Raw App exposure. Currently fail-closed until reviewed provider and private storage bindings are configured.
+timeout: 300
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    project_id: {type: string}
+    video_id: {type: string}
+    media_review_id: {type: string}
+  required: [project_id, video_id, media_review_id]

@@ -1,0 +1,10 @@
+summary: Revoke project ASR media approval
+description: Owner/admin or server-configured global reviewer only. Revocation prevents new dispatches.
+timeout: 30
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    project_id: {type: string}
+    media_review_id: {type: string}
+  required: [project_id, media_review_id]
