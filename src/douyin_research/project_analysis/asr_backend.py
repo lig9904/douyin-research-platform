@@ -26,6 +26,7 @@ from douyin_research.l2.asr_execution import ASRProvider, ASRProviderRequest
 from douyin_research.l2.transcripts import TaskCost, TranscriptEvidence
 from douyin_research.media_assets import MediaAssetReference
 from douyin_research.l2.media_review import _origin, asset_fingerprint
+from douyin_research.providers.execution_contracts import ASR_ASYNC_CAPABILITY, validate_execution_contract
 
 
 GLOBAL_REVIEWERS_PATH = "f/content_research/project_asr_global_reviewers"
@@ -187,11 +188,14 @@ class ProjectASRService:
             manifest = asset_manifest(asset, self._delivery_origin)
             if review["asset_manifest_fingerprint"] != manifest or review["media_fingerprint"] != asset.content_sha256:
                 raise PermissionError("approved project media review is stale")
+            if request.source_fingerprint != asset.content_sha256:
+                raise PermissionError("ASR source fingerprint must match reviewed project asset")
             task_key = _task_key(project_id, video_id, review_id, review["asset_id"], review["review_version"],
-                                 asset.content_sha256, request.model_id, request.model_revision, request.engine_version)
+                                 asset.content_sha256, manifest, request.provider, request.source_fingerprint,
+                                 request.model_id, request.model_revision, request.engine_version)
             existing = conn.execute("select status from project_asr_execution_job where task_key=%s", (task_key,)).fetchone()
             if existing is not None:
-                return {"status": existing["status"], "task_key": task_key, "created": False,
+                return {"status": "reconciliation_required" if existing["status"] == "submitting" else existing["status"], "task_key": task_key, "created": False,
                         "external_calls": 0, "project_private": True}
             job = conn.execute(
                 """insert into project_asr_execution_job(task_key,project_id,video_id,media_review_id,reviewed_asset_id,
@@ -208,6 +212,7 @@ class ProjectASRService:
             media_url = media_url_factory(asset)
             self._assert_delivery_url(media_url)
             provider = provider_factory()
+            self._assert_provider(provider, request)
             state = provider.submit(ASRProviderRequest(task_key=task_key, media_ref=media_url,
                 source_fingerprint=request.source_fingerprint, model_id=request.model_id,
                 model_revision=request.model_revision, engine_version=request.engine_version))
@@ -218,20 +223,59 @@ class ProjectASRService:
             for _ in range(3):
                 if state.status not in {"submitted", "running"}:
                     break
-                state = provider.poll(state.provider_task_ref)
+                prior_ref = state.provider_task_ref
+                state = provider.poll(prior_ref)
+                if state.provider_task_ref != prior_ref:
+                    raise ValueError("ASR provider task reference changed during polling")
                 calls += 1
                 self._record_state(project_id, video_id, review_id, UUID(str(job["id"])), state, request.cost_currency)
         except Exception:
-            self._mark_failed(UUID(str(job["id"])))
-            raise RuntimeError("project ASR provider execution failed") from None
+            # A transport exception after submit is ambiguous.  Keep the
+            # persisted submitting state so an operator cannot accidentally
+            # submit a second paid task under the same project identity.
+            self._mark_reconciliation_required(UUID(str(job["id"])))
+            return {"status": "reconciliation_required", "task_key": task_key, "created": True,
+                    "external_calls": 1, "project_private": True, "media_url_recorded": False}
         return {"status": state.status, "task_key": task_key, "created": True, "external_calls": calls,
                 "project_private": True, "media_url_recorded": False, "storage_credentials_exposed": False}
+
+    def resume_poll(self, *, project_id: UUID | str, task_key: str,
+                    provider_factory: Callable[[], ProjectASRProvider]) -> dict[str, object]:
+        """Bounded scheduler resume: poll an existing task only, never submit."""
+        actor, project_id = self._actor(), _uuid(project_id, "project_id")
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            self._assert_reviewer(conn, project_id, actor)
+            job = conn.execute("""select * from project_asr_execution_job where project_id=%s and task_key=%s
+                              and status in ('submitted','running') and provider_task_ref is not null for update""",
+                               (project_id, task_key)).fetchone()
+            if job is None:
+                return {"status": "reconciliation_required", "external_calls": 0, "created": False}
+            self._assert_dispatchable_video(conn, project_id, job["video_id"])
+            review = conn.execute("select status,asset_manifest_fingerprint from project_asr_media_review where id=%s for update",
+                                  (job["media_review_id"],)).fetchone()
+            if review is None or review["status"] != "approved" or review["asset_manifest_fingerprint"] != job["asset_manifest_fingerprint"]:
+                return {"status": "reconciliation_required", "external_calls": 0, "created": False}
+        provider = provider_factory()
+        request = ProjectASRDispatch(project_id, job["video_id"], job["media_review_id"], job["provider"],
+                                     job["model_id"], job["model_revision"], job["engine_version"], job["source_fingerprint"], job["cost_currency"])
+        self._assert_provider(provider, request)
+        calls = 0
+        try:
+            state = provider.poll(job["provider_task_ref"]); calls = 1
+            if state.provider_task_ref != job["provider_task_ref"]:
+                raise ValueError("ASR provider task reference changed during polling")
+            self._record_state(project_id, job["video_id"], job["media_review_id"], job["id"], state, job["cost_currency"])
+        except Exception:
+            return {"status": "reconciliation_required", "external_calls": calls, "created": False}
+        return {"status": state.status, "external_calls": calls, "created": False, "project_private": True}
 
     def _record_state(self, project_id: UUID, video_id: UUID, review_id: UUID, job_id: UUID,
                       state, currency: str) -> None:
         if state.status not in {"submitted", "running", "completed", "failed"}:
             raise ValueError("ASR provider returned invalid state")
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            if state.status == "completed" and state.evidence is None:
+                raise ValueError("completed ASR provider state requires evidence")
             if state.status == "completed" and state.evidence is not None:
                 cost_id = _insert_cost(conn, project_id, video_id, job_id, state.cost, currency)
                 conn.execute("update project_asr_execution_job set status='completed',provider_task_ref=%s,submission_count=1,task_cost_id=%s where id=%s",
@@ -249,10 +293,10 @@ class ProjectASRService:
                 conn.execute("update project_asr_execution_job set status=%s,provider_task_ref=%s,submission_count=1,error_code=%s where id=%s",
                              (state.status, state.provider_task_ref, state.error_code, job_id))
 
-    def _mark_failed(self, job_id: UUID) -> None:
+    def _mark_reconciliation_required(self, job_id: UUID) -> None:
         with psycopg.connect(self._dsn) as conn:
-            conn.execute("""update project_asr_execution_job set status='failed',submission_count=1,
-                         error_code='project_asr_provider_failed' where id=%s and status='submitting'""", (job_id,))
+            conn.execute("""update project_asr_execution_job set submission_count=1,
+                         error_code='project_asr_reconciliation_required' where id=%s and status='submitting'""", (job_id,))
 
     def _assert_delivery_url(self, media_url: str) -> None:
         parsed = urlsplit(media_url)
@@ -264,8 +308,11 @@ class ProjectASRService:
     def _assert_dispatchable_video(conn, project_id: UUID, video_id: UUID) -> None:
         row = conn.execute("""select 1 from project_video_inclusion inclusion_row
                             join source_video video_row on video_row.id=inclusion_row.video_id
+                            join research_project project_row on project_row.id=inclusion_row.project_id
+                            join research_organization org_row on org_row.id=project_row.organization_id
                             where inclusion_row.project_id=%s and inclusion_row.video_id=%s
-                            and inclusion_row.status='accepted' and video_row.availability_status='available'""",
+                            and inclusion_row.status='accepted' and video_row.availability_status='available'
+                            and project_row.status='active' and org_row.status='active'""",
                            (project_id, video_id)).fetchone()
         if row is None:
             raise PermissionError("accepted available project video is required")
@@ -280,8 +327,10 @@ class ProjectASRService:
         return MediaAssetReference(**row)
 
     def _assert_member(self, conn, project_id: UUID, actor: str) -> None:
-        row = conn.execute("""select 1 from research_project_member where project_id=%s and actor_id=%s
-                           and effective_from <= now() and (effective_until is null or effective_until > now())""",
+        row = conn.execute("""select 1 from (select distinct on (actor_id) * from research_project_member
+                           where project_id=%s and actor_id=%s and effective_from <= now()
+                           order by actor_id,effective_from desc) latest where status='active'
+                           and (effective_until is null or effective_until > now())""",
             (project_id, actor)).fetchone()
         if row is None:
             raise PermissionError("active project membership is required")
@@ -289,9 +338,10 @@ class ProjectASRService:
     def _assert_reviewer(self, conn, project_id: UUID, actor: str) -> None:
         if actor in _allowlist(self._variable(GLOBAL_REVIEWERS_PATH)):
             return
-        row = conn.execute("""select 1 from research_project_member where project_id=%s and actor_id=%s
-                           and role in ('owner','admin') and effective_from <= now()
-                           and (effective_until is null or effective_until > now())""", (project_id, actor)).fetchone()
+        row = conn.execute("""select 1 from (select distinct on (actor_id) * from research_project_member
+                           where project_id=%s and actor_id=%s and effective_from <= now()
+                           order by actor_id,effective_from desc) latest where status='active'
+                           and role in ('owner','admin') and (effective_until is null or effective_until > now())""", (project_id, actor)).fetchone()
         if row is None:
             raise PermissionError("project owner/admin or global reviewer is required")
 
@@ -301,6 +351,14 @@ class ProjectASRService:
         if not _ACTOR.fullmatch(actor):
             raise PermissionError("authenticated Windmill end-user identity is required")
         return actor
+
+    @staticmethod
+    def _assert_provider(provider: ProjectASRProvider, request: ProjectASRDispatch) -> None:
+        if getattr(provider, "provider_name", None) != request.provider or getattr(provider, "max_retries", None) != 0:
+            raise ValueError("project ASR provider identity or retries do not match dispatch")
+        validate_execution_contract(provider.contract, expected_provider=request.provider,
+            expected_capability=ASR_ASYNC_CAPABILITY, expected_model_id=request.model_id,
+            expected_model_revision=request.model_revision, expected_currency=request.cost_currency)
 
 
 def asset_manifest(asset: MediaAssetReference, delivery_origin: str) -> str:
