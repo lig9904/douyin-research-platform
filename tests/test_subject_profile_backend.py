@@ -209,6 +209,14 @@ def test_subject_profile_routes_isolate_projects_drafts_and_replacement(monkeypa
             monkeypatch.setenv("WM_END_USER_EMAIL", "reader@example.com")
             visible = reader.main({}, project_id=str(project_a), subject_id=str(subject_a))["profiles"]
             assert [profile["id"] for profile in visible] == [new_draft["id"]]
+            with pytest.raises(PermissionError, match="RESEARCH_PROJECT_ACCESS_DENIED"):
+                reader.main({}, project_id=str(project_b), subject_id=str(subject_b))
+            admin.execute(
+                "update research_project_member set status='revoked' where project_id=%s and actor_id=%s",
+                (project_a, "reader@example.com"),
+            )
+            with pytest.raises(PermissionError, match="RESEARCH_PROJECT_ACCESS_DENIED"):
+                reader.main({}, project_id=str(project_a), subject_id=str(subject_a))
             monkeypatch.setenv("WM_END_USER_EMAIL", "owner@example.com")
             revoked_approved = writer.main(
                 {}, project_id=str(project_a), action="revoke", idempotency_key=str(uuid4()),
