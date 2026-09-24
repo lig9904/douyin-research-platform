@@ -206,6 +206,18 @@ class ProjectL3ReviewService:
             cur.execute("update project_l3_privacy_review set status='approved',reviewed_by=%s where id=%s", (reviewer, review_id))
             return ProjectL3ReviewReceipt(review_id, evidence.project_id, evidence.video_id, evidence.transcript_id, evidence.review_version, evidence.fingerprint, False)
 
+    def revoke(self, *, actor: str, reviewer_allowlist: str, project_id: UUID | str,
+               video_id: UUID | str, review_id: UUID | str) -> None:
+        project, video, review = _uuid(project_id, "project_id"), _uuid(video_id, "video_id"), _uuid(review_id, "review_id")
+        reviewer = authorize_reviewer(actor, reviewer_allowlist)
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            self._assert_manager(project, video, reviewer, cur=cur)
+            cur.execute("""update project_l3_privacy_review set status='revoked',revoked_by=%s
+                         where id=%s and project_id=%s and video_id=%s and status='approved'""",
+                        (reviewer, review, project, video))
+            if cur.rowcount != 1:
+                raise ValueError("PROJECT_L3_REVIEW_NOT_REVOCABLE")
+
     def _assert_manager(self, project: UUID, video: UUID, actor: str, *, cur=None) -> None:
         if cur is None:
             with psycopg.connect(self.dsn) as conn, conn.cursor() as owned:

@@ -1,0 +1,10 @@
+summary: Execute one persisted project-private L3 review
+description: Internal worker only. Uses fixed server configuration and may call Ark; it is not exposed to the Raw App and has no schedule.
+timeout: 360
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    review_id:
+      type: string
+  required: [review_id]
