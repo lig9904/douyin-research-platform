@@ -20,6 +20,7 @@ from psycopg.types.json import Jsonb
 
 from douyin_research.l2.transcripts import TaskCost
 from douyin_research.l3.execution import L3Provider, L3ProviderRequest
+from douyin_research.l3.review import authorize_reviewer
 from douyin_research.l3.results import L3ResearchResult, _public_output, _validate_cost, _validate_result
 from douyin_research.providers.execution_contracts import L3_SYNC_CAPABILITY, validate_execution_contract
 
@@ -115,11 +116,14 @@ class ProjectL3EvidenceService:
                 """select video.platform,video.title,video.description,video.published_at,video.duration_ms,
                           transcript.id,transcript.text_content,transcript.text_fingerprint,transcript.language,
                           transcript.audio_duration_ms,transcript.model_id,transcript.model_revision,transcript.engine_version
-                   from project_video_inclusion inclusion
+                   from research_project project
+                   join research_organization organization on organization.id=project.organization_id
+                   join project_video_inclusion inclusion on inclusion.project_id=project.id
                    join source_video video on video.id=inclusion.video_id
                    join project_transcript transcript
                      on transcript.project_id=inclusion.project_id and transcript.video_id=inclusion.video_id
-                   where inclusion.project_id=%s and inclusion.video_id=%s and inclusion.status='accepted'
+                   where project.id=%s and project.status='active' and organization.status='active'
+                     and inclusion.video_id=%s and inclusion.status='accepted'
                      and video.availability_status='available' and transcript.id=%s""",
                 (project, video, transcript),
             )
@@ -166,12 +170,17 @@ class ProjectL3ReviewService:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
 
-    def prepare(self, **kwargs: object) -> ProjectL3Evidence:
+    def prepare(self, *, actor: str, reviewer_allowlist: str, **kwargs: object) -> ProjectL3Evidence:
+        project = _uuid(kwargs.get("project_id"), "project_id")
+        video = _uuid(kwargs.get("video_id"), "video_id")
+        reviewer = authorize_reviewer(actor, reviewer_allowlist)
+        self._assert_manager(project, video, reviewer)
         return ProjectL3EvidenceService(self.dsn).prepare(**kwargs)  # type: ignore[arg-type]
 
-    def approve(self, *, actor: str, evidence: ProjectL3Evidence) -> ProjectL3ReviewReceipt:
-        reviewer = _text(actor, "actor", 254).lower()
+    def approve(self, *, actor: str, reviewer_allowlist: str, evidence: ProjectL3Evidence) -> ProjectL3ReviewReceipt:
+        reviewer = authorize_reviewer(actor, reviewer_allowlist)
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            self._assert_manager(evidence.project_id, evidence.video_id, reviewer, cur=cur)
             cur.execute("select pg_advisory_xact_lock(hashtext(%s))", (f"project-l3-review:{evidence.project_id}:{evidence.video_id}:{evidence.fingerprint}",))
             current = ProjectL3EvidenceService(self.dsn).prepare(project_id=evidence.project_id, video_id=evidence.video_id, transcript_id=evidence.transcript_id, review_version=evidence.review_version)
             if current.fingerprint != evidence.fingerprint:
@@ -197,6 +206,26 @@ class ProjectL3ReviewService:
             cur.execute("update project_l3_privacy_review set status='approved',reviewed_by=%s where id=%s", (reviewer, review_id))
             return ProjectL3ReviewReceipt(review_id, evidence.project_id, evidence.video_id, evidence.transcript_id, evidence.review_version, evidence.fingerprint, False)
 
+    def _assert_manager(self, project: UUID, video: UUID, actor: str, *, cur=None) -> None:
+        if cur is None:
+            with psycopg.connect(self.dsn) as conn, conn.cursor() as owned:
+                self._assert_manager(project, video, actor, cur=owned)
+            return
+        cur.execute(
+            """select 1 from research_project project
+               join research_organization organization on organization.id=project.organization_id
+               join lateral (select role,status,effective_until from research_project_member
+                 where project_id=project.id and actor_id=%s and effective_from<=now()
+                 order by effective_from desc limit 1) member on true
+               where project.id=%s and project.status='active' and organization.status='active'
+                 and member.status='active' and member.role in ('owner','admin')
+                 and (member.effective_until is null or member.effective_until>now())
+                 and project_video_can_read(project.id,%s,%s)""",
+            (actor, project, actor, video),
+        )
+        if cur.fetchone() is None:
+            raise PermissionError("PROJECT_L3_REVIEW_ACCESS_DENIED")
+
 
 class ProjectL3ExecutionService:
     """One project-private L3 call.  Revalidates approval before provider construction."""
@@ -213,17 +242,24 @@ class ProjectL3ExecutionService:
             return _blocked("evidence_changed_since_review")
         task_key = project_l3_task_key(project_id=project, video_id=video, review_id=review, review_version=selection.review_version, evidence_fingerprint=evidence.fingerprint, model_id=selection.model_id, model_revision=selection.model_revision, prompt_version=selection.prompt_version, schema_version=selection.schema_version)
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute("select id,status from project_l3_execution_job where task_key=%s for update", (task_key,))
-            existing = cur.fetchone()
-            if existing is not None:
-                return {"status": existing[1], "created": False, "external_calls": 0, "llm_calls": 0, "task_key": task_key}
             cur.execute(
-                """select id from project_l3_privacy_review where id=%s and project_id=%s and video_id=%s
-                   and transcript_id=%s and review_version=%s and evidence_fingerprint=%s and status='approved' for update""",
+                """select 1 from project_l3_privacy_review review
+                   join research_project project on project.id=review.project_id
+                   join research_organization organization on organization.id=project.organization_id
+                   join project_video_inclusion inclusion on inclusion.project_id=review.project_id and inclusion.video_id=review.video_id
+                   join source_video source on source.id=review.video_id
+                   where review.id=%s and review.project_id=%s and review.video_id=%s and review.transcript_id=%s
+                     and review.review_version=%s and review.evidence_fingerprint=%s and review.status='approved'
+                     and project.status='active' and organization.status='active'
+                     and inclusion.status='accepted' and source.availability_status='available' for update""",
                 (review, project, video, transcript, selection.review_version, evidence.fingerprint),
             )
             if cur.fetchone() is None:
                 return _blocked("project_review_missing_or_revoked")
+            cur.execute("select id,status from project_l3_execution_job where task_key=%s for update", (task_key,))
+            existing = cur.fetchone()
+            if existing is not None:
+                return {"status": existing[1], "created": False, "external_calls": 0, "llm_calls": 0, "task_key": task_key}
             cur.execute(
                 """insert into project_l3_execution_job(task_key,project_id,video_id,privacy_review_id,review_version,evidence_fingerprint,provider,model_id,model_revision,prompt_version,schema_version,input_fingerprint,status,attempt_count,cost_currency,metadata)
                    values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'running',1,%s,%s) returning id""",
@@ -264,7 +300,15 @@ class ProjectL3ExecutionService:
 
     def _review_current(self, review: UUID, project: UUID, video: UUID, transcript: UUID, evidence: ProjectL3Evidence) -> bool:
         with psycopg.connect(self.dsn) as conn:
-            return bool(conn.execute("""select 1 from project_l3_privacy_review where id=%s and project_id=%s and video_id=%s and transcript_id=%s and review_version=%s and evidence_fingerprint=%s and status='approved'""", (review, project, video, transcript, evidence.review_version, evidence.fingerprint)).fetchone())
+            return bool(conn.execute("""select 1 from project_l3_privacy_review review
+                join research_project project_row on project_row.id=review.project_id
+                join research_organization organization on organization.id=project_row.organization_id
+                join project_video_inclusion inclusion on inclusion.project_id=review.project_id and inclusion.video_id=review.video_id
+                join source_video source on source.id=review.video_id
+                where review.id=%s and review.project_id=%s and review.video_id=%s and review.transcript_id=%s
+                  and review.review_version=%s and review.evidence_fingerprint=%s and review.status='approved'
+                  and project_row.status='active' and organization.status='active'
+                  and inclusion.status='accepted' and source.availability_status='available'""", (review, project, video, transcript, evidence.review_version, evidence.fingerprint)).fetchone())
 
     def _fail(self, job: UUID, task_key: str, project: UUID, video: UUID, selection: ProjectL3ExecutionSelection, code: str) -> None:
         with psycopg.connect(self.dsn) as conn:
