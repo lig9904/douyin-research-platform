@@ -1,0 +1,26 @@
+.subject-profile-panel { margin-bottom: 14px; }
+.subject-profile-panel .ant-alert { margin-bottom: 14px; }
+.subject-profile-loading { min-height: 112px; display: grid; place-items: center; }
+.subject-profile-approved { padding: 15px; border: 1px solid #cce8df; border-radius: 10px; background: linear-gradient(120deg, #f5fcf9, #fff); }
+.subject-profile-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.subject-profile-head > div > span { display: block; color: #4f907d; font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+.subject-profile-head h3 { margin: 3px 0 0; color: #173c38; font-size: 16px; line-height: 1.45; }
+.subject-profile-approved .ant-descriptions-item-label { color: #637b76; font-size: 12px; }
+.subject-profile-approved .ant-descriptions-item-content { color: #274841; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.subject-profile-summary-list { display: grid; gap: 3px; margin: 0; padding-left: 17px; }
+.subject-profile-summary-list li { margin: 0; }
+.subject-profile-approved code, .subject-profile-history code { padding: 1px 5px; border-radius: 4px; color: #46635d; background: #edf4f1; font-size: 11px; }
+.subject-profile-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.subject-profile-empty, .subject-profile-reader-note { margin: 0; padding: 14px; border: 1px dashed #d7e2df; border-radius: 9px; color: #697f7a; background: #fbfdfc; font-size: 12px; line-height: 1.7; }
+.subject-profile-reader-note { margin-top: 12px; color: #667b92; border-color: #dce7f3; background: #f8fbff; }
+.subject-profile-history { margin-top: 16px; }
+.subject-profile-history h4 { margin: 0 0 7px; color: #415c58; font-size: 13px; }
+.subject-profile-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 1px; border-top: 1px solid #edf2f0; }
+.subject-profile-history-row strong { display: block; color: #405954; font-size: 12px; }
+.subject-profile-history-row span { display: block; margin-top: 3px; color: #7a8e89; font-size: 11px; overflow-wrap: anywhere; }
+.subject-profile-form { margin-top: 14px; }
+.subject-profile-form .ant-form-item { margin-bottom: 13px; }
+@media (max-width: 600px) {
+  .subject-profile-head, .subject-profile-history-row { align-items: flex-start; flex-direction: column; }
+  .subject-profile-actions { justify-content: flex-start; flex-wrap: wrap; }
+}

@@ -19,6 +19,8 @@ import AppShell, { type ResearchView } from './AppShell'
 import type { ProjectScope } from './src/projectScope'
 import SubjectRelevancePanel, { type ProjectSubject } from './SubjectRelevancePanel'
 import './research-briefs.css'
+import './subject-profile.css'
+import SubjectProfilePanel from './SubjectProfilePanel'
 
 type BriefStatus = 'draft' | 'active' | 'paused'
 
@@ -288,6 +290,13 @@ export default function ResearchBriefs({
         }}
         onSubjectsChange={setProjectSubjects}
         onOpenVideoLibrary={() => onNavigate('videos')}
+      /> : null}
+
+      {projectId && selectedSubjectId ? <SubjectProfilePanel
+        projectId={projectId}
+        subjectId={selectedSubjectId}
+        subjectName={projectSubjects.find((subject) => subject.id === selectedSubjectId)?.name}
+        subjectType={projectSubjects.find((subject) => subject.id === selectedSubjectId)?.subject_type}
       /> : null}
 
       <div className="brief-layout">
