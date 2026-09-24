@@ -70,6 +70,18 @@ def test_brief_configuration_is_strict_and_normalized() -> None:
             name="媒体越界", platform="douyin", source_type="keyword", target="文旅",
             time_window_hours=24, max_items=6, depth="media", cadence_hours=None,
         )
+    with pytest.raises(mutate.ResearchBriefError, match="requires subject_id"):
+        mutate._config(
+            name="项目研究", platform="douyin", source_type="keyword", target="文旅",
+            time_window_hours=24, max_items=5, depth="metadata", cadence_hours=None,
+            project_scoped=True,
+        )
+    subject_config = mutate._config(
+        name="项目研究", platform="douyin", source_type="keyword", target="文旅",
+        time_window_hours=24, max_items=5, depth="metadata", cadence_hours=None,
+        project_scoped=True, subject_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert subject_config["subject_id"] == "00000000-0000-4000-8000-000000000001"
 
 
 def test_schema_records_control_plane_and_keeps_analysis_gate_separate() -> None:

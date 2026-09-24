@@ -15,6 +15,7 @@ from douyin_research.providers.types import ProviderPage, VideoObservation
 from .budget import DailyBudgetGuard
 from .ingest import DiscoveryContext, L0L1Store
 from .scoring import L1Scorer
+from .subject_relevance import SubjectRelevanceStore
 
 
 @dataclass(slots=True)
@@ -36,13 +37,17 @@ class RunSummary:
     unique_platform_videos: int
     scores: dict[Any, float]
     new_candidate_count: int = 0
+    relevant_candidate_count: int = 0
+    pending_candidate_count: int = 0
+    irrelevant_candidate_count: int = 0
 
 
 class L0L1Runner:
     def __init__(self, *, provider: PlatformResearchProvider, store: L0L1Store,
                  scorer: L1Scorer, budget: DailyBudgetGuard,
                  budget_key: str = "l0l1",
-                 provider_reserves_budget: bool = False) -> None:
+                 provider_reserves_budget: bool = False,
+                 relevance: SubjectRelevanceStore | None = None) -> None:
         self.provider = provider
         self.store = store
         self.scorer = scorer
@@ -53,10 +58,16 @@ class L0L1Runner:
         # call through their before_external_call hook.  Do not use both: that
         # would double-count a paid request and makes cache accounting wrong.
         self.provider_reserves_budget = provider_reserves_budget
+        # Keep legacy test/dry-run stores free of a database requirement until
+        # a caller explicitly asks for subject-scoped work.
+        self.relevance = relevance
 
     def run(self, sources: list[DiscoverySource], *, enrich_details: bool = True,
             triggered_by: str = "system", enrich_new_only: bool = False,
-            project_id: UUID | None = None) -> RunSummary:
+            project_id: UUID | None = None,
+            subject_id: UUID | None = None) -> RunSummary:
+        if subject_id is not None and project_id is None:
+            raise ValueError("subject-scoped research requires a project")
         run_id = self.store.create_run(
             "l0l1_discovery",
             "v1.0.0",
@@ -69,6 +80,7 @@ class L0L1Runner:
         new_video_ids: set[Any] = set()
         new_project_video_ids: set[Any] = set()
         new_platform_video_ids: set[str] = set()
+        discovered_video_ids: set[Any] = set()
         detail_enriched_count = 0
         failure_stage = "discovery"
         failure_item_count = 0
@@ -112,6 +124,7 @@ class L0L1Runner:
                     ),
                 )
                 new_video_ids.update(ingested.new_video_ids)
+                discovered_video_ids.update(getattr(ingested, "video_ids", []))
                 if project_id is not None:
                     project_new = getattr(ingested, "new_project_video_ids", None)
                     if project_new is None:
@@ -169,10 +182,34 @@ class L0L1Runner:
                     ),
                 )
 
+            relevant_ids: set[Any] | None = None
+            relevance_counts = {"relevant": 0, "pending": 0, "irrelevant": 0}
+            if subject_id is not None:
+                relevance = self.relevance
+                if relevance is None:
+                    dsn = getattr(self.store, "dsn", None)
+                    if not isinstance(dsn, str) or not dsn:
+                        raise RuntimeError("subject relevance requires a database-backed store")
+                    relevance = SubjectRelevanceStore(dsn)
+                decisions = relevance.evaluate_run(
+                    project_id=project_id, subject_id=subject_id, run_id=run_id,
+                    video_ids=discovered_video_ids,
+                )
+                relevant_ids = {video_id for video_id, decision in decisions.items()
+                                if decision == "relevant"}
+                for decision in decisions.values():
+                    relevance_counts[decision] += 1
+
             failure_stage = "finalize"
             failure_item_count = observation_count
-            scores = self.scorer.score_run(run_id)
+            scores = (
+                self.scorer.score_run(run_id, video_ids=relevant_ids)
+                if relevant_ids is not None
+                else self.scorer.score_run(run_id)
+            )
             candidate_ids = new_project_video_ids if project_id is not None else new_video_ids
+            if relevant_ids is not None:
+                candidate_ids = [video_id for video_id in candidate_ids if video_id in relevant_ids]
             self.store.set_new_candidate_flags(run_id, candidate_ids)
             self.store.finish_run(
                 run_id,
@@ -184,6 +221,7 @@ class L0L1Runner:
                          "enrich_details": enrich_details,
                          "enrich_new_only": enrich_new_only,
                          "new_candidate_count": len(candidate_ids),
+                         "subject_relevance": relevance_counts if subject_id is not None else None,
                          "detail_enriched_count": detail_enriched_count},
             )
             return RunSummary(
@@ -194,6 +232,9 @@ class L0L1Runner:
                 unique_platform_videos=len(unique_platform_ids),
                 scores=scores,
                 new_candidate_count=len(candidate_ids),
+                relevant_candidate_count=relevance_counts["relevant"],
+                pending_candidate_count=relevance_counts["pending"],
+                irrelevant_candidate_count=relevance_counts["irrelevant"],
             )
         except Exception as exc:
             safe_failure = provider_failure_summary(

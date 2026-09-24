@@ -112,7 +112,7 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
         )
         cur.execute(
             """
-            select brief.id, brief.project_id, brief.platform, brief.source_type,
+            select brief.id, brief.project_id, brief.subject_id, brief.platform, brief.source_type,
               brief.target, brief.time_window_hours, brief.max_items, brief.depth,
               brief.cadence_hours, brief.config_version, brief.next_due_at
             from research_brief as brief
@@ -125,6 +125,7 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
                 or (project.status='active' and organization.status='active')
               )
               and (brief.project_id is null or brief.depth='metadata')
+              and (brief.project_id is null or brief.subject_id is not null)
             for update of brief
             """,
             (brief_id,),
@@ -140,6 +141,7 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
             "max_items": row["max_items"],
             "depth": row["depth"],
             "cadence_hours": row["cadence_hours"],
+            "subject_id": str(row["subject_id"]) if row["subject_id"] is not None else None,
         }
         project_id = _project_id(row["project_id"])
         due_at: datetime = row["next_due_at"]

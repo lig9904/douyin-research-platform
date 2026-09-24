@@ -44,6 +44,7 @@ class ResearchBriefConfig:
     max_items: int
     depth: str
     cadence_hours: int | None
+    subject_id: str | None = None
 
 
 class _RecordingProviderStore(PostgresProviderStore):
@@ -89,6 +90,11 @@ def validate_config(config: ResearchBriefConfig) -> ResearchBriefConfig:
             raise ValueError("target is invalid")
         if normalized != config.target:
             raise ValueError("target must be normalized")
+    if config.subject_id is not None:
+        try:
+            UUID(config.subject_id)
+        except (TypeError, ValueError, AttributeError):
+            raise ValueError("subject_id is invalid") from None
     return config
 
 
@@ -101,6 +107,7 @@ def make_config(
     max_items: int,
     depth: str,
     cadence_hours: int | None,
+    subject_id: str | None = None,
 ) -> ResearchBriefConfig:
     normalized_target = None
     if source_type != "low_fan" and isinstance(target, str):
@@ -114,6 +121,7 @@ def make_config(
             max_items=max_items,
             depth=depth,
             cadence_hours=cadence_hours,
+            subject_id=subject_id,
         )
     )
 
@@ -121,7 +129,12 @@ def make_config(
 def config_snapshot(config: ResearchBriefConfig) -> dict[str, Any]:
     """Durable server-side snapshot; never returned in paid job summaries."""
     validate_config(config)
-    return asdict(config)
+    snapshot = asdict(config)
+    # Preserve the exact legacy snapshot shape until a project brief opts into
+    # a subject gate.  That makes old scheduled records replayable.
+    if snapshot["subject_id"] is None:
+        del snapshot["subject_id"]
+    return snapshot
 
 
 def discovery_source(
@@ -277,7 +290,8 @@ def run_live(
             enrich_details=True,
             triggered_by=triggered_by,
             enrich_new_only=True,
-            project_id=project_id,
+        project_id=project_id,
+        subject_id=UUID(config.subject_id) if config.subject_id is not None else None,
         )
     finally:
         transport.close()
@@ -307,6 +321,9 @@ def run_live(
         "observations": summary.observations,
         "unique_platform_videos": summary.unique_platform_videos,
         "new_candidate_count": summary.new_candidate_count,
+        "relevant_candidate_count": summary.relevant_candidate_count,
+        "pending_candidate_count": summary.pending_candidate_count,
+        "irrelevant_candidate_count": summary.irrelevant_candidate_count,
         "scored_videos": len(summary.scores),
         "provider_call_count": len(calls),
         "cached_call_count": cached_calls,

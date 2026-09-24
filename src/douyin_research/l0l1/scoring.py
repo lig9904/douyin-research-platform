@@ -42,10 +42,13 @@ class L1Scorer:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
 
-    def score_run(self, run_id: UUID, *, now: datetime | None = None) -> dict[UUID, float]:
+    def score_run(
+        self, run_id: UUID, *, now: datetime | None = None,
+        video_ids: set[UUID] | None = None,
+    ) -> dict[UUID, float]:
         now = now or datetime.now(timezone.utc)
         platform = self._assert_single_platform(run_id)
-        candidates = self._load_candidates(run_id)
+        candidates = self._load_candidates(run_id, video_ids=video_ids)
         if not candidates:
             return {}
 
@@ -153,12 +156,15 @@ class L1Scorer:
             )
         return declared or (observed[0] if observed else None)
 
-    def _load_candidates(self, run_id: UUID) -> list[Candidate]:
+    def _load_candidates(
+        self, run_id: UUID, *, video_ids: set[UUID] | None = None,
+    ) -> list[Candidate]:
         sql = """
         with vids as (
           select entity_id as video_id
           from pipeline_run_item
           where run_id=%s and entity_type='video'
+            and (%s::uuid[] is null or entity_id=any(%s::uuid[]))
         ),
         current_metric as (
           select distinct on (m.video_id)
@@ -239,7 +245,8 @@ class L1Scorer:
         order by sv.id
         """
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (run_id, str(run_id)))
+            identifiers = list(video_ids) if video_ids is not None else None
+            cur.execute(sql, (run_id, identifiers, identifiers, str(run_id)))
             rows = cur.fetchall()
         return [Candidate(*row) for row in rows]
 
