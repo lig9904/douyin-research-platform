@@ -24,6 +24,14 @@ def _subject_gate_sql() -> str:
     return source[start:end]
 
 
+def _restore_project_state_sql() -> str:
+    source = (ROOT / "scripts/test-server-release.sh").read_text(encoding="utf-8")
+    marker = 'project_state="$(research_query "$RESTORE_DATABASE" "'
+    start = source.index(marker) + len(marker)
+    end = source.index('")"\n  case "$project_state"', start)
+    return source[start:end]
+
+
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
 def test_subject_release_gate_requires_027_shape_indexes_and_private_grants() -> None:
     assert DSN
@@ -43,5 +51,37 @@ def test_subject_release_gate_requires_027_shape_indexes_and_private_grants() ->
             assert conn.execute(missing_index).fetchone()[0] == "027.relevance_index"
             conn.execute(sql.SQL("grant select on {}.research_subject_term to public").format(sql.Identifier(namespace)))
             assert conn.execute(gate).fetchone()[0] == "027.no_nonowner_grants"
+        finally:
+            conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
+def test_restore_state_distinguishes_026_prefix_from_027_archive() -> None:
+    assert DSN
+    namespace = f"subject_restore_state_{uuid4().hex}"
+    filenames = (
+        "021_project_account_foundation.sql", "022_project_task_ownership.sql",
+        "023_project_video_read_acl.sql", "024_project_account_relation_cursor.sql",
+        "025_project_collaboration.sql", "026_share_only_accepted_video.sql",
+    )
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
+        try:
+            conn.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            conn.execute((ROOT / "db/schema.sql").read_text(encoding="utf-8"), prepare=False)
+            state_sql = _restore_project_state_sql().replace("public.", f"{namespace}.")
+            state_sql = state_sql.replace("nspname='public'", f"nspname='{namespace}'")
+            conn.execute("create table schema_migrations(filename text primary key, sha256 text not null)")
+            for filename in filenames:
+                conn.execute("insert into schema_migrations(filename,sha256) values (%s,'test')", (filename,))
+            # Simulate an archive restored before 027: its tables/indexes did
+            # not exist, even though this test starts from current schema.
+            conn.execute("drop table project_video_subject_relevance_audit")
+            conn.execute("drop table project_video_subject_relevance")
+            conn.execute("drop table research_subject_term")
+            assert conn.execute(state_sql).fetchone()[0] == "6|17"
+            conn.execute((ROOT / "db/migrations/027_subject_relevance_gate.sql").read_text(encoding="utf-8"), prepare=False)
+            conn.execute("insert into schema_migrations(filename,sha256) values ('027_subject_relevance_gate.sql','test')")
+            assert conn.execute(state_sql).fetchone()[0] == "7|24"
         finally:
             conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))

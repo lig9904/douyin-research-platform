@@ -134,7 +134,7 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "select count(*) from research_brief_run" in source
     assert "research_brief_contract=%s" in source
     assert "project_contract=%s" in source
-    assert "verify_migration_ledger required \"$RESTORE_DATABASE\"" in source
+    assert "verify_migration_ledger prefix \"$RESTORE_DATABASE\"" in source
     assert "verify_project_contract \"$RESTORE_DATABASE\"" in source
     assert 'test-server-archive-counts.py\" project' in source
     assert "schema and migration ledger are inconsistent" in source
@@ -157,6 +157,8 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "subject_relevance_contract=%s" in source
     assert "subject_relevance_027" in source
     assert "'7|24'" in source
+    assert "027_subject_relevance_gate.sql" in source
+    assert "verify_migration_ledger prefix \"$RESTORE_DATABASE\"" in source
 
 
 def test_release_verify_contract_covers_project_migration_chain_fail_closed() -> None:
