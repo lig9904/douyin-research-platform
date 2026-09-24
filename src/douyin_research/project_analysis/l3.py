@@ -122,6 +122,20 @@ class ProjectL3EvidenceService:
                    join source_video video on video.id=inclusion.video_id
                    join project_transcript transcript
                      on transcript.project_id=inclusion.project_id and transcript.video_id=inclusion.video_id
+                   -- A completed transcript is not independently reusable after
+                   -- the ASR review that authorised its source asset is revoked.
+                   join project_asr_execution_job asr_job
+                     on asr_job.id=transcript.execution_job_id
+                    and asr_job.project_id=transcript.project_id and asr_job.video_id=transcript.video_id
+                    and asr_job.media_review_id=transcript.media_review_id and asr_job.status='completed'
+                   join project_asr_media_review asr_review
+                     on asr_review.id=transcript.media_review_id
+                    and asr_review.project_id=transcript.project_id and asr_review.video_id=transcript.video_id
+                    and asr_review.asset_id=asr_job.reviewed_asset_id
+                    and asr_review.review_version=asr_job.review_version
+                    and asr_review.media_fingerprint=asr_job.media_fingerprint
+                    and asr_review.asset_manifest_fingerprint=asr_job.asset_manifest_fingerprint
+                    and asr_review.status='approved'
                    where project.id=%s and project.status='active' and organization.status='active'
                      and inclusion.video_id=%s and inclusion.status='accepted'
                      and video.availability_status='available' and transcript.id=%s""",
@@ -260,6 +274,21 @@ class ProjectL3ExecutionService:
                    join research_organization organization on organization.id=project.organization_id
                    join project_video_inclusion inclusion on inclusion.project_id=review.project_id and inclusion.video_id=review.video_id
                    join source_video source on source.id=review.video_id
+                   join project_transcript transcript_row
+                     on transcript_row.id=review.transcript_id and transcript_row.project_id=review.project_id
+                    and transcript_row.video_id=review.video_id
+                   join project_asr_execution_job asr_job
+                     on asr_job.id=transcript_row.execution_job_id
+                    and asr_job.project_id=transcript_row.project_id and asr_job.video_id=transcript_row.video_id
+                    and asr_job.media_review_id=transcript_row.media_review_id and asr_job.status='completed'
+                   join project_asr_media_review asr_review
+                     on asr_review.id=transcript_row.media_review_id
+                    and asr_review.project_id=transcript_row.project_id and asr_review.video_id=transcript_row.video_id
+                    and asr_review.asset_id=asr_job.reviewed_asset_id
+                    and asr_review.review_version=asr_job.review_version
+                    and asr_review.media_fingerprint=asr_job.media_fingerprint
+                    and asr_review.asset_manifest_fingerprint=asr_job.asset_manifest_fingerprint
+                    and asr_review.status='approved'
                    where review.id=%s and review.project_id=%s and review.video_id=%s and review.transcript_id=%s
                      and review.review_version=%s and review.evidence_fingerprint=%s and review.status='approved'
                      and project.status='active' and organization.status='active'
@@ -317,6 +346,21 @@ class ProjectL3ExecutionService:
                 join research_organization organization on organization.id=project_row.organization_id
                 join project_video_inclusion inclusion on inclusion.project_id=review.project_id and inclusion.video_id=review.video_id
                 join source_video source on source.id=review.video_id
+                join project_transcript transcript_row
+                  on transcript_row.id=review.transcript_id and transcript_row.project_id=review.project_id
+                 and transcript_row.video_id=review.video_id
+                join project_asr_execution_job asr_job
+                  on asr_job.id=transcript_row.execution_job_id
+                 and asr_job.project_id=transcript_row.project_id and asr_job.video_id=transcript_row.video_id
+                 and asr_job.media_review_id=transcript_row.media_review_id and asr_job.status='completed'
+                join project_asr_media_review asr_review
+                  on asr_review.id=transcript_row.media_review_id
+                 and asr_review.project_id=transcript_row.project_id and asr_review.video_id=transcript_row.video_id
+                 and asr_review.asset_id=asr_job.reviewed_asset_id
+                 and asr_review.review_version=asr_job.review_version
+                 and asr_review.media_fingerprint=asr_job.media_fingerprint
+                 and asr_review.asset_manifest_fingerprint=asr_job.asset_manifest_fingerprint
+                 and asr_review.status='approved'
                 where review.id=%s and review.project_id=%s and review.video_id=%s and review.transcript_id=%s
                   and review.review_version=%s and review.evidence_fingerprint=%s and review.status='approved'
                   and project_row.status='active' and organization.status='active'
