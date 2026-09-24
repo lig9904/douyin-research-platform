@@ -428,14 +428,22 @@ class ProjectASRService:
             raise PermissionError("active project membership is required")
 
     def _assert_reviewer(self, conn, project_id: UUID, actor: str) -> None:
-        if actor in _allowlist(self._variable(GLOBAL_REVIEWERS_PATH)):
-            return
         row = conn.execute("""select 1 from (select distinct on (actor_id) * from research_project_member
                            where project_id=%s and actor_id=%s and effective_from <= now()
                            order by actor_id,effective_from desc) latest where status='active'
                            and role in ('owner','admin') and (effective_until is null or effective_until > now())""", (project_id, actor)).fetchone()
-        if row is None:
-            raise PermissionError("project owner/admin or global reviewer is required")
+        # Project ownership is sufficient on its own.  Do this database-only
+        # check before reading the optional cross-project reviewer variable:
+        # an absent Windmill variable must not prevent an owner/admin from
+        # reviewing their own private media.
+        if row is not None:
+            return
+        # Do not treat a missing, malformed, or unreachable variable as an
+        # empty allowlist or as authorization.  _allowlist deliberately raises
+        # in those cases, so non-members remain fail-closed.
+        if actor in _allowlist(self._variable(GLOBAL_REVIEWERS_PATH)):
+            return
+        raise PermissionError("project owner/admin or global reviewer is required")
 
     @staticmethod
     def _human_actor() -> str:

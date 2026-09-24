@@ -6,6 +6,7 @@ import pytest
 
 from douyin_research.media_assets import MediaAssetReference
 from douyin_research.project_analysis.asr_backend import (
+    ProjectASRService,
     ProjectASRDispatch,
     ProjectMediaReviewInput,
     _allowlist,
@@ -14,6 +15,19 @@ from douyin_research.project_analysis.asr_backend import (
     _task_key,
     asset_manifest,
 )
+
+
+class _ReviewerConnection:
+    def __init__(self, is_project_admin: bool) -> None:
+        self.is_project_admin = is_project_admin
+
+    def execute(self, statement: str, parameters: object):
+        assert "research_project_member" in statement
+        assert parameters
+        return self
+
+    def fetchone(self):
+        return {"exists": 1} if self.is_project_admin else None
 
 
 def _asset(**changes: object) -> MediaAssetReference:
@@ -63,3 +77,29 @@ def test_global_reviewer_allowlist_is_strict_and_normalized() -> None:
     assert _allowlist('["OWNER@example.com"]') == frozenset({"owner@example.com"})
     with pytest.raises(RuntimeError, match="allowlist"):
         _allowlist('["not-an-email"]')
+
+
+def test_project_owner_reviewer_does_not_require_global_variable_and_nonmember_fails_closed() -> None:
+    project_id = uuid4()
+    missing_variable = lambda _: (_ for _ in ()).throw(RuntimeError("404 variable not found"))
+    service = ProjectASRService(
+        "postgresql://example.invalid/research", delivery_origin="https://media.example.test",
+        variable=missing_variable,
+    )
+
+    # A valid owner/admin approval is project-local and therefore must work
+    # even when the optional global reviewer variable has not been provisioned.
+    service._assert_reviewer(_ReviewerConnection(True), project_id, "owner@example.com")
+
+    # The same missing variable must never silently authorize a non-member.
+    with pytest.raises(RuntimeError, match="404 variable not found"):
+        service._assert_reviewer(_ReviewerConnection(False), project_id, "outsider@example.com")
+
+    # A configured global reviewer retains cross-project access.
+    global_reviewer = ProjectASRService(
+        "postgresql://example.invalid/research", delivery_origin="https://media.example.test",
+        variable=lambda _: '["global-reviewer@example.com"]',
+    )
+    global_reviewer._assert_reviewer(
+        _ReviewerConnection(False), project_id, "global-reviewer@example.com",
+    )
