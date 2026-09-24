@@ -94,6 +94,15 @@ def _fingerprint(value: object) -> str:
     return hashlib.sha256(_json_bytes(value)).hexdigest()
 
 
+def _wire_safe_bundle(value: dict[str, object]) -> dict[str, object]:
+    """Freeze DB timestamp/Decimal values to the exact JSON used for hashing.
+
+    The Ark adapter serializes the evidence again without a custom encoder.
+    Normalize once here so the reviewed fingerprint and wire payload agree.
+    """
+    return json.loads(_json_bytes(value))
+
+
 def _output_fingerprint(result: L3ResearchResult) -> str:
     return _fingerprint(asdict(result))
 
@@ -173,6 +182,7 @@ class ProjectL3EvidenceService:
             "transcript": {"text": row[6], "text_fingerprint": row[7], "language": row[8], "audio_duration_ms": row[9], "model_id": row[10], "model_revision": row[11], "engine_version": row[12]},
             "privacy_review": {"reviewed": True, "version": version},
         }
+        bundle = _wire_safe_bundle(bundle)
         if len(_json_bytes(bundle)) > _MAX_BUNDLE_BYTES:
             raise ValueError("project L3 evidence bundle exceeds the byte limit")
         return ProjectL3Evidence(project, video, transcript, version, _fingerprint(bundle), ("metadata", "comments", "transcript"), bundle)

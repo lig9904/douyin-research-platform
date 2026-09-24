@@ -15,7 +15,9 @@ type Candidate = {
   }
 }
 
-const reviewVersion = 'privacy-v1'
+// A new approval is required after the first live project task failed before
+// Ark HTTP during evidence JSON serialization. Never replay that task key.
+const reviewVersion = 'privacy-v2'
 
 export default function ProjectL3ReviewPanel({ projectId, videoId, transcriptId }: {
   projectId: string

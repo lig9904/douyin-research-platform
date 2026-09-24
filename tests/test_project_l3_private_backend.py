@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from decimal import Decimal
+import json
 from uuid import uuid4
 
 import pytest
@@ -12,7 +15,19 @@ from douyin_research.project_analysis.l3 import (
     ProjectL3EvidenceService,
     ProjectL3ExecutionSelection,
     ProjectL3ExecutionService,
+    _fingerprint,
+    _wire_safe_bundle,
 )
+
+
+def test_project_evidence_is_json_safe_without_changing_review_fingerprint() -> None:
+    raw = {"video_metadata": {"published_at": datetime(2026, 9, 16, 11, 5, 56, tzinfo=timezone.utc)},
+           "comment_features": {"like_median": Decimal("18206.5")}}
+    safe = _wire_safe_bundle(raw)
+    assert safe["video_metadata"]["published_at"] == "2026-09-16 11:05:56+00:00"
+    assert safe["comment_features"]["like_median"] == "18206.5"
+    assert json.loads(json.dumps(safe)) == safe
+    assert _fingerprint(safe) == _fingerprint(raw)
 
 
 def _evidence(*, project=None, video=None, transcript=None, fingerprint="a" * 64) -> ProjectL3Evidence:
