@@ -86,7 +86,8 @@ def test_schema_keeps_source_evidence_global_and_relevance_project_scoped() -> N
         assert "delete from source_video" not in source.lower()
     assert "references project_video_inclusion(project_id, video_id)" in migration
     assert "subject_id uuid" in migration
-    assert "drop constraint if exists project_video_subject_relevance_audit_project_id_video_id_subject_id_fkey" in migration
+    assert "referenced_table.relname='project_video_subject_relevance'" in migration
+    assert "drop constraint %I" in migration
 
 
 def test_subject_routes_are_actor_bound_and_ui_closes_project_brief_path() -> None:
@@ -164,7 +165,21 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
                    values ('owner@example.com',%s,'旧项目任务','douyin','keyword','渔岛',24,1,'metadata',6,'active',now())
                    returning id""", (project,)
             ).fetchone()[0]
+            # Simulate an early 027 installation whose automatically-generated
+            # FK name may have been truncated by PostgreSQL.
+            admin.execute(
+                """alter table project_video_subject_relevance_audit
+                   add foreign key (project_id,video_id,subject_id)
+                   references project_video_subject_relevance(project_id,video_id,subject_id)
+                   on delete cascade"""
+            )
             admin.execute(migration, prepare=False)
+            legacy_fk = admin.execute(
+                """select 1 from pg_constraint c join pg_class target on target.oid=c.confrelid
+                   where c.conrelid='project_video_subject_relevance_audit'::regclass
+                     and c.contype='f' and target.relname='project_video_subject_relevance'"""
+            ).fetchone()
+            assert legacy_fk is None
             state = admin.execute(
                 "select status,subject_gate_status,next_due_at is null from research_brief where id=%s", (brief,)
             ).fetchone()
@@ -226,14 +241,12 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
                    values (%s,'video',%s,'L0','ingested')""", (run, video)
             )
             scorer = L1Scorer(scoped_dsn)
-            scorer._assert_single_platform = lambda _run: "douyin"  # type: ignore[method-assign]
-            scorer._load_candidates = lambda *_args, **_kwargs: [Candidate(  # type: ignore[method-assign]
-                video, None, None, None, 0, 0, None, None, None, None, None,
-                None, None, None, None, None, None, None, 0,
-            )]
-            # Even a candidate list constructed before the correction cannot
-            # write a score after the same-transaction FOR SHARE gate check.
-            assert scorer.score_run(run, project_id=project, subject_id=subject) == {}
+            # Project runs cannot be routed through the shared video_score
+            # writer, including by a direct internal call that omits scope.
+            with pytest.raises(ValueError, match="requires project and subject"):
+                scorer.score_run(run)
+            with pytest.raises(RuntimeError, match="project-specific score storage"):
+                scorer.score_run(run, project_id=project, subject_id=subject)
             assert admin.execute("select count(*) from video_score where video_id=%s", (video,)).fetchone()[0] == 0
             # The audit row is historical: removal of the mutable current
             # decision must not cascade away the manual reason or run link.

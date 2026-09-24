@@ -71,7 +71,10 @@ class SubjectRelevanceStore:
         subject_id: UUID,
         run_id: UUID,
         video_ids: Iterable[UUID],
+        stage: str = "discovery",
     ) -> dict[UUID, str]:
+        if stage not in {"discovery", "detail_enrichment"}:
+            raise ValueError("subject relevance evaluation stage is invalid")
         identifiers = list(dict.fromkeys(video_ids))
         if not identifiers:
             return {}
@@ -103,6 +106,7 @@ class SubjectRelevanceStore:
                     continue
                 result = classify(text, terms)
                 match_detail = {
+                    "stage": stage,
                     "aliases": list(result.matched_aliases),
                     "geographic_contexts": list(result.matched_geographic_contexts),
                     "exclusions": list(result.matched_exclusions),

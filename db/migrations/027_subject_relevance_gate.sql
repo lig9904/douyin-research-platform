@@ -87,10 +87,26 @@ do $$ begin
       foreign key (run_id, project_id) references pipeline_run(id, project_id) on delete restrict;
   end if;
 end $$;
-alter table project_video_subject_relevance_audit
-  drop constraint if exists project_video_subject_relevance_audit_project_id_video_id_subject_id_fkey;
-alter table project_video_subject_relevance_audit
-  drop constraint if exists fk_subject_relevance_audit_current_decision;
+-- Early 027 drafts referenced the mutable relevance row. PostgreSQL may have
+-- truncated the generated FK name, so discover exactly that relationship from
+-- the catalog instead of guessing a literal constraint name.
+do $$
+declare legacy_constraint text;
+begin
+  for legacy_constraint in
+    select constraint_row.conname
+    from pg_constraint constraint_row
+    join pg_class audit_table on audit_table.oid=constraint_row.conrelid
+    join pg_namespace audit_schema on audit_schema.oid=audit_table.relnamespace
+    join pg_class referenced_table on referenced_table.oid=constraint_row.confrelid
+    where constraint_row.contype='f'
+      and audit_schema.nspname=current_schema()
+      and audit_table.relname='project_video_subject_relevance_audit'
+      and referenced_table.relname='project_video_subject_relevance'
+  loop
+    execute format('alter table project_video_subject_relevance_audit drop constraint %I', legacy_constraint);
+  end loop;
+end $$;
 
 alter table research_brief add column if not exists subject_id uuid;
 alter table research_brief add column if not exists subject_gate_status text not null default 'not_applicable';

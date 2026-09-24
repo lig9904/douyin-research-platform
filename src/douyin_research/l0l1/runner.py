@@ -136,6 +136,26 @@ class L0L1Runner:
                     key = f"{item.video.platform}:{item.video.platform_video_id}"
                     unique_platform_ids[key] = item
 
+            relevant_ids: set[Any] | None = None
+            relevance_counts = {"relevant": 0, "pending": 0, "irrelevant": 0}
+            relevance = self.relevance
+            decisions: dict[Any, str] = {}
+            if subject_id is not None:
+                if relevance is None:
+                    dsn = getattr(self.store, "dsn", None)
+                    if not isinstance(dsn, str) or not dsn:
+                        raise RuntimeError("subject relevance requires a database-backed store")
+                    relevance = SubjectRelevanceStore(dsn)
+                # This is intentionally before the paid detail endpoint.
+                # Pending candidates retain shared raw evidence for review; only
+                # positive matches are worth enriching for this subject.
+                decisions = relevance.evaluate_run(
+                    project_id=project_id, subject_id=subject_id, run_id=run_id,
+                    video_ids=discovered_video_ids, stage="discovery",
+                )
+                relevant_ids = {video_id for video_id, decision in decisions.items()
+                                if decision == "relevant"}
+
             detail_platform_video_ids = (
                 new_platform_video_ids
                 if enrich_new_only
@@ -144,6 +164,11 @@ class L0L1Runner:
                     for item in unique_platform_ids.values()
                 }
             )
+            if relevant_ids is not None:
+                platform_ids_for = getattr(self.store, "platform_video_ids", None)
+                if platform_ids_for is None:
+                    raise RuntimeError("subject relevance requires canonical platform IDs")
+                detail_platform_video_ids &= set(platform_ids_for(relevant_ids))
             if enrich_details and detail_platform_video_ids:
                 # Existing videos still retain this run's discovery and metric
                 # evidence, but detail enrichment is paid and only useful for
@@ -181,35 +206,26 @@ class L0L1Runner:
                         project_id=project_id,
                     ),
                 )
-
-            relevant_ids: set[Any] | None = None
-            relevance_counts = {"relevant": 0, "pending": 0, "irrelevant": 0}
+                if subject_id is not None:
+                    # Detail fields can add useful public text. Re-evaluate
+                    # only candidates already allowed to spend, under this run.
+                    post_detail = relevance.evaluate_run(
+                        project_id=project_id, subject_id=subject_id, run_id=run_id,
+                        video_ids=relevant_ids, stage="detail_enrichment",
+                    )
+                    decisions.update(post_detail)
+                    relevant_ids = {video_id for video_id, decision in decisions.items()
+                                    if decision == "relevant"}
             if subject_id is not None:
-                relevance = self.relevance
-                if relevance is None:
-                    dsn = getattr(self.store, "dsn", None)
-                    if not isinstance(dsn, str) or not dsn:
-                        raise RuntimeError("subject relevance requires a database-backed store")
-                    relevance = SubjectRelevanceStore(dsn)
-                decisions = relevance.evaluate_run(
-                    project_id=project_id, subject_id=subject_id, run_id=run_id,
-                    video_ids=discovered_video_ids,
-                )
-                relevant_ids = {video_id for video_id, decision in decisions.items()
-                                if decision == "relevant"}
                 for decision in decisions.values():
                     relevance_counts[decision] += 1
 
             failure_stage = "finalize"
             failure_item_count = observation_count
-            scores = (
-                self.scorer.score_run(
-                    run_id, video_ids=relevant_ids,
-                    project_id=project_id, subject_id=subject_id,
-                )
-                if relevant_ids is not None
-                else self.scorer.score_run(run_id)
-            )
+            # Project/subject interpretations must not overwrite shared
+            # video_score or source_video monitoring fields. Project-specific
+            # ranking is deliberately deferred until it has its own storage.
+            scores = {} if project_id is not None else self.scorer.score_run(run_id)
             candidate_ids = new_project_video_ids if project_id is not None else new_video_ids
             if relevant_ids is not None:
                 candidate_ids = [video_id for video_id in candidate_ids if video_id in relevant_ids]
@@ -225,6 +241,9 @@ class L0L1Runner:
                          "enrich_new_only": enrich_new_only,
                          "new_candidate_count": len(candidate_ids),
                          "subject_relevance": relevance_counts if subject_id is not None else None,
+                         "subject_scoring_status": (
+                             "deferred_project_score_storage" if project_id is not None else "global_l1"
+                         ),
                          "detail_enriched_count": detail_enriched_count},
             )
             return RunSummary(

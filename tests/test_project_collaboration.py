@@ -64,7 +64,7 @@ def test_project_readers_use_one_authorized_snapshot() -> None:
     # after that check under PostgreSQL's default READ COMMITTED isolation.
     for stem in (
         "get_project_collaboration", "get_video_library",
-        "get_video_raw_records", "get_video_metric_timeline",
+        "get_video_raw_records", "get_video_metric_timeline", "get_research_briefs",
     ):
         source = (BACKEND / f"{stem}.py").read_text()
         assert 'set transaction isolation level repeatable read read only' in source

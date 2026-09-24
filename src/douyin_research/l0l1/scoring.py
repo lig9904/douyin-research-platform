@@ -49,6 +49,18 @@ class L1Scorer:
     ) -> dict[UUID, float]:
         if (project_id is None) != (subject_id is None):
             raise ValueError("subject scoring requires project and subject")
+        run_project_id = self._run_project_id(run_id)
+        if run_project_id is not None:
+            if project_id is None or subject_id is None:
+                raise ValueError("project run scoring requires project and subject")
+            if run_project_id != project_id:
+                raise ValueError("project score scope does not match pipeline run")
+            # A project interpretation is not a global monitoring priority.
+            # Do not let an internal caller turn it into one until the project
+            # score table and project decision view are introduced together.
+            raise RuntimeError("project scoring requires project-specific score storage")
+        if project_id is not None:
+            raise ValueError("global run cannot use project score scope")
         now = now or datetime.now(timezone.utc)
         platform = self._assert_single_platform(run_id)
         candidates = self._load_candidates(
@@ -148,6 +160,14 @@ class L1Scorer:
 
             conn.commit()
         return scores
+
+    def _run_project_id(self, run_id: UUID) -> UUID | None:
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute("select project_id from pipeline_run where id=%s", (run_id,))
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"pipeline_run not found: {run_id}")
+        return row[0]
 
     def _assert_single_platform(self, run_id: UUID) -> str | None:
         sql = """
