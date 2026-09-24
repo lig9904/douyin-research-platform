@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.14.*"
-# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@31b3295c2aa3801eaf900b2a47a542dadb54de5c", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@e0120bb3742bf636375f22fb0139d093e4ab2de7", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
 # ///
 """Internal-only project L3 worker. No Raw App path calls this runnable."""
 from __future__ import annotations
