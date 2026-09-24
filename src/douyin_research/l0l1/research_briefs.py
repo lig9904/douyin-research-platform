@@ -330,6 +330,7 @@ def run_live(
         "observations": summary.observations,
         "unique_platform_videos": summary.unique_platform_videos,
         "new_candidate_count": summary.new_candidate_count,
+        "relevant_new_project_count": summary.relevant_new_project_count,
         "relevant_candidate_count": summary.relevant_candidate_count,
         "pending_candidate_count": summary.pending_candidate_count,
         "irrelevant_candidate_count": summary.irrelevant_candidate_count,

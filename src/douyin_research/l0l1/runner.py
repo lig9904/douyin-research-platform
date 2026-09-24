@@ -40,6 +40,8 @@ class RunSummary:
     relevant_candidate_count: int = 0
     pending_candidate_count: int = 0
     irrelevant_candidate_count: int = 0
+    # Project-scoped relevance is intentionally not a global L1 promotion.
+    relevant_new_project_count: int = 0
 
 
 class L0L1Runner:
@@ -229,7 +231,13 @@ class L0L1Runner:
             candidate_ids = new_project_video_ids if project_id is not None else new_video_ids
             if relevant_ids is not None:
                 candidate_ids = [video_id for video_id in candidate_ids if video_id in relevant_ids]
-            self.store.set_new_candidate_flags(run_id, candidate_ids)
+            # `new_candidate` is a legacy L1 flag.  A project relevance match
+            # is not an L1 promotion until its separate score storage exists.
+            # Do not write an empty/ambiguous L1 marker for project items.
+            l1_candidate_ids = candidate_ids if project_id is None else []
+            relevant_new_project_count = len(candidate_ids) if project_id is not None else 0
+            if project_id is None:
+                self.store.set_new_candidate_flags(run_id, l1_candidate_ids)
             self.store.finish_run(
                 run_id,
                 input_count=observation_count,
@@ -239,7 +247,8 @@ class L0L1Runner:
                          "platform": self.provider.platform_name,
                          "enrich_details": enrich_details,
                          "enrich_new_only": enrich_new_only,
-                         "new_candidate_count": len(candidate_ids),
+                         "new_candidate_count": len(l1_candidate_ids),
+                         "relevant_new_project_count": relevant_new_project_count,
                          "subject_relevance": relevance_counts if subject_id is not None else None,
                          "subject_scoring_status": (
                              "deferred_project_score_storage" if project_id is not None else "global_l1"
@@ -253,10 +262,11 @@ class L0L1Runner:
                 observations=observation_count,
                 unique_platform_videos=len(unique_platform_ids),
                 scores=scores,
-                new_candidate_count=len(candidate_ids),
+                new_candidate_count=len(l1_candidate_ids),
                 relevant_candidate_count=relevance_counts["relevant"],
                 pending_candidate_count=relevance_counts["pending"],
                 irrelevant_candidate_count=relevance_counts["irrelevant"],
+                relevant_new_project_count=relevant_new_project_count,
             )
         except Exception as exc:
             safe_failure = provider_failure_summary(

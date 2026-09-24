@@ -130,11 +130,15 @@ def test_subject_gate_runs_before_detail_and_preserves_pending_for_review() -> N
         ("discovery", set(store.ids.values())),
         ("detail_enrichment", {store.ids["relevant"]}),
     ]
-    assert store.flags == {store.ids["relevant"]}
+    assert store.flags is None
+    assert summary.new_candidate_count == 0
+    assert summary.relevant_new_project_count == 1
     assert summary.relevant_candidate_count == 1
     assert summary.pending_candidate_count == 1
     assert summary.irrelevant_candidate_count == 1
     assert store.finished[-1]["summary"]["subject_scoring_status"] == "deferred_project_score_storage"
+    assert store.finished[-1]["summary"]["new_candidate_count"] == 0
+    assert store.finished[-1]["summary"]["relevant_new_project_count"] == 1
 
 
 def test_detail_failure_keeps_pre_gate_audit_and_does_not_claim_subject_scoring() -> None:
