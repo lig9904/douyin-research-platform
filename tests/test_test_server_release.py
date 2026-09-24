@@ -159,6 +159,12 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "'7|24'" in source
     assert "027_subject_relevance_gate.sql" in source
     assert "verify_migration_ledger prefix \"$RESTORE_DATABASE\"" in source
+    assert "verify_decision_loop_contract" in source
+    assert "decision_loop_contract=%s" in source
+    assert "decision_loop_028" in source
+    assert "'8|38'" in source
+    assert "028_project_decision_loop.sql" in source
+    assert "028.review_evidence_integrity" in source
 
 
 def test_release_verify_contract_covers_project_migration_chain_fail_closed() -> None:

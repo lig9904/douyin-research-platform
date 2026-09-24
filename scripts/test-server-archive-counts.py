@@ -23,6 +23,10 @@ TARGETS = {
         'research_subject_term', 'project_video_subject_relevance',
         'project_video_subject_relevance_audit',
     ),
+    'decision_loop_028': (
+        'project_decision_card', 'project_decision_card_event',
+        'project_publication_record', 'project_publication_metric_observation',
+    ),
     'windmill': ('workspace', 'usr'),
 }
 

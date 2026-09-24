@@ -23,7 +23,7 @@ def test_project_roster_is_required_before_loading_global_home() -> None:
     assert "if (noScope || projectViewBlocked)" in app
     assert "key={scope.mode === 'project' ? scope.projectId : 'legacy-admin'}" in app
     assert "legacyAdmin ? [{ value: 'legacy-admin'" in shell
-    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration'])" in shell
+    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions'])" in shell
 
 
 def test_project_video_calls_carry_scope_and_hide_unscoped_review_paths() -> None:

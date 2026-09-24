@@ -21,6 +21,10 @@ def test_research_restore_inventory_includes_brief_control_plane():
         'research_subject_term', 'project_video_subject_relevance',
         'project_video_subject_relevance_audit',
     )
+    assert module.TARGETS['decision_loop_028'] == (
+        'project_decision_card', 'project_decision_card_event',
+        'project_publication_record', 'project_publication_metric_observation',
+    )
 
 
 def test_copy_rows_not_field_values_or_escaped_newlines():
@@ -65,6 +69,19 @@ def test_subject_relevance_archive_inventory_counts_current_and_historical_rows(
         )
     )
     assert module.counts(lines.splitlines(True), module.TARGETS['subject_relevance_027']) == '2|1|3'
+
+
+def test_decision_loop_archive_inventory_preserves_revisions_and_reviews():
+    lines = ''.join(
+        f'COPY public.{table} (id) FROM stdin;\n{rows}\\.\n'
+        for table, rows in (
+            ('project_decision_card', 'card-a\n'),
+            ('project_decision_card_event', 'create\nreview\n'),
+            ('project_publication_record', 'publication-a\n'),
+            ('project_publication_metric_observation', 'version-1\nversion-2\n'),
+        )
+    )
+    assert module.counts(lines.splitlines(True), module.TARGETS['decision_loop_028']) == '1|2|1|2'
 
 
 @pytest.mark.parametrize('value', ['', 'COPY public.source_video (id) FROM stdin;\n1\n',

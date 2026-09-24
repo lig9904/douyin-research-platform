@@ -74,8 +74,21 @@ def test_restore_state_distinguishes_026_prefix_from_027_archive() -> None:
             conn.execute("create table schema_migrations(filename text primary key, sha256 text not null)")
             for filename in filenames:
                 conn.execute("insert into schema_migrations(filename,sha256) values (%s,'test')", (filename,))
-            # Simulate an archive restored before 027: its tables/indexes did
-            # not exist, even though this test starts from current schema.
+            # Simulate an archive restored before 027/028: current bootstrap
+            # contains both, so remove their objects in reverse dependency
+            # order before checking the historical state classifier.
+            conn.execute("drop table project_publication_metric_observation cascade")
+            conn.execute("drop table project_publication_record cascade")
+            conn.execute("drop table project_decision_card_event cascade")
+            conn.execute("drop table project_decision_card cascade")
+            for function in (
+                "enforce_project_decision_card_accepted_source",
+                "enforce_project_decision_card_owner_member",
+                "reject_reviewed_project_decision_card_change",
+                "reject_project_publication_metric_observation_change",
+                "enforce_project_decision_card_review_snapshot",
+            ):
+                conn.execute(sql.SQL("drop function {}()").format(sql.Identifier(function)))
             conn.execute("drop table project_video_subject_relevance_audit")
             conn.execute("drop table project_video_subject_relevance")
             conn.execute("drop table research_subject_term")
