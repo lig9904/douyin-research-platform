@@ -51,3 +51,4 @@ v42 浏览器验收对象为全局库中的公开视频《那一刻，我也被�
 
 - 发布源为 `f17e08476718c6dd96c9eb437e2afaa7b73b819d`，GitHub build/test/validate 在该提交通过。本地 Python 3.14 + 独立 PostgreSQL 的全量 `pytest` 通过。发布前对研究库和 Windmill 库生成并校验 `/srv/douyin-research-test/backups/20260924T014851Z`，随后只发布 `f/content_research/research_dashboard` Raw App 与 `f/content_research/collectors/run_research_brief` 脚本；没有全工作区同步、数据库迁移或新的 Provider 调用。App 列表确认版本 43，发布后测试服源码工作树干净，迁移账本和项目权限契约复核通过。
 - 管理员真实 Chrome 会话重新加载 v43：项目 A 可选，视频库返回已纳入的《那一刻，我也被净化了》1 条；项目协作页显示 A 成员 2 人、生效共享 0；指标历史按详情/榜单分源展示，原始依据按需展开并返回规范记录、合并指标、本项目纳入摘要和评论。该冒烟证明四个改动读入口可用，不等同于 B/C 普通身份的撤权、到期或直调接口验收。
+- 测试服 Windmill worker 容器已从公开 Git 提交 `99ad6a0` 安装固定 Python 3.14 包并成功导入安全失败摘要（`provider_failure_v1`）；原渔岛失败任务仍为 `paused`、无下次计划、最近 1 小时没有新增运行。该检查验证运行环境和依赖可加载，**没有**调用 TikHub，也没有复现原 HTTP 400。
