@@ -65,7 +65,7 @@ def main(db: postgresql, project_id: str):
     project = _project_id(project_id)
     try:
         with _connect(db) as conn, conn.cursor() as cur:
-            cur.execute("set transaction read only")
+            cur.execute("set transaction isolation level repeatable read read only")
             cur.execute(
                 """select p.id, p.name, p.organization_id,
                      (select m.role from research_project_member m

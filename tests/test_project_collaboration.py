@@ -59,6 +59,18 @@ def test_collaboration_page_is_project_only_and_shows_narrow_share_scope() -> No
     assert "还没有可查看的共享依据" in page
 
 
+def test_project_readers_use_one_authorized_snapshot() -> None:
+    # An ACL check followed by further SELECTs must not mix in rows committed
+    # after that check under PostgreSQL's default READ COMMITTED isolation.
+    for stem in (
+        "get_project_collaboration", "get_video_library",
+        "get_video_raw_records", "get_video_metric_timeline",
+    ):
+        source = (BACKEND / f"{stem}.py").read_text()
+        assert 'set transaction isolation level repeatable read read only' in source
+        assert 'set transaction read only' not in source
+
+
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
 def test_project_collaboration_members_and_explicit_share(monkeypatch) -> None:
     assert DSN
@@ -227,6 +239,81 @@ def test_project_collaboration_members_and_explicit_share(monkeypatch) -> None:
             monkeypatch.setenv("WM_END_USER_EMAIL", "outsider@example.com")
             with pytest.raises(PermissionError):
                 read.main(db, str(target))
-            assert conn.execute("select count(*) from project_access_event").fetchone()[0] >= 5
+            events = conn.execute(
+                """select project_id, actor_id, action, subject_actor_id,
+                          related_project_id, grant_id
+                   from project_access_event order by created_at, id"""
+            ).fetchall()
+            assert [event[2] for event in events] == [
+                "share_offer", "share_accept", "member_revoke", "member_add",
+                "member_add", "member_revoke", "share_revoke",
+            ]
+            share_events = [event for event in events if event[2].startswith("share_")]
+            assert {(event[2], event[0], event[1], event[4], str(event[5])) for event in share_events} == {
+                ("share_offer", source, "a-owner@example.com", target, grant["grant_id"]),
+                ("share_accept", target, "b-owner@example.com", source, grant["grant_id"]),
+                ("share_revoke", source, "a-owner@example.com", target, grant["grant_id"]),
+            }
+            member_events = [event for event in events if event[2].startswith("member_")]
+            assert {(event[2], event[0], event[3]) for event in member_events} == {
+                ("member_revoke", target, "b-viewer@example.com"),
+                ("member_add", target, "b-viewer@example.com"),
+                ("member_add", source, "colleague@example.com"),
+                ("member_revoke", source, "colleague@example.com"),
+            }
+
+            # Commit a new row on a separate connection after the reader's
+            # authorization SELECT, but before its member-list SELECT. The
+            # response must use the same pre-commit snapshot throughout.
+            real_connect = read._connect
+            inserted = False
+
+            class InterruptingCursor:
+                def __init__(self, cursor):
+                    self.cursor = cursor
+
+                def __enter__(self):
+                    self.cursor.__enter__()
+                    return self
+
+                def __exit__(self, *args):
+                    return self.cursor.__exit__(*args)
+
+                def __getattr__(self, name):
+                    return getattr(self.cursor, name)
+
+                def execute(self, query, args=None):
+                    nonlocal inserted
+                    if not inserted and "select distinct on (actor_id)" in query:
+                        conn.execute(
+                            """insert into research_project_member(project_id,actor_id,role)
+                               values(%s,'after-snapshot@example.com','viewer')""",
+                            (source,),
+                        )
+                        inserted = True
+                    return self.cursor.execute(query, args)
+
+            class InterruptingConnection:
+                def __init__(self, connection):
+                    self.connection = connection
+
+                def __enter__(self):
+                    self.connection.__enter__()
+                    return self
+
+                def __exit__(self, *args):
+                    return self.connection.__exit__(*args)
+
+                def cursor(self):
+                    return InterruptingCursor(self.connection.cursor())
+
+            monkeypatch.setenv("WM_END_USER_EMAIL", "a-owner@example.com")
+            monkeypatch.setattr(read, "_connect", lambda config: InterruptingConnection(real_connect(config)))
+            snapshot = read.main(db, str(source))
+            assert inserted
+            assert "after-snapshot@example.com" not in {member["actor_id"] for member in snapshot["members"]}
+            monkeypatch.setattr(read, "_connect", real_connect)
+            current = read.main(db, str(source))
+            assert "after-snapshot@example.com" in {member["actor_id"] for member in current["members"]}
         finally:
             conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))
