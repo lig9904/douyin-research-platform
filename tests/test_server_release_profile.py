@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
+from uuid import uuid4
+
+import psycopg
+import pytest
+from psycopg import sql
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/test-server-release.sh"
+DSN = os.getenv("TEST_DATABASE_URL")
 
 
 def _section(source: str, name: str) -> str:
@@ -30,6 +37,15 @@ def test_release_gate_requires_reviewed_030_profile_shape_and_ownership() -> Non
         "ON DELETE RESTRICT",
         "trg_research_subject_profile_version_lifecycle",
         "trg_research_subject_profile_version_no_delete",
+        "030.lifecycle_body",
+        "030.no_delete_body",
+        "d5df24acff31eec3e7e7d32626732bdcdb88b0fb2c4c5aa12bde9ce94a66d64a",
+        "255b533c738a383b35061e40aa72a9a4b267328536505160a6eb147c9d0cc379",
+        "tgfoid=to_regprocedure('public.enforce_research_subject_profile_version()')",
+        "tgfoid=to_regprocedure('public.reject_research_subject_profile_version_delete()')",
+        "tgtype=23",
+        "tgtype=11",
+        "tgenabled in ('O','A')",
         "030.owner_grants",
         "030.no_nonowner_grants",
         "has_table_privilege(current_user",
@@ -40,6 +56,33 @@ def test_release_gate_requires_reviewed_030_profile_shape_and_ownership() -> Non
     assert "exit 1" in contract
     assert "verify_subject_profile_contract" in _section(source, "cmd_migrate")
     assert "verify_subject_profile_contract" in _section(source, "cmd_verify")
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
+def test_030_release_gate_rejects_weakened_function_and_disabled_trigger() -> None:
+    assert DSN
+    contract = _section(SCRIPT.read_text(encoding="utf-8"), "verify_subject_profile_contract")
+    marker = 'failed="$(research_query "$database" "'
+    query = contract[contract.index(marker) + len(marker):contract.index('\n  ")"', contract.index(marker))]
+    namespace = f"profile_release_{uuid4().hex}"
+    query = query.replace("public.", f"{namespace}.").replace("schemaname='public'", f"schemaname='{namespace}'").replace("nspname='public'", f"nspname='{namespace}'")
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
+        try:
+            conn.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
+            conn.execute((ROOT / "db/schema.sql").read_text(encoding="utf-8"), prepare=False)
+            assert conn.execute(query).fetchone()[0] == ""
+            conn.execute("begin")
+            conn.execute("create or replace function enforce_research_subject_profile_version() returns trigger language plpgsql as $$ begin return new; end; $$")
+            assert "030.lifecycle_body" in conn.execute(query).fetchone()[0]
+            conn.execute("rollback")
+            conn.execute("begin")
+            conn.execute("alter table research_subject_profile_version disable trigger trg_research_subject_profile_version_no_delete")
+            assert "030.no_delete_trigger" in conn.execute(query).fetchone()[0]
+            conn.execute("rollback")
+        finally:
+            conn.execute("set search_path to public")
+            conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))
 
 
 def test_restore_drill_accepts_029_prefix_and_verifies_030_profile_counts() -> None:
