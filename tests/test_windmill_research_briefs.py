@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,6 +12,16 @@ import pytest
 ROOT = Path(__file__).parents[1]
 COLLECTORS = ROOT / "windmill/f/content_research/collectors"
 FLOW = ROOT / "windmill/f/content_research/flows/research_brief_cycle.flow/flow.yaml"
+
+
+def test_research_brief_package_pin_matches_manual_lock() -> None:
+    script = (COLLECTORS / "run_research_brief.py").read_text(encoding="utf-8")
+    lock = (COLLECTORS / "run_research_brief.script.lock").read_text(encoding="utf-8")
+    pattern = r"douyin-research-platform @ git\+https://github\.com/lig9904/douyin-research-platform@([0-9a-f]{40})"
+    script_pin = re.findall(pattern, script)
+    lock_pin = re.findall(pattern, lock)
+    assert len(script_pin) == len(lock_pin) == 1
+    assert script_pin == lock_pin
 
 
 def _load(stem: str):
