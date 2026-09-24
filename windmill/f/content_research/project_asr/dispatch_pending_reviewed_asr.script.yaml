@@ -1,0 +1,7 @@
+summary: Dispatch human-reviewed project ASR
+description: Fixed schedule-only batch; starts at most 12 previously approved project media reviews per run. Never creates or modifies a review and never retries a persisted submission.
+timeout: 1200
+concurrent_limit: 1
+schema:
+  type: object
+  properties: {}

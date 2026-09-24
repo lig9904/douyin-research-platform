@@ -10,6 +10,9 @@ create table if not exists project_asr_media_review (
   asset_id uuid not null,
   review_version text not null check (char_length(review_version) between 1 and 80),
   media_fingerprint text not null check (media_fingerprint ~ '^[0-9a-f]{64}$'),
+  -- Full MediaAssetReference plus normalized HTTPS delivery origin fingerprint.
+  -- It is calculated by the review backend, not from content_sha256 alone.
+  asset_manifest_fingerprint text not null check (asset_manifest_fingerprint ~ '^[0-9a-f]{64}$'),
   delivery_origin text not null check (char_length(delivery_origin) between 1 and 120),
   identity_source text not null check (identity_source = 'windmill_end_user_email_allowlist_v1'),
   -- This is a human confirmation of the exact delivery scope.  Worker/model
@@ -61,10 +64,10 @@ begin
   end if;
 
   if tg_op = 'UPDATE' and old.status <> 'draft' and (
-    new.project_id, new.video_id, new.asset_id, new.review_version, new.media_fingerprint,
+    new.project_id, new.video_id, new.asset_id, new.review_version, new.media_fingerprint, new.asset_manifest_fingerprint,
     new.delivery_origin, new.identity_source, new.review_statement, new.reviewed_by, new.reviewed_at
   ) is distinct from (
-    old.project_id, old.video_id, old.asset_id, old.review_version, old.media_fingerprint,
+    old.project_id, old.video_id, old.asset_id, old.review_version, old.media_fingerprint, old.asset_manifest_fingerprint,
     old.delivery_origin, old.identity_source, old.review_statement, old.reviewed_by, old.reviewed_at
   ) then
     raise exception 'approved project_asr_media_review content is immutable';
@@ -157,6 +160,7 @@ create table if not exists project_asr_execution_job (
   reviewed_asset_id uuid not null,
   review_version text not null check (char_length(review_version) between 1 and 80),
   media_fingerprint text not null check (media_fingerprint ~ '^[0-9a-f]{64}$'),
+  asset_manifest_fingerprint text not null check (asset_manifest_fingerprint ~ '^[0-9a-f]{64}$'),
   provider text not null check (char_length(provider) between 1 and 120),
   model_id text not null check (char_length(model_id) between 1 and 160),
   model_revision text not null check (char_length(model_revision) between 1 and 160),
@@ -202,6 +206,7 @@ begin
     if not found or review_row.status <> 'approved'
        or review_row.review_version <> new.review_version
        or review_row.media_fingerprint <> new.media_fingerprint
+       or review_row.asset_manifest_fingerprint <> new.asset_manifest_fingerprint
        or review_row.asset_id <> new.reviewed_asset_id then
       raise exception 'project_asr_execution_job requires current approved project media review';
     end if;

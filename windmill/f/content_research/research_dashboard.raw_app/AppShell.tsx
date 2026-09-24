@@ -66,7 +66,7 @@ export default function AppShell({
   const { scope, projects, legacyAdmin, loading, error, chooseScope } = useProjectScope()
   const projectMode = scope?.mode === 'project'
   const allowedViews = projectMode
-    ? new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions'])
+    ? new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions', 'cost'])
     : scope
       ? null
       : new Set<ResearchView>()

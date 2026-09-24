@@ -67,22 +67,30 @@ class ProjectASRService:
     The process identity is taken exclusively from Windmill's authenticated
     end-user environment.  It is never accepted from a JSON request.  Global
     reviewers may approve/revoke any project; project owners/admins can do so
-    only for their own project; active members may preview.
+    only for their own project. A listening preview is reviewer-only too:
+    a private media URL must not be issued to every project reader.
     """
 
     def __init__(self, dsn: str, *, delivery_origin: str,
-                 variable: Callable[[str], str] | None = None) -> None:
+                 variable: Callable[[str], str] | None = None,
+                 trusted_worker_actor: str | None = None) -> None:
         if not isinstance(dsn, str) or not dsn.strip():
             raise ValueError("dsn is required")
         self._dsn = dsn
         self._delivery_origin = _origin(delivery_origin)
         self._variable = variable or _windmill_variable
+        # A scheduled worker has no browser session. Its identity is fixed in
+        # server configuration and must still be a global reviewer; no job or
+        # Raw App argument can set it.
+        if trusted_worker_actor is not None and not _ACTOR.fullmatch(trusted_worker_actor.strip().lower()):
+            raise ValueError("trusted worker actor must be an email")
+        self._trusted_worker_actor = trusted_worker_actor.strip().lower() if trusted_worker_actor else None
 
     def preview(self, request: ProjectMediaReviewInput) -> dict[str, object]:
-        actor = self._actor()
+        actor = self._human_actor()
         project_id, video_id, asset_id = _ids(request)
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
-            self._assert_member(conn, project_id, actor)
+            self._assert_reviewer(conn, project_id, actor)
             self._assert_dispatchable_video(conn, project_id, video_id)
             asset = self._asset(conn, video_id, asset_id)
             manifest = asset_manifest(asset, self._delivery_origin)
@@ -99,8 +107,46 @@ class ProjectASRService:
                 "media_fingerprint": asset.content_sha256, "review_status": status,
                 "db_writes": 0, "external_calls": 0, "storage_credentials_exposed": False}
 
+    def list_assets(self, *, project_id: UUID | str, video_id: UUID | str,
+                    review_version: str) -> dict[str, object]:
+        """Reviewer-only inventory of normalized audio, without object keys."""
+        actor = self._human_actor()
+        project, video = _uuid(project_id, "project_id"), _uuid(video_id, "video_id")
+        if not isinstance(review_version, str) or not review_version.strip() or len(review_version) > 80:
+            raise ValueError("review version is required")
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            self._assert_reviewer(conn, project, actor)
+            self._assert_dispatchable_video(conn, project, video)
+            rows = conn.execute(
+                """select id,video_id,kind,storage_location,bucket,object_key,
+                          content_sha256,size_bytes,content_type,source_response_id,parent_asset_id
+                   from media_asset where video_id=%s and kind='audio'
+                     and content_type='audio/wav'
+                   order by created_at desc,id desc limit 20""",
+                (video,),
+            ).fetchall()
+            assets = []
+            for row in rows:
+                asset = MediaAssetReference(**row)
+                manifest = asset_manifest(asset, self._delivery_origin)
+                review = conn.execute(
+                    """select id,status,asset_manifest_fingerprint from project_asr_media_review
+                       where project_id=%s and asset_id=%s and review_version=%s""",
+                    (project, asset.id, review_version),
+                ).fetchone()
+                status = ("not_reviewed" if review is None else
+                          "stale" if review["asset_manifest_fingerprint"] != manifest else review["status"])
+                assets.append({"asset_id": str(asset.id), "size_bytes": asset.size_bytes,
+                               "content_sha256": asset.content_sha256,
+                               "asset_manifest_fingerprint": manifest,
+                               "review_id": str(review["id"]) if review else None,
+                               "review_status": status, "delivery_origin": self._delivery_origin})
+        return {"project_id": str(project), "video_id": str(video),
+                "review_version": review_version, "assets": assets,
+                "external_calls": 0, "storage_credentials_exposed": False}
+
     def approve(self, request: ProjectMediaReviewInput, *, expected_manifest_fingerprint: str) -> dict[str, object]:
-        actor = self._actor()
+        actor = self._human_actor()
         project_id, video_id, asset_id = _ids(request)
         _review_input(request, expected_manifest_fingerprint)
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
@@ -142,7 +188,7 @@ class ProjectASRService:
                 "asset_manifest_fingerprint": manifest, "storage_credentials_exposed": False}
 
     def revoke(self, *, project_id: UUID | str, media_review_id: UUID | str) -> dict[str, object]:
-        actor = self._actor()
+        actor = self._human_actor()
         project_id, review_id = _uuid(project_id, "project_id"), _uuid(media_review_id, "media_review_id")
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
             self._assert_reviewer(conn, project_id, actor)
@@ -170,7 +216,7 @@ class ProjectASRService:
         provider_factory: Callable[[], ProjectASRProvider],
     ) -> dict[str, object]:
         """Submit once after the final locked review recheck; no global reuse."""
-        actor = self._actor()
+        actor = self._execution_actor()
         project_id, video_id, review_id = (_uuid(request.project_id, "project_id"),
                                            _uuid(request.video_id, "video_id"),
                                            _uuid(request.media_review_id, "media_review_id"))
@@ -211,24 +257,20 @@ class ProjectASRService:
         try:
             media_url = media_url_factory(asset)
             self._assert_delivery_url(media_url)
-            provider = provider_factory()
-            self._assert_provider(provider, request)
-            state = provider.submit(ASRProviderRequest(task_key=task_key, media_ref=media_url,
-                source_fingerprint=request.source_fingerprint, model_id=request.model_id,
-                model_revision=request.model_revision, engine_version=request.engine_version))
+            # Keep the final approval lock through the one submit HTTP call.
+            # A concurrent revoke therefore either wins before this recheck
+            # (and no request is made), or waits until this exact submit ends.
+            with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+                self._assert_current_review(conn, project_id, video_id, review_id, request, manifest,
+                                            expected_review_version=review["review_version"])
+                provider = provider_factory()
+                self._assert_provider(provider, request)
+                state = provider.submit(ASRProviderRequest(task_key=task_key, media_ref=media_url,
+                    source_fingerprint=request.source_fingerprint, model_id=request.model_id,
+                    model_revision=request.model_revision, engine_version=request.engine_version))
+                self._record_state_in_connection(conn, project_id, video_id, review_id, UUID(str(job["id"])), state,
+                                                 request.cost_currency)
             calls = 1
-            self._record_state(project_id, video_id, review_id, UUID(str(job["id"])), state, request.cost_currency)
-            # Bounded polling keeps the project-local transcript path usable;
-            # every result is persisted only in project_* tables.
-            for _ in range(3):
-                if state.status not in {"submitted", "running"}:
-                    break
-                prior_ref = state.provider_task_ref
-                state = provider.poll(prior_ref)
-                if state.provider_task_ref != prior_ref:
-                    raise ValueError("ASR provider task reference changed during polling")
-                calls += 1
-                self._record_state(project_id, video_id, review_id, UUID(str(job["id"])), state, request.cost_currency)
         except Exception:
             # A transport exception after submit is ambiguous.  Keep the
             # persisted submitting state so an operator cannot accidentally
@@ -236,52 +278,77 @@ class ProjectASRService:
             self._mark_reconciliation_required(UUID(str(job["id"])))
             return {"status": "reconciliation_required", "task_key": task_key, "created": True,
                     "external_calls": 1, "project_private": True, "media_url_recorded": False}
-        return {"status": state.status, "task_key": task_key, "created": True, "external_calls": calls,
+        return {"status": "failed" if _no_speech(state) else state.status,
+                "error_code": "project_asr_no_speech" if _no_speech(state) else state.error_code,
+                "task_key": task_key, "created": True, "external_calls": calls,
                 "project_private": True, "media_url_recorded": False, "storage_credentials_exposed": False}
 
     def resume_poll(self, *, project_id: UUID | str, task_key: str,
                     provider_factory: Callable[[], ProjectASRProvider]) -> dict[str, object]:
         """Bounded scheduler resume: poll an existing task only, never submit."""
-        actor, project_id = self._actor(), _uuid(project_id, "project_id")
-        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
-            self._assert_reviewer(conn, project_id, actor)
-            job = conn.execute("""select * from project_asr_execution_job where project_id=%s and task_key=%s
-                              and status in ('submitted','running') and provider_task_ref is not null for update""",
-                               (project_id, task_key)).fetchone()
-            if job is None:
-                return {"status": "reconciliation_required", "external_calls": 0, "created": False}
-            self._assert_dispatchable_video(conn, project_id, job["video_id"])
-            review = conn.execute("select status,asset_manifest_fingerprint from project_asr_media_review where id=%s for update",
-                                  (job["media_review_id"],)).fetchone()
-            if review is None or review["status"] != "approved" or review["asset_manifest_fingerprint"] != job["asset_manifest_fingerprint"]:
-                return {"status": "reconciliation_required", "external_calls": 0, "created": False}
-        provider = provider_factory()
-        request = ProjectASRDispatch(project_id, job["video_id"], job["media_review_id"], job["provider"],
-                                     job["model_id"], job["model_revision"], job["engine_version"], job["source_fingerprint"], job["cost_currency"])
-        self._assert_provider(provider, request)
+        actor, project_id = self._execution_actor(), _uuid(project_id, "project_id")
         calls = 0
         try:
-            state = provider.poll(job["provider_task_ref"]); calls = 1
-            if state.provider_task_ref != job["provider_task_ref"]:
-                raise ValueError("ASR provider task reference changed during polling")
-            self._record_state(project_id, job["video_id"], job["media_review_id"], job["id"], state, job["cost_currency"])
+            # The review and job lock stay held through the one poll HTTP call,
+            # matching submit's revocation-before-HTTP boundary.
+            with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+                self._assert_reviewer(conn, project_id, actor)
+                job = conn.execute("""select * from project_asr_execution_job where project_id=%s and task_key=%s
+                                  and status in ('submitted','running') and provider_task_ref is not null for update""",
+                                   (project_id, task_key)).fetchone()
+                if job is None:
+                    return {"status": "reconciliation_required", "external_calls": 0, "created": False}
+                self._assert_dispatchable_video(conn, project_id, job["video_id"])
+                review = conn.execute("""select status,asset_manifest_fingerprint from project_asr_media_review
+                                       where id=%s for update""", (job["media_review_id"],)).fetchone()
+                if review is None or review["status"] != "approved" or review["asset_manifest_fingerprint"] != job["asset_manifest_fingerprint"]:
+                    return {"status": "reconciliation_required", "external_calls": 0, "created": False}
+                request = ProjectASRDispatch(project_id, job["video_id"], job["media_review_id"], job["provider"],
+                                             job["model_id"], job["model_revision"], job["engine_version"], job["source_fingerprint"], job["cost_currency"])
+                provider = provider_factory()
+                self._assert_provider(provider, request)
+                state = provider.poll(job["provider_task_ref"]); calls = 1
+                if state.provider_task_ref != job["provider_task_ref"]:
+                    raise ValueError("ASR provider task reference changed during polling")
+                self._record_state_in_connection(conn, project_id, job["video_id"], job["media_review_id"], job["id"],
+                                                 state, job["cost_currency"], counted_poll=True)
         except Exception:
             return {"status": "reconciliation_required", "external_calls": calls, "created": False}
-        return {"status": state.status, "external_calls": calls, "created": False, "project_private": True}
+        return {"status": "failed" if _no_speech(state) else state.status,
+                "error_code": "project_asr_no_speech" if _no_speech(state) else state.error_code,
+                "external_calls": calls, "created": False, "project_private": True}
 
     def _record_state(self, project_id: UUID, video_id: UUID, review_id: UUID, job_id: UUID,
-                      state, currency: str) -> None:
+                      state, currency: str, *, counted_poll: bool = False) -> None:
         if state.status not in {"submitted", "running", "completed", "failed"}:
             raise ValueError("ASR provider returned invalid state")
         with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
-            if state.status == "completed" and state.evidence is None:
-                raise ValueError("completed ASR provider state requires evidence")
-            if state.status == "completed" and state.evidence is not None:
-                cost_id = _insert_cost(conn, project_id, video_id, job_id, state.cost, currency)
-                conn.execute("update project_asr_execution_job set status='completed',provider_task_ref=%s,submission_count=1,task_cost_id=%s where id=%s",
-                             (state.provider_task_ref, cost_id, job_id))
-                evidence: TranscriptEvidence = state.evidence
-                conn.execute("""insert into project_transcript(project_id,video_id,execution_job_id,media_review_id,
+            self._record_state_in_connection(conn, project_id, video_id, review_id, job_id, state, currency,
+                                             counted_poll=counted_poll)
+
+    @staticmethod
+    def _record_state_in_connection(conn, project_id: UUID, video_id: UUID, review_id: UUID, job_id: UUID,
+                                    state, currency: str, *, counted_poll: bool = False) -> None:
+        if state.status not in {"submitted", "running", "completed", "failed"}:
+            raise ValueError("ASR provider returned invalid state")
+        if state.status == "completed" and state.evidence is None:
+            raise ValueError("completed ASR provider state requires evidence")
+        if _no_speech(state):
+            cost_id = _insert_cost(conn, project_id, video_id, job_id, state.cost, currency, status="failed")
+            conn.execute("""update project_asr_execution_job
+                         set status='failed', provider_task_ref=%s, submission_count=1,
+                             task_cost_id=%s, error_code='project_asr_no_speech',
+                             poll_count=poll_count+%s where id=%s""",
+                         (state.provider_task_ref, cost_id, int(counted_poll), job_id))
+            return
+        if state.status == "completed" and state.evidence is not None:
+            cost_id = _insert_cost(conn, project_id, video_id, job_id, state.cost, currency)
+            conn.execute("""update project_asr_execution_job
+                             set status='completed', provider_task_ref=%s, submission_count=1, task_cost_id=%s,
+                                 poll_count=poll_count+%s where id=%s""",
+                             (state.provider_task_ref, cost_id, int(counted_poll), job_id))
+            evidence: TranscriptEvidence = state.evidence
+            conn.execute("""insert into project_transcript(project_id,video_id,execution_job_id,media_review_id,
                               asr_provider,model_id,model_revision,engine_version,language,text_content,text_fingerprint,
                               segments,audio_duration_ms,task_cost_id)
                               values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -289,14 +356,39 @@ class ProjectASRService:
                      evidence.model_revision, evidence.engine_version, evidence.language, evidence.text,
                      hashlib.sha256(evidence.text.encode()).hexdigest(), Jsonb([asdict(s) for s in evidence.segments]),
                      evidence.audio_duration_ms, cost_id))
-            else:
-                conn.execute("update project_asr_execution_job set status=%s,provider_task_ref=%s,submission_count=1,error_code=%s where id=%s",
-                             (state.status, state.provider_task_ref, state.error_code, job_id))
+        else:
+            cost_id = (_insert_cost(conn, project_id, video_id, job_id, state.cost, currency, status="failed")
+                       if state.status == "failed" else None)
+            conn.execute("""update project_asr_execution_job
+                             set status=%s, provider_task_ref=%s, submission_count=1, error_code=%s,
+                                 task_cost_id=coalesce(task_cost_id,%s), poll_count=poll_count+%s where id=%s""",
+                             (state.status, state.provider_task_ref, state.error_code, cost_id,
+                              int(counted_poll), job_id))
 
     def _mark_reconciliation_required(self, job_id: UUID) -> None:
-        with psycopg.connect(self._dsn) as conn:
+        with psycopg.connect(self._dsn, row_factory=dict_row) as conn:
+            row = conn.execute("""select project_id,video_id,cost_currency from project_asr_execution_job
+                                 where id=%s and status='submitting' for update""", (job_id,)).fetchone()
+            if row is None:
+                return
+            cost_id = _insert_cost(conn, row["project_id"], row["video_id"], job_id, None,
+                                   row["cost_currency"], status="failed")
             conn.execute("""update project_asr_execution_job set submission_count=1,
-                         error_code='project_asr_reconciliation_required' where id=%s and status='submitting'""", (job_id,))
+                         task_cost_id=%s,error_code='project_asr_reconciliation_required'
+                         where id=%s and status='submitting'""", (cost_id, job_id))
+
+    def _assert_current_review(self, conn, project_id: UUID, video_id: UUID, review_id: UUID,
+                               request: ProjectASRDispatch, manifest: str, *,
+                               expected_review_version: str) -> None:
+        review = conn.execute("""select status,review_version,media_fingerprint,asset_manifest_fingerprint
+                               from project_asr_media_review where id=%s and project_id=%s and video_id=%s for update""",
+                              (review_id, project_id, video_id)).fetchone()
+        if (review is None or review["status"] != "approved"
+                or review["review_version"] != expected_review_version):
+            raise PermissionError("approved project media review was revoked before ASR HTTP")
+        if (review["media_fingerprint"] != request.source_fingerprint
+                or review["asset_manifest_fingerprint"] != manifest):
+            raise PermissionError("approved project media review changed before ASR HTTP")
 
     def _assert_delivery_url(self, media_url: str) -> None:
         parsed = urlsplit(media_url)
@@ -346,11 +438,20 @@ class ProjectASRService:
             raise PermissionError("project owner/admin or global reviewer is required")
 
     @staticmethod
-    def _actor() -> str:
+    def _human_actor() -> str:
         actor = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
-        if not _ACTOR.fullmatch(actor):
-            raise PermissionError("authenticated Windmill end-user identity is required")
-        return actor
+        if _ACTOR.fullmatch(actor):
+            return actor
+        raise PermissionError("authenticated Windmill end-user identity is required")
+
+    def _execution_actor(self) -> str:
+        try:
+            return self._human_actor()
+        except PermissionError:
+            pass
+        if self._trusted_worker_actor is not None:
+            return self._trusted_worker_actor
+        raise PermissionError("authenticated Windmill end-user or worker identity is required")
 
     @staticmethod
     def _assert_provider(provider: ProjectASRProvider, request: ProjectASRDispatch) -> None:
@@ -370,14 +471,22 @@ def asset_manifest(asset: MediaAssetReference, delivery_origin: str) -> str:
     return asset_fingerprint(asset, _origin(delivery_origin))
 
 
-def _insert_cost(conn, project_id, video_id, job_id, cost: TaskCost | None, currency: str):
+def _insert_cost(conn, project_id, video_id, job_id, cost: TaskCost | None, currency: str, *, status: str = "completed"):
     value = cost or TaskCost(api_cost=None, asr_cost=None, llm_cost=Decimal("0"), currency=currency, basis="unknown")
+    if status not in {"completed", "failed"}:
+        raise ValueError("project ASR cost status is invalid")
     row = conn.execute("""insert into project_research_task_cost(project_id,video_id,task_key,task_type,task_version,status,
                         input_fingerprint,output_fingerprint,api_cost,asr_cost,llm_cost,cost_currency,cost_basis)
-                        select project_id,video_id,task_key,'asr_transcription','project-asr-v1','completed',source_fingerprint,
-                        source_fingerprint,%s,%s,%s,%s,%s from project_asr_execution_job where id=%s returning id""",
-        (value.api_cost, value.asr_cost, value.llm_cost, value.currency, value.basis, job_id)).fetchone()
+                        select project_id,video_id,task_key,'asr_transcription','project-asr-v1',%s,source_fingerprint,
+                        case when %s='completed' then source_fingerprint else null end,
+                        %s,%s,%s,%s,%s from project_asr_execution_job where id=%s returning id""",
+        (status, status, value.api_cost, value.asr_cost, value.llm_cost, value.currency, value.basis, job_id)).fetchone()
     return row["id"]
+
+
+def _no_speech(state) -> bool:
+    return (state.status == "completed" and state.evidence is not None
+            and (state.evidence.quality_status == "no_speech" or not state.evidence.text.strip()))
 
 
 def _task_key(*parts: object) -> str:

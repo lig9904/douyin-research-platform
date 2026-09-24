@@ -56,7 +56,7 @@ def test_navigation_only_exposes_working_pages_and_survives_mobile() -> None:
     app = read("App.tsx")
 
     assert "navItems.filter((item) => item.enabled && (!allowedViews || allowedViews.has(item.view)) && (projectMode || item.view !== 'collaboration'))" in shell
-    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions'])" in shell
+    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions', 'cost'])" in shell
     assert 'aria-label="研究台主导航"' in shell
     assert "label: '运行与成本', view: 'cost', enabled: true" in shell
     assert "成本与预算" not in shell

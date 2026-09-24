@@ -11,5 +11,28 @@ def test_project_asr_review_scripts_keep_identity_resources_and_secrets_server_s
     assert "media_storage_config" in preview
     assert "presigned_read_url" in preview and "audio_preview_url" in preview
     assert "expected_manifest_fingerprint" in approve and "consent_statement" in approve
-    assert "blocked_unconfigured_provider_storage" in dispatch
-    assert "api_key" not in dispatch and "media_url" not in dispatch
+    poll = (ROOT / "poll_reviewed_asr.py").read_text()
+    batch_poll = (ROOT / "poll_pending_reviewed_asr.py").read_text()
+    assert "VerifiedLiveVolcengineDoubaoASRProvider" in dispatch
+    assert "ProjectASRDispatch" in dispatch
+    assert "storage.verify_object" in dispatch
+    assert "trusted_worker_actor" in dispatch
+    for source in (dispatch, poll):
+        signature = source.split("def main(", 1)[1].split(")", 1)[0]
+        assert "api_key" not in signature and "media_url" not in signature and "actor" not in signature
+    assert "task_key" in poll and "provider.submit" not in poll
+    assert "project_asr_execution_job" in batch_poll
+    assert "_MAX_POLLS = 12" in batch_poll and "_MAX_AGE_SECONDS = 86_400" in batch_poll
+    assert "run_script" in batch_poll and "media_review" not in batch_poll
+
+
+def test_project_asr_schedules_only_dispatch_human_approved_and_resume_existing() -> None:
+    dispatch = (ROOT / "dispatch_pending_reviewed_asr.py").read_text()
+    assert "review.status='approved'" in dispatch
+    assert "not exists (" in dispatch and "project_asr_execution_job" in dispatch
+    assert "reviewed_at" in dispatch and "_BATCH_SIZE = 12" in dispatch
+    assert "provider.submit" not in dispatch and "approve(" not in dispatch
+    for name in ("dispatch_pending_reviewed_asr", "poll_pending_reviewed_asr"):
+        schedule = (ROOT / f"{name}.schedule.yaml").read_text()
+        assert "enabled: false" in schedule
+        assert f"script_path: f/content_research/project_asr/{name}" in schedule

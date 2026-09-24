@@ -1,5 +1,5 @@
-summary: Background dispatch for reviewed project ASR
-description: Runnable background endpoint only; no Raw App exposure. Currently fail-closed until reviewed provider and private storage bindings are configured.
+summary: Submit one reviewed project ASR task
+description: Background-only endpoint. Uses fixed server-side Volcengine, storage and reviewer configuration; callers cannot select provider, media URL, credential or actor. A review recheck and object-integrity check occur before HTTP.
 timeout: 300
 concurrent_limit: 1
 schema:

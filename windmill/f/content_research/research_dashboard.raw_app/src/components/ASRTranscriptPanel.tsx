@@ -2,6 +2,7 @@ import React from 'react'
 import { Tag } from 'antd'
 
 export type ASRTranscript = {
+  transcript_id?: string | null
   text: string
   truncated: boolean
   quality_status: string

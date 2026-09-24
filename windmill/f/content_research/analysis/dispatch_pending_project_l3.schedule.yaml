@@ -1,0 +1,7 @@
+summary: Dispatch reviewed project L3 every ten minutes
+schedule: "0 4-59/10 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/analysis/dispatch_pending_project_l3
+is_flow: false
+enabled: false
+args: {}

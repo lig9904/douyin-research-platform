@@ -504,6 +504,75 @@ verify_decision_profile_binding_contract() {
   [[ -z "$failed" ]] || { printf 'ERROR: decision profile binding migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
+verify_project_private_analysis_contract() {
+  # 032 must remain project-local even when the same public video is analysed
+  # twice.  Check deployed objects, composite ownership links and write gates,
+  # not merely the migration ledger row.
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with expected_table(name) as (values
+      ('project_asr_media_review'), ('project_research_task_cost'),
+      ('project_asr_execution_job'), ('project_transcript'),
+      ('project_l3_privacy_review'), ('project_l3_execution_job'),
+      ('project_l3_analysis_result')
+    ), expected_index(name) as (values
+      ('idx_project_asr_media_review_active'),
+      ('idx_project_research_task_cost_project_video_time'),
+      ('idx_project_asr_execution_job_project_video_time'),
+      ('idx_project_transcript_project_video_time'),
+      ('idx_project_l3_privacy_review_active'),
+      ('idx_project_l3_execution_job_project_video_time'),
+      ('idx_project_l3_analysis_result_project_video_time')
+    ), expected_trigger(table_name, trigger_name, function_name, body_sha256, trigger_type) as (values
+      ('project_asr_media_review','trg_project_asr_media_review_lifecycle','enforce_project_asr_media_review_lifecycle','c25c4a0b6f266aed9f9147312ce12021c1c3e4ea060b6e5db7a57d23713004f6',23),
+      ('project_asr_media_review','trg_project_asr_media_review_no_delete','reject_project_asr_media_review_delete','26e39f0af09387b248395f65e22ed40c16626f4c05389f3a3eaea28158bbf3ea',11),
+      ('project_asr_execution_job','trg_project_asr_execution_job_approval','enforce_project_asr_execution_job_approval','c6f2a92f006eef528d4a137e5203ddb53fbf3fbc4fc01db7454adc4774b3e6d4',23),
+      ('project_transcript','trg_project_transcript_completed_job','enforce_project_transcript_completed_job','342f59e514bb19a5f2d25b8fa1b9096cf604bed2077116d04c4c33609866599b',7),
+      ('project_transcript','trg_project_transcript_immutable','reject_project_transcript_change','14e0117c8fe0c4453b11273c4f2f7a7da410df409fdf54fcbd523524ce27e1dc',27),
+      ('project_l3_privacy_review','trg_project_l3_privacy_review_lifecycle','enforce_project_l3_privacy_review_lifecycle','983ac95b3dd165617f6f27cb4ac2a1ab38d89688c23c001ef85bc6ca8f915bd7',23),
+      ('project_l3_privacy_review','trg_project_l3_privacy_review_no_delete','reject_project_l3_privacy_review_delete','112e0d610a27121ad21015f36e9a086e8ff2fc13a1af9f7ed1eac444984cc8bc',11),
+      ('project_l3_execution_job','trg_project_l3_execution_job_approval','enforce_project_l3_execution_job_approval','4ffa62bb7b8be14e16dc1397b4def32dee808c71586620fffa8019b9bcf41e06',23),
+      ('project_l3_analysis_result','trg_project_l3_analysis_result_completed_job','enforce_project_l3_analysis_result_completed_job','c965191b981f2f46f7694fabd93f01c04f111746ee537803aa985ad45d7a4c41',7),
+      ('project_l3_analysis_result','trg_project_l3_analysis_result_immutable','reject_project_l3_analysis_result_change','68e7253576a57b689a69819b8da880a3754b976606dde4583147f9b95fa41413',27)
+    ), expected_fk(table_name, parent_name, columns) as (values
+      ('project_asr_media_review','project_video_inclusion','(project_id, video_id)'),
+      ('project_research_task_cost','project_video_inclusion','(project_id, video_id)'),
+      ('project_asr_execution_job','project_asr_media_review','(media_review_id, project_id, video_id)'),
+      ('project_asr_execution_job','project_research_task_cost','(task_cost_id, project_id, video_id)'),
+      ('project_transcript','project_asr_execution_job','(execution_job_id, project_id, video_id)'),
+      ('project_l3_privacy_review','project_transcript','(transcript_id, project_id, video_id)'),
+      ('project_l3_execution_job','project_l3_privacy_review','(privacy_review_id, project_id, video_id)'),
+      ('project_l3_analysis_result','project_l3_execution_job','(execution_job_id, project_id, video_id)')
+    ), failures as (
+      select 'table.'||name as name from expected_table e
+      where to_regclass('public.'||e.name) is null
+         or not exists(select 1 from pg_tables t where t.schemaname='public' and t.tablename=e.name and t.tableowner=current_user)
+         or exists(select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+           cross join lateral aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+           where n.nspname='public' and c.relname=e.name and a.grantee<>c.relowner)
+      union all select 'index.'||name from expected_index e where not exists(
+        select 1 from pg_index i where i.indexrelid=to_regclass('public.'||e.name) and i.indisvalid and i.indisready)
+      union all select 'trigger.'||trigger_name from expected_trigger e where not exists(
+        select 1 from pg_trigger t where t.tgrelid=to_regclass('public.'||e.table_name)
+          and t.tgname=e.trigger_name and not t.tgisinternal and t.tgenabled in ('O','A')
+          and t.tgtype=e.trigger_type and t.tgfoid=to_regprocedure('public.'||e.function_name||'()')
+          and exists(select 1 from pg_proc p where p.oid=t.tgfoid
+            and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.body_sha256))
+      union all select 'fk.'||table_name||'.'||parent_name from expected_fk e where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.'||e.table_name)
+          and c.confrelid=to_regclass('public.'||e.parent_name) and c.contype='f' and c.convalidated
+          and position('FOREIGN KEY '||e.columns in pg_get_constraintdef(c.oid))>0)
+      union all select 'asr_manifest_fingerprint' where not exists(
+        select 1 from pg_attribute where attrelid=to_regclass('public.project_asr_media_review')
+          and attname='asset_manifest_fingerprint' and not attisdropped)
+      union all select 'job_manifest_fingerprint' where not exists(
+        select 1 from pg_attribute where attrelid=to_regclass('public.project_asr_execution_job')
+          and attname='asset_manifest_fingerprint' and not attisdropped)
+    ) select coalesce(string_agg(name, ',' order by name),'') from failures
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: project private analysis migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
 archive_profile_count() {
   # Count only the profile COPY body while discarding every row.  The restore
   # drill compares counts without logging source content or references.
@@ -576,10 +645,11 @@ cmd_migrate() {
   verify_project_subject_score_contract
   verify_subject_profile_contract
   verify_decision_profile_binding_contract
+  verify_project_private_analysis_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, and decision profile binding migration contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, decision binding, and private analysis migration contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -591,6 +661,7 @@ cmd_restore_drill() (
   local subject_score_contract=legacy_absent subject_score_source_counts subject_score_restored_counts
   local subject_profile_contract=legacy_absent subject_profile_source_counts subject_profile_restored_counts
   local decision_binding_contract=legacy_absent decision_binding_source_counts decision_binding_restored_counts
+  local private_analysis_contract=legacy_absent private_analysis_state private_analysis_source_counts private_analysis_restored_counts
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
@@ -732,11 +803,7 @@ cmd_restore_drill() (
       project_contract=present; subject_contract=present; decision_contract=present; subject_score_contract=present
       ;;
     '10|48'|'11|54')
-      if [[ "$project_state" == '11|54' ]]; then
-        verify_migration_ledger required "$RESTORE_DATABASE"
-      else
-        verify_migration_ledger prefix "$RESTORE_DATABASE"
-      fi
+      verify_migration_ledger prefix "$RESTORE_DATABASE"
       verify_project_contract "$RESTORE_DATABASE" restored
       verify_subject_relevance_contract "$RESTORE_DATABASE"
       verify_decision_loop_contract "$RESTORE_DATABASE"
@@ -768,6 +835,18 @@ cmd_restore_drill() (
       ;;
     *) echo 'ERROR: restored project schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
+  private_analysis_state="$(research_query "$RESTORE_DATABASE" "select exists(select 1 from schema_migrations where filename='032_project_private_asr_l3.sql')::int || '|' || (select count(*) from pg_tables where schemaname='public' and tablename in ('project_asr_media_review','project_research_task_cost','project_asr_execution_job','project_transcript','project_l3_privacy_review','project_l3_execution_job','project_l3_analysis_result'))")"
+  case "$private_analysis_state" in
+    '0|0') private_analysis_contract=legacy_absent ;;
+    '1|7')
+      verify_project_private_analysis_contract "$RESTORE_DATABASE"
+      private_analysis_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project_private_analysis_032)"
+      private_analysis_restored_counts="$(research_query "$RESTORE_DATABASE" "select (select count(*) from project_asr_media_review) || '|' || (select count(*) from project_research_task_cost) || '|' || (select count(*) from project_asr_execution_job) || '|' || (select count(*) from project_transcript) || '|' || (select count(*) from project_l3_privacy_review) || '|' || (select count(*) from project_l3_execution_job) || '|' || (select count(*) from project_l3_analysis_result)")"
+      [[ "$private_analysis_source_counts" == "$private_analysis_restored_counts" ]] || { echo 'ERROR: project private analysis restore counts do not match the backup archive.' >&2; exit 1; }
+      private_analysis_contract=present
+      ;;
+    *) echo 'ERROR: restored project private analysis schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
   local business_sql business_result business_summary
@@ -791,8 +870,8 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   trap - EXIT
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   duration_seconds="$(( $(date +%s) - start_epoch ))"
-  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s\n' \
-    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract" "$decision_binding_contract"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract" "$decision_binding_contract" "$private_analysis_contract"
 )
 
 case "$command_name" in

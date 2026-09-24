@@ -171,6 +171,7 @@ def _public_asr_transcript(row: dict[str, Any]) -> dict[str, Any]:
     """Return the bounded transcript display contract, excluding execution internals."""
 
     return {
+        "transcript_id": row.get("transcript_id"),
         "text": row["text"],
         "truncated": row["truncated"],
         "quality_status": row["quality_status"],
@@ -631,11 +632,12 @@ def main(
                 """,
                 (selected_id,),
             )
-            asr_row = _legacy_analysis_row(
-                conn,
-                project_id=scoped_project_id,
-                sql=
-                """
+            if scoped_project_id is None:
+                asr_row = _legacy_analysis_row(
+                    conn,
+                    project_id=None,
+                    sql=
+                    """
                 select
                   left(t.text_content, %s) as text,
                   char_length(t.text_content) > %s as truncated,
@@ -663,13 +665,13 @@ def main(
                 order by t.created_at desc, t.id desc
                 limit 1
                 """,
-                args=(_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
-            )
-            l3_row = _legacy_analysis_row(
-                conn,
-                project_id=scoped_project_id,
-                sql=
-                """
+                    args=(_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
+                )
+                l3_row = _legacy_analysis_row(
+                    conn,
+                    project_id=None,
+                    sql=
+                    """
                 select
                   a.analysis_type,
                   a.model,
@@ -701,14 +703,78 @@ def main(
                 order by a.created_at desc, a.id desc
                 limit 1
                 """,
-                args=(
-                    selected_id,
-                    _L3_ANALYSIS_TYPE,
-                    _L3_SCHEMA_VERSION,
-                    _L3_ANALYSIS_TYPE,
-                    _L3_SCHEMA_VERSION,
-                ),
-            )
+                    args=(
+                        selected_id,
+                        _L3_ANALYSIS_TYPE,
+                        _L3_SCHEMA_VERSION,
+                        _L3_ANALYSIS_TYPE,
+                        _L3_SCHEMA_VERSION,
+                    ),
+                )
+            else:
+                # Project results are read only from project-private execution
+                # tables, after the project/video ACL check above.  A global
+                # transcript or analysis_run is never a project fallback.
+                asr_row = _fetch_one(
+                    conn,
+                    """
+                    select t.id::text as transcript_id, left(t.text_content, %s) as text,
+                      char_length(t.text_content) > %s as truncated,
+                      'unreviewed' as quality_status,
+                      t.asr_provider, t.model_id, t.model_revision,
+                      t.engine_version, t.language, t.audio_duration_ms,
+                      t.created_at, c.api_cost, c.asr_cost, c.llm_cost,
+                      c.total_cost, c.cost_currency, c.cost_basis
+                    from project_transcript t
+                    join project_asr_execution_job j
+                      on j.id=t.execution_job_id and j.project_id=t.project_id
+                      and j.video_id=t.video_id and j.status='completed'
+                    join project_asr_media_review r
+                      on r.id=t.media_review_id and r.project_id=t.project_id
+                      and r.video_id=t.video_id and r.status='approved'
+                    left join project_research_task_cost c
+                      on c.id=t.task_cost_id and c.project_id=t.project_id
+                      and c.video_id=t.video_id and c.status='completed'
+                      and c.task_type='asr_transcription' and c.task_key=j.task_key
+                    where t.project_id=%s::uuid and t.video_id=%s::uuid
+                    order by t.created_at desc, t.id desc limit 1
+                    """,
+                    (_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT,
+                     scoped_project_id, normalized_selected_id),
+                )
+                l3_row = _fetch_one(
+                    conn,
+                    """
+                    select a.analysis_type, j.model_id as model,
+                      j.model_revision, j.prompt_version, j.schema_version,
+                      a.output, a.created_at, c.api_cost, c.asr_cost,
+                      c.llm_cost, c.total_cost, c.cost_currency, c.cost_basis
+                    from project_l3_analysis_result a
+                    join project_l3_execution_job j
+                      on j.id=a.execution_job_id and j.project_id=a.project_id
+                      and j.video_id=a.video_id and j.status='completed'
+                    join project_l3_privacy_review r
+                      on r.id=a.privacy_review_id and r.project_id=a.project_id
+                      and r.video_id=a.video_id and r.status='approved'
+                    join project_transcript t
+                      on t.id=r.transcript_id and t.project_id=a.project_id
+                      and t.video_id=a.video_id
+                    join project_asr_media_review media_review
+                      on media_review.id=t.media_review_id
+                      and media_review.project_id=a.project_id
+                      and media_review.video_id=a.video_id
+                      and media_review.status='approved'
+                    left join project_research_task_cost c
+                      on c.id=a.task_cost_id and c.project_id=a.project_id
+                      and c.video_id=a.video_id and c.status='completed'
+                      and c.task_type='l3_structured_research' and c.task_key=j.task_key
+                    where a.project_id=%s::uuid and a.video_id=%s::uuid
+                      and a.analysis_type=%s and j.schema_version=%s
+                    order by a.created_at desc, a.id desc limit 1
+                    """,
+                    (scoped_project_id, normalized_selected_id,
+                     _L3_ANALYSIS_TYPE, _L3_SCHEMA_VERSION),
+                )
             detail["evidence"] = evidence
             detail["comments"] = comments
             detail["asr_transcript"] = (

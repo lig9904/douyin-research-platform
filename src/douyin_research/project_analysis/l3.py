@@ -307,41 +307,48 @@ class ProjectL3ExecutionService:
                 (task_key, project, video, review, selection.review_version, evidence.fingerprint, "configured_provider", selection.model_id, selection.model_revision, selection.prompt_version, selection.schema_version, evidence.fingerprint, selection.cost_currency, Jsonb({"raw_evidence_stored": False, "project_private": True})),
             )
             job = cur.fetchone()[0]
-        # The transaction trigger checked approval at transition.  Rebuild and
-        # query it again after commit, immediately before Provider construction.
+        # The transition trigger checked approval. Rebuild after commit, then
+        # hold the human review and upstream ASR approval locks through HTTP
+        # and result persistence; revocation cannot slip between the final
+        # check and the model request.
         fresh = ProjectL3EvidenceService(self.dsn).prepare(project_id=project, video_id=video, transcript_id=transcript, review_version=selection.review_version)
-        if fresh.fingerprint != evidence.fingerprint or not self._review_current(review, project, video, transcript, fresh):
+        if fresh.fingerprint != evidence.fingerprint:
             self._fail(job, task_key, project, video, selection, "approval_revoked_or_stale")
             return _blocked("approval_revoked_or_stale")
+        phase = "approval_revoked_or_stale"
+        provider = None
         try:
-            provider = provider_factory()
-            provider_name = _text(getattr(provider, "provider_name", None), "provider_name")
-            contract_fingerprint = validate_execution_contract(provider.contract, expected_provider=provider_name, expected_capability=L3_SYNC_CAPABILITY, expected_model_id=selection.model_id, expected_model_revision=selection.model_revision, expected_currency=selection.cost_currency)
-            if provider.max_retries != 0:
-                raise ValueError("project L3 provider retries must be disabled")
+            with psycopg.connect(self.dsn) as approval_conn:
+                if not self._review_current(approval_conn, review, project, video, transcript, fresh):
+                    raise PermissionError("project L3 approval was revoked before provider HTTP")
+                phase = "provider_unavailable"
+                provider = provider_factory()
+                provider_name = _text(getattr(provider, "provider_name", None), "provider_name")
+                contract_fingerprint = validate_execution_contract(provider.contract, expected_provider=provider_name, expected_capability=L3_SYNC_CAPABILITY, expected_model_id=selection.model_id, expected_model_revision=selection.model_revision, expected_currency=selection.cost_currency)
+                if provider.max_retries != 0:
+                    raise ValueError("project L3 provider retries must be disabled")
+                phase = "generation_failed"
+                response = provider.generate(L3ProviderRequest(task_key=task_key, model_id=selection.model_id, model_revision=selection.model_revision, prompt_version=selection.prompt_version, schema_version=selection.schema_version, input_fingerprint=fresh.fingerprint, evidence_bundle=fresh.bundle))
+                result, cost = response.result, response.cost
+                _validate_result(result)
+                costs = _validate_cost(cost)
+                if result.input_fingerprint != fresh.fingerprint or result.model_id != selection.model_id or result.model_revision != selection.model_revision or result.prompt_version != selection.prompt_version or result.schema_version != selection.schema_version or not result.privacy_reviewed:
+                    raise ValueError("project L3 provider response does not bind reviewed input")
+                return self._complete(job, task_key, project, video, review, result, cost, costs,
+                                      contract_fingerprint, conn=approval_conn)
         except Exception:
-            self._fail(job, task_key, project, video, selection, "provider_unavailable")
-            return _blocked("provider_unavailable")
-        try:
-            response = provider.generate(L3ProviderRequest(task_key=task_key, model_id=selection.model_id, model_revision=selection.model_revision, prompt_version=selection.prompt_version, schema_version=selection.schema_version, input_fingerprint=fresh.fingerprint, evidence_bundle=fresh.bundle))
-            result, cost = response.result, response.cost
-            _validate_result(result)
-            costs = _validate_cost(cost)
-            if result.input_fingerprint != fresh.fingerprint or result.model_id != selection.model_id or result.model_revision != selection.model_revision or result.prompt_version != selection.prompt_version or result.schema_version != selection.schema_version or not result.privacy_reviewed:
-                raise ValueError("project L3 provider response does not bind reviewed input")
-            return self._complete(job, task_key, project, video, review, result, cost, costs, contract_fingerprint)
-        except Exception:
-            self._fail(job, task_key, project, video, selection, "generation_failed")
+            self._fail(job, task_key, project, video, selection, phase)
+            if phase != "generation_failed":
+                return _blocked(phase)
             return {"status": "failed", "created": True, "external_calls": 1, "llm_calls": 1, "task_key": task_key}
         finally:
-            close = getattr(locals().get("provider"), "close", None)
+            close = getattr(provider, "close", None)
             if callable(close):
                 try: close()
                 except Exception: pass
 
-    def _review_current(self, review: UUID, project: UUID, video: UUID, transcript: UUID, evidence: ProjectL3Evidence) -> bool:
-        with psycopg.connect(self.dsn) as conn:
-            return bool(conn.execute("""select 1 from project_l3_privacy_review review
+    def _review_current(self, conn, review: UUID, project: UUID, video: UUID, transcript: UUID, evidence: ProjectL3Evidence) -> bool:
+        return bool(conn.execute("""select 1 from project_l3_privacy_review review
                 join research_project project_row on project_row.id=review.project_id
                 join research_organization organization on organization.id=project_row.organization_id
                 join project_video_inclusion inclusion on inclusion.project_id=review.project_id and inclusion.video_id=review.video_id
@@ -364,7 +371,9 @@ class ProjectL3ExecutionService:
                 where review.id=%s and review.project_id=%s and review.video_id=%s and review.transcript_id=%s
                   and review.review_version=%s and review.evidence_fingerprint=%s and review.status='approved'
                   and project_row.status='active' and organization.status='active'
-                  and inclusion.status='accepted' and source.availability_status='available'""", (review, project, video, transcript, evidence.review_version, evidence.fingerprint)).fetchone())
+                  and inclusion.status='accepted' and source.availability_status='available'
+                for update of review, asr_review, inclusion, source, project_row, organization""",
+                (review, project, video, transcript, evidence.review_version, evidence.fingerprint)).fetchone())
 
     def _fail(self, job: UUID, task_key: str, project: UUID, video: UUID, selection: ProjectL3ExecutionSelection, code: str) -> None:
         with psycopg.connect(self.dsn) as conn:
@@ -374,9 +383,9 @@ class ProjectL3ExecutionService:
                 cost = cur.fetchone()
                 cur.execute("update project_l3_execution_job set status='failed',error_code=%s,task_cost_id=coalesce(task_cost_id,%s) where id=%s", (code, cost[0] if cost else None, job))
 
-    def _complete(self, job: UUID, task_key: str, project: UUID, video: UUID, review: UUID, result: L3ResearchResult, cost: TaskCost, costs: tuple[Decimal | None, Decimal | None, Decimal | None], contract_fingerprint: str) -> dict[str, object]:
+    def _complete(self, job: UUID, task_key: str, project: UUID, video: UUID, review: UUID, result: L3ResearchResult, cost: TaskCost, costs: tuple[Decimal | None, Decimal | None, Decimal | None], contract_fingerprint: str, *, conn) -> dict[str, object]:
         output_fingerprint = _output_fingerprint(result)
-        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+        with conn.cursor() as cur:
             cur.execute("""insert into project_research_task_cost(task_key,project_id,video_id,task_type,task_version,status,input_fingerprint,output_fingerprint,api_cost,asr_cost,llm_cost,cost_currency,cost_basis,metadata)
                 values(%s,%s,%s,'l3_structured_research',%s,'completed',%s,%s,%s,%s,%s,%s,%s,%s) returning id,total_cost""", (task_key, project, video, result.schema_version, result.input_fingerprint, output_fingerprint, *costs, cost.currency, cost.basis, Jsonb({"project_private": True, "provider_contract_fingerprint": contract_fingerprint, "raw_evidence_stored": False})))
             cost_id, total = cur.fetchone()

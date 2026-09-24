@@ -8,7 +8,7 @@ from uuid import UUID
 from psycopg.conninfo import make_conninfo
 from douyin_research.media_assets import MediaAssetStore
 from douyin_research.media_storage import PrivateS3MediaStorage, S3MediaStorageConfig
-from douyin_research.project_analysis.asr_backend import ProjectASRService, ProjectMediaReviewInput
+from douyin_research.project_analysis.asr_backend import ProjectASRService, ProjectMediaReviewInput, asset_manifest
 
 def _config():
     import wmill
@@ -26,6 +26,8 @@ def main(project_id: str, video_id: str, asset_id: str, review_version: str) -> 
     result = ProjectASRService(dsn, delivery_origin=origin).preview(request)
     asset = MediaAssetStore(dsn).get(UUID(video_id), UUID(asset_id))
     if asset is None: raise RuntimeError("approved project audio asset unavailable")
+    if asset_manifest(asset, origin) != result["asset_manifest_fingerprint"]:
+        raise RuntimeError("project audio changed since review preview")
     # Returned only to the authenticated reviewer; never stored in DB/audit output.
     result["audio_preview_url"] = storage.presigned_read_url(asset.object_key, expires_in=300)
     result["audio_preview_expires_seconds"] = 300

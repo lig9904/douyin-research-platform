@@ -32,6 +32,8 @@ def test_project_private_asr_l3_contract_is_scoped_and_review_gated() -> None:
         assert "project_video_inclusion(project_id, video_id)" in source
         assert "media_asset(id, video_id)" in source
         assert "asset.kind='audio' and asset.content_type='audio/wav'" in source
+        assert "asset_manifest_fingerprint" in source
+        assert "Full MediaAssetReference plus normalized HTTPS delivery origin" in source
         assert "windmill_end_user_email_allowlist_v1" in source
         assert "must be revoked, not deleted" in source
         assert "is immutable" in source
@@ -52,6 +54,7 @@ def test_032_rejects_cross_project_or_revoked_asr_approval_before_submission() -
     marker = "-- Project-private ASR/L3 is deliberately separate"
     baseline_031 = SCHEMA.read_text(encoding="utf-8").split(marker, 1)[0]
     digest = "a" * 64
+    manifest_digest = "b" * 64
     with psycopg.connect(DSN, autocommit=True) as conn:
         conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
         try:
@@ -88,9 +91,10 @@ def test_032_rejects_cross_project_or_revoked_asr_approval_before_submission() -
             ).fetchone()[0]
             review = conn.execute(
                 """insert into project_asr_media_review(
-                     project_id,video_id,asset_id,review_version,media_fingerprint,delivery_origin,identity_source,review_statement
-                   ) values(%s,%s,%s,'v1',%s,'project-preview','windmill_end_user_email_allowlist_v1','{}') returning id""",
-                (project_a, video, asset, digest),
+                     project_id,video_id,asset_id,review_version,media_fingerprint,asset_manifest_fingerprint,
+                     delivery_origin,identity_source,review_statement
+                   ) values(%s,%s,%s,'v1',%s,%s,'project-preview','windmill_end_user_email_allowlist_v1','{}') returning id""",
+                (project_a, video, asset, digest, manifest_digest),
             ).fetchone()[0]
             conn.execute(
                 "update project_asr_media_review set status='approved',reviewed_by='owner@example.com' where id=%s",
@@ -108,10 +112,18 @@ def test_032_rejects_cross_project_or_revoked_asr_approval_before_submission() -
             conn.execute(
                 """insert into project_asr_execution_job(
                      task_key,project_id,video_id,media_review_id,reviewed_asset_id,review_version,media_fingerprint,
-                     provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
-                   ) values(%s,%s,%s,%s,%s,'v1',%s,'test','test','1','wav-v1',%s,'queued','CNY')""",
-                job_values,
+                     asset_manifest_fingerprint,provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
+                   ) values(%s,%s,%s,%s,%s,'v1',%s,%s,'test','test','1','wav-v1',%s,'queued','CNY')""",
+                (*job_values[:6], manifest_digest, job_values[6]),
             )
+            with pytest.raises(psycopg.Error, match="current approved project media review"):
+                conn.execute(
+                    """insert into project_asr_execution_job(
+                         task_key,project_id,video_id,media_review_id,reviewed_asset_id,review_version,media_fingerprint,
+                         asset_manifest_fingerprint,provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
+                       ) values(%s,%s,%s,%s,%s,'v1',%s,%s,'test','test','1','wav-v1',%s,'submitting','CNY')""",
+                    ("wrong-manifest-" + uuid4().hex, project_a, video, review, asset, digest, "c" * 64, digest),
+                )
             conn.execute(
                 "update project_asr_execution_job set status='submitting' where task_key=%s", (job_values[0],)
             )
@@ -122,9 +134,9 @@ def test_032_rejects_cross_project_or_revoked_asr_approval_before_submission() -
             conn.execute(
                 """insert into project_asr_execution_job(
                      task_key,project_id,video_id,media_review_id,reviewed_asset_id,review_version,media_fingerprint,
-                     provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
-                   ) values(%s,%s,%s,%s,%s,'v1',%s,'test','test','1','wav-v1',%s,'queued','CNY')""",
-                (pre_revocation_job, project_a, video, review, asset, digest, digest),
+                     asset_manifest_fingerprint,provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
+                   ) values(%s,%s,%s,%s,%s,'v1',%s,%s,'test','test','1','wav-v1',%s,'queued','CNY')""",
+                (pre_revocation_job, project_a, video, review, asset, digest, manifest_digest, digest),
             )
             # A worker must make this transition before issuing Provider HTTP;
             # a pre-dispatch revocation makes it fail at the database boundary.
@@ -140,9 +152,9 @@ def test_032_rejects_cross_project_or_revoked_asr_approval_before_submission() -
                 conn.execute(
                     """insert into project_asr_execution_job(
                          task_key,project_id,video_id,media_review_id,reviewed_asset_id,review_version,media_fingerprint,
-                         provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
-                       ) values(%s,%s,%s,%s,%s,'v1',%s,'test','test','1','wav-v1',%s,'queued','CNY')""",
-                    ("cross-project-" + uuid4().hex, project_b, video, review, asset, digest, digest),
+                         asset_manifest_fingerprint,provider,model_id,model_revision,engine_version,source_fingerprint,status,cost_currency
+                       ) values(%s,%s,%s,%s,%s,'v1',%s,%s,'test','test','1','wav-v1',%s,'queued','CNY')""",
+                    ("cross-project-" + uuid4().hex, project_b, video, review, asset, digest, manifest_digest, digest),
                 )
         finally:
             conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))

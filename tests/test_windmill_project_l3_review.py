@@ -83,3 +83,13 @@ def test_background_worker_has_only_review_id_and_fixed_server_configuration() -
     assert 'f/content_research/research_db' in source
     assert 'WM_END_USER_EMAIL' not in source
     assert 'api_key' not in inspect.signature(worker.main).parameters
+
+
+def test_project_l3_schedule_selects_only_approved_unexecuted_evidence() -> None:
+    batch = (WORKER_PATH.parent / "dispatch_pending_project_l3.py").read_text()
+    schedule = (WORKER_PATH.parent / "dispatch_pending_project_l3.schedule.yaml").read_text()
+    assert "review.status='approved'" in batch
+    assert "media_review.status='approved'" in batch
+    assert "not exists (" in batch and "project_l3_execution_job" in batch
+    assert "approve(" not in batch and "provider.generate" not in batch
+    assert "enabled: false" in schedule

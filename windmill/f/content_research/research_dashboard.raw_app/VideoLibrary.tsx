@@ -15,13 +15,15 @@ import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
 import ASRMediaReviewPanel from './src/components/ASRMediaReviewPanel'
+import ProjectASRMediaReviewPanel from './src/components/ProjectASRMediaReviewPanel'
+import ProjectL3ReviewPanel from './src/components/ProjectL3ReviewPanel'
 import VideoMediaPreview from './src/components/VideoMediaPreview'
 import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTranscriptPanel'
 import MetricTimeline from './src/components/MetricTimeline'
 import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
 import ProjectVideoEvidence from './ProjectVideoEvidence'
-import type { ProjectScope } from './src/projectScope'
+import { useProjectScope, type ProjectScope } from './src/projectScope'
 import {
   getResearchUserState,
   mutateResearchState,
@@ -253,6 +255,9 @@ export default function VideoLibrary({
 }) {
   const isProject = scope.mode === 'project'
   const projectId = isProject ? scope.projectId : undefined
+  const { projects } = useProjectScope()
+  const projectRole = projects.find(item => item.id === projectId)?.member_role
+  const canReviewProject = projectRole === 'owner' || projectRole === 'admin'
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [draft, setDraft] = useState<Filters>(initialFilters)
   const [data, setData] = useState<VideoLibraryData | null>(null)
@@ -908,9 +913,9 @@ export default function VideoLibrary({
 
                     <RawRecordPanel videoId={detail.id} projectId={projectId} />
 
-                    {!isProject && <section className="detail-section l3-analysis-section">
+                    <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">
-                        <h4>L3 精研结果</h4>
+                        <h4>{isProject ? '本项目 L3 精研结果' : 'L3 精研结果'}</h4>
                         <span>{detail.l3_analysis ? `完成于 ${formatFullDate(detail.l3_analysis.created_at)}` : '尚无已完成结果'}</span>
                       </div>
                       {!detail.l3_analysis ? (
@@ -955,7 +960,7 @@ export default function VideoLibrary({
                           </p>
                         </div>
                       )}
-                    </section>}
+                    </section>
 
                     {!isProject && <L3ReviewPanel
                       key={detail.id}
@@ -964,7 +969,15 @@ export default function VideoLibrary({
                     />}
 
                     {!isProject && <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />}
-                    {!isProject && <ASRTranscriptPanel transcript={detail.asr_transcript} />}
+                    {projectId && canReviewProject && <ProjectASRMediaReviewPanel
+                      key={`project-media-${projectId}-${detail.id}`}
+                      projectId={projectId} videoId={detail.id} />}
+                    <ASRTranscriptPanel transcript={detail.asr_transcript} />
+                    {projectId && canReviewProject && detail.asr_transcript?.transcript_id &&
+                      <ProjectL3ReviewPanel
+                        key={`project-l3-${projectId}-${detail.id}-${detail.asr_transcript.transcript_id}`}
+                        projectId={projectId} videoId={detail.id}
+                        transcriptId={detail.asr_transcript.transcript_id} />}
 
                     <section className="detail-section">
                       <div className="detail-section-head">

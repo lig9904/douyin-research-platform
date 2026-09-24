@@ -28,6 +28,12 @@ TARGETS = {
         'project_publication_record', 'project_publication_metric_observation',
     ),
     'subject_score_029': ('project_video_subject_score',),
+    'project_private_analysis_032': (
+        'project_asr_media_review', 'project_research_task_cost',
+        'project_asr_execution_job', 'project_transcript',
+        'project_l3_privacy_review', 'project_l3_execution_job',
+        'project_l3_analysis_result',
+    ),
     'windmill': ('workspace', 'usr'),
 }
 
@@ -42,7 +48,7 @@ def counts(lines, tables):
             elif current in tables:
                 found[current] += 1
             continue
-        match = re.fullmatch(r'COPY public\.([a-z_]+) \(.*\) FROM stdin;\r?\n?', line)
+        match = re.fullmatch(r'COPY public\.([a-z0-9_]+) \(.*\) FROM stdin;\r?\n?', line)
         if re.fullmatch(r'COPY .* FROM stdin;\r?\n?', line):
             # Skip every COPY body, including quoted names and other schemas.
             # Its data must never be reinterpreted as a selected table header.

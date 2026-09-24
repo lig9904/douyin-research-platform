@@ -47,6 +47,7 @@ def test_public_transcript_contract_preserves_unknown_cost_without_execution_int
     transcript = backend._public_asr_transcript(_row(truncated=True))
 
     assert transcript == {
+        "transcript_id": None,
         "text": "已审核的转写正文",
         "truncated": True,
         "quality_status": "usable",

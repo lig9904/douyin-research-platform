@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
@@ -16,6 +17,9 @@ from douyin_research.project_analysis.l3 import (
     ProjectL3ExecutionSelection,
     ProjectL3ExecutionService,
 )
+from douyin_research.project_analysis.asr_backend import ProjectASRService
+from douyin_research.l2.asr_execution import ASRProviderState
+from douyin_research.l2.transcripts import TaskCost, TranscriptEvidence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,6 +73,53 @@ def test_project_l3_rejects_revoked_or_cross_project_asr_transcript_before_provi
                 project_id,video_id,execution_job_id,media_review_id,asr_provider,text_content,text_fingerprint)
                 values(%s,%s,%s,%s,'test','有完整人声的项目私有转写',%s) returning id""",
                 (project_a, video, asr_job, asr_review, text_digest)).fetchone()[0]
+
+            # Provider no-speech and failed responses are paid/unknown task
+            # facts, not empty transcripts or invisible zero-cost runs.
+            service = ProjectASRService(_scoped_dsn(namespace), delivery_origin="https://media.example.test")
+            def pending_job(status: str):
+                return conn.execute("""insert into project_asr_execution_job(
+                    task_key,project_id,video_id,media_review_id,reviewed_asset_id,
+                    review_version,media_fingerprint,asset_manifest_fingerprint,
+                    provider,model_id,model_revision,engine_version,source_fingerprint,
+                    status,provider_task_ref,cost_currency)
+                    values(%s,%s,%s,%s,%s,'asr-v1',%s,%s,'test','test','1','wav-v1',%s,
+                    %s,%s,'CNY') returning id""",
+                    ("asr-outcome-" + uuid4().hex, project_a, video, asr_review, asset,
+                     digest, manifest_digest, digest, status, "provider-" + uuid4().hex)).fetchone()[0]
+
+            no_speech_job = pending_job("running")
+            no_speech = TranscriptEvidence(
+                asr_provider="test", model_id="test", model_revision="1", engine_version="wav-v1",
+                source_fingerprint=digest, text="", quality_status="no_speech",
+            )
+            unknown = TaskCost(api_cost=None, asr_cost=None, llm_cost=Decimal("0"),
+                               currency="CNY", basis="unknown")
+            service._record_state(project_a, video, asr_review, no_speech_job,
+                                  ASRProviderState("completed", "provider-no-speech", no_speech, unknown),
+                                  "CNY", counted_poll=True)
+            no_speech_row = conn.execute("""select job.status,job.error_code,job.poll_count,
+                    cost.status,cost.cost_basis,cost.total_cost
+                    from project_asr_execution_job job join project_research_task_cost cost
+                    on cost.id=job.task_cost_id where job.id=%s""", (no_speech_job,)).fetchone()
+            assert no_speech_row == ("failed", "project_asr_no_speech", 1, "failed", "unknown", None)
+            assert conn.execute("select count(*) from project_transcript where execution_job_id=%s",
+                                (no_speech_job,)).fetchone()[0] == 0
+
+            failed_job = pending_job("running")
+            service._record_state(project_a, video, asr_review, failed_job,
+                                  ASRProviderState("failed", "provider-failed", cost=unknown,
+                                                   error_code="provider_failure"), "CNY")
+            assert conn.execute("""select cost.status,cost.cost_basis,cost.total_cost
+                from project_asr_execution_job job join project_research_task_cost cost
+                on cost.id=job.task_cost_id where job.id=%s""", (failed_job,)).fetchone() == ("failed", "unknown", None)
+
+            ambiguous_job = pending_job("submitting")
+            service._mark_reconciliation_required(ambiguous_job)
+            assert conn.execute("""select job.status,job.error_code,cost.status,cost.cost_basis,cost.total_cost
+                from project_asr_execution_job job join project_research_task_cost cost
+                on cost.id=job.task_cost_id where job.id=%s""", (ambiguous_job,)).fetchone() == (
+                    "submitting", "project_asr_reconciliation_required", "failed", "unknown", None)
 
             scoped_dsn = _scoped_dsn(namespace)
             evidence = ProjectL3EvidenceService(scoped_dsn).prepare(
