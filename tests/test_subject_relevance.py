@@ -109,6 +109,7 @@ def test_subject_routes_are_actor_bound_and_ui_closes_project_brief_path() -> No
     assert "backend.mutate_project_subject" in panel
     assert "subject_id: values?.subject_id" in briefs
     assert "请选择研究主体" in briefs
+    assert "项目评分暂未启用" in briefs
 
 
 def test_gate_rechecks_current_manual_decision_and_subject_activity() -> None:

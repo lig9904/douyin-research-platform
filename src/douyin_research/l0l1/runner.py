@@ -171,6 +171,18 @@ class L0L1Runner:
                 if platform_ids_for is None:
                     raise RuntimeError("subject relevance requires canonical platform IDs")
                 detail_platform_video_ids &= set(platform_ids_for(relevant_ids))
+            if subject_id is not None and enrich_details and detail_platform_video_ids:
+                # Re-read the durable decision immediately before reserving or
+                # issuing a paid detail request. A reviewer correction made
+                # after discovery but before this boundary takes effect here.
+                detail_preflight = relevance.evaluate_run(
+                    project_id=project_id, subject_id=subject_id, run_id=run_id,
+                    video_ids=relevant_ids, stage="detail_preflight",
+                )
+                decisions.update(detail_preflight)
+                relevant_ids = {video_id for video_id, decision in decisions.items()
+                                if decision == "relevant"}
+                detail_platform_video_ids &= set(platform_ids_for(relevant_ids))
             if enrich_details and detail_platform_video_ids:
                 # Existing videos still retain this run's discovery and metric
                 # evidence, but detail enrichment is paid and only useful for

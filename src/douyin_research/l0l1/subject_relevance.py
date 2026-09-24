@@ -73,7 +73,7 @@ class SubjectRelevanceStore:
         video_ids: Iterable[UUID],
         stage: str = "discovery",
     ) -> dict[UUID, str]:
-        if stage not in {"discovery", "detail_enrichment"}:
+        if stage not in {"discovery", "detail_preflight", "detail_enrichment"}:
             raise ValueError("subject relevance evaluation stage is invalid")
         identifiers = list(dict.fromkeys(video_ids))
         if not identifiers:

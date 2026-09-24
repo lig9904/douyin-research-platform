@@ -77,8 +77,9 @@ class _Store:
 
 
 class _Relevance:
-    def __init__(self, store: _Store) -> None:
+    def __init__(self, store: _Store, *, preflight_decision: str = "relevant") -> None:
         self.store = store
+        self.preflight_decision = preflight_decision
         self.calls: list[tuple[str, set[object]]] = []
 
     def evaluate_run(self, *, video_ids, stage: str, **_kwargs):
@@ -91,7 +92,7 @@ class _Relevance:
                 self.store.ids["irrelevant"]: "irrelevant",
             }
         assert ids == {self.store.ids["relevant"]}
-        return {self.store.ids["relevant"]: "relevant"}
+        return {self.store.ids["relevant"]: self.preflight_decision}
 
 
 class _Scorer:
@@ -107,10 +108,10 @@ class _Budget:
         pass
 
 
-def _runner(*, fail_detail: bool = False):
+def _runner(*, fail_detail: bool = False, preflight_decision: str = "relevant"):
     store = _Store()
     provider = _Provider(fail_detail=fail_detail)
-    relevance = _Relevance(store)
+    relevance = _Relevance(store, preflight_decision=preflight_decision)
     runner = L0L1Runner(
         provider=provider, store=store, scorer=_Scorer(), budget=_Budget(), relevance=relevance,
     )
@@ -128,6 +129,7 @@ def test_subject_gate_runs_before_detail_and_preserves_pending_for_review() -> N
     assert provider.detail_batches == [["relevant"]]
     assert relevance.calls == [
         ("discovery", set(store.ids.values())),
+        ("detail_preflight", {store.ids["relevant"]}),
         ("detail_enrichment", {store.ids["relevant"]}),
     ]
     assert store.flags is None
@@ -151,6 +153,26 @@ def test_detail_failure_keeps_pre_gate_audit_and_does_not_claim_subject_scoring(
         )
 
     assert provider.detail_batches == [["relevant"]]
-    assert relevance.calls == [("discovery", set(store.ids.values()))]
+    assert relevance.calls == [
+        ("discovery", set(store.ids.values())),
+        ("detail_preflight", {store.ids["relevant"]}),
+    ]
     assert store.finished[-1]["status"] == "failed"
     assert store.finished[-1]["summary"]["stage"] == "detail_enrichment"
+
+
+def test_manual_preflight_change_blocks_detail_before_budget_or_provider_call() -> None:
+    runner, store, provider, relevance = _runner(preflight_decision="irrelevant")
+
+    summary = runner.run(
+        [DiscoverySource("low_fan", "golden_low_fan", "page")],
+        project_id=uuid4(), subject_id=uuid4(), enrich_new_only=False,
+    )
+
+    assert provider.detail_batches == []
+    assert relevance.calls == [
+        ("discovery", set(store.ids.values())),
+        ("detail_preflight", {store.ids["relevant"]}),
+    ]
+    assert summary.relevant_candidate_count == 0
+    assert summary.irrelevant_candidate_count == 2
