@@ -11,6 +11,7 @@ export type ResearchView =
   | 'videos'
   | 'accounts'
   | 'collaboration'
+  | 'decisions'
   | 'hotspots'
   | 'history'
   | 'collections'
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
   { icon: '▶', label: '视频库', view: 'videos', enabled: true },
   { icon: '♟', label: '账号库', view: 'accounts', enabled: true },
   { icon: '♙', label: '项目协作', view: 'collaboration', enabled: true },
+  { icon: '✓', label: '行动复盘', view: 'decisions', enabled: true },
   { icon: '◆', label: '热点库', view: 'hotspots', enabled: true },
   { icon: '▤', label: '历史研究', view: 'history', enabled: false },
   { icon: '★', label: '收藏专题', view: 'collections', enabled: false },
@@ -64,7 +66,7 @@ export default function AppShell({
   const { scope, projects, legacyAdmin, loading, error, chooseScope } = useProjectScope()
   const projectMode = scope?.mode === 'project'
   const allowedViews = projectMode
-    ? new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration'])
+    ? new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions'])
     : scope
       ? null
       : new Set<ResearchView>()

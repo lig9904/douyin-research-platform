@@ -13,6 +13,7 @@ import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
 import ProjectAccountMatrix from './ProjectAccountMatrix'
 import ProjectCollaboration from './ProjectCollaboration'
+import DecisionLoop from './DecisionLoop'
 import HotspotLibrary from './HotspotLibrary'
 import ResearchBriefs from './ResearchBriefs'
 import DailyBriefing from './DailyBriefing'
@@ -320,7 +321,7 @@ function App() {
 
   const scopeContext = { scope, projects, legacyAdmin, loading: scopeLoading, error: scopeError, chooseScope }
   const noScope = !scope
-  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs' && view !== 'accounts' && view !== 'collaboration'
+  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs' && view !== 'accounts' && view !== 'collaboration' && view !== 'decisions'
 
   if (noScope || projectViewBlocked) {
     const message = scopeLoading
@@ -374,6 +375,9 @@ function App() {
   }
   if (view === 'collaboration' && scope.mode === 'project') {
     return <ProjectScopeProvider value={scopeContext}><ProjectCollaboration key={scope.projectId} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
+  }
+  if (view === 'decisions' && scope.mode === 'project') {
+    return <ProjectScopeProvider value={scopeContext}><DecisionLoop key={scope.projectId} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
   }
   if (view === 'hotspots') {
     return <ProjectScopeProvider value={scopeContext}><HotspotLibrary onNavigate={setView} /></ProjectScopeProvider>
