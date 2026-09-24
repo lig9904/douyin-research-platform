@@ -59,7 +59,10 @@ def test_fresh_schema_has_private_028_contract_and_restore_state() -> None:
                     (migration.name,),
                 )
             # Reconstruct the 028 archive, not today's fresh bootstrap: 029
-            # contributes a table, two indexes and two functions.
+            # and 030 contribute later tables, indexes, and functions.
+            conn.execute("drop table research_subject_profile_version")
+            conn.execute("drop function enforce_research_subject_profile_version()")
+            conn.execute("drop function reject_research_subject_profile_version_delete()")
             conn.execute("drop table project_video_subject_score")
             conn.execute("drop function enforce_project_video_subject_score_eligible()")
             conn.execute("drop function reject_project_video_subject_score_change()")
