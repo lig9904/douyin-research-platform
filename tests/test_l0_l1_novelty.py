@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import uuid4
 
+import pytest
+
 from douyin_research.l0l1.ingest import IngestResult
 from douyin_research.l0l1.runner import DiscoverySource, L0L1Runner
 from douyin_research.providers.types import ProviderPage, VideoObservation, VideoRef
@@ -156,11 +158,5 @@ def test_manual_default_still_enriches_existing_videos() -> None:
 
 def test_project_new_candidate_is_independent_of_global_video_novelty() -> None:
     project_id = uuid4()
-    summary, store, provider = _run(
-        set(), new_project_platform_ids={"old"}, project_id=project_id,
-    )
-
-    assert store.project_id == project_id
-    assert summary.new_candidate_count == 1
-    assert store.flags == (store.run_id, {store.ids["old"]})
-    assert provider.detail_batches == []  # No duplicate paid detail fetch.
+    with pytest.raises(ValueError, match="both project and subject"):
+        _run(set(), new_project_platform_ids={"old"}, project_id=project_id)

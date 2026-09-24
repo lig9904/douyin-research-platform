@@ -52,8 +52,26 @@ def test_claim_requires_active_project_and_persists_scope() -> None:
                 (project_id,),
             ).fetchone()[0]
             scoped_dsn = make_conninfo(DSN, options=f"-c search_path={namespace}")
+            # Legacy project briefs without a subject are paused before a
+            # worker can issue a paid provider request.
+            assert runner._claim(scoped_dsn, brief_id, "worker") is None
+            assert conn.execute(
+                "select status, subject_gate_status from research_brief where id=%s",
+                (brief_id,),
+            ).fetchone() == ("paused", "subject_required")
+            subject_id = conn.execute(
+                """insert into research_subject(project_id, name, subject_type)
+                   values (%s, 'Project subject', 'topic') returning id""",
+                (project_id,),
+            ).fetchone()[0]
+            conn.execute(
+                """update research_brief set subject_id=%s, subject_gate_status='ready',
+                     status='active', next_due_at=now() where id=%s""",
+                (subject_id, brief_id),
+            )
             claim = runner._claim(scoped_dsn, brief_id, "worker")
             assert claim and claim["project_id"] == project_id
+            assert claim["config"]["subject_id"] == str(subject_id)
             assert conn.execute(
                 "select project_id from research_brief_run where id = %s",
                 (claim["brief_run_id"],),

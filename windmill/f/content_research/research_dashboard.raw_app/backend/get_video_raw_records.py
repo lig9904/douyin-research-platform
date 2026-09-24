@@ -156,7 +156,7 @@ def main(
         "sslmode": db.get("sslmode", "prefer"),
     }
     with psycopg.connect(**connect_args) as conn, conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("set transaction read only")
+        cur.execute("set transaction isolation level repeatable read read only")
         if normalized_project_id is None:
             if not _legacy_reader_allowed(actor, _get_legacy_allowlist()):
                 raise PermissionError(_ACCESS_DENIED)

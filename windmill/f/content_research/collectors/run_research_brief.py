@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.14.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@c212c8c10f62f9b382300fb7ac02023d96eecbe9",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@977752f4df600241419da7856a19a91ea84ddfc2",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+import re
 from typing import Any, Iterator, Mapping, TypedDict
 from uuid import UUID
 
@@ -28,6 +29,11 @@ DATABASE_PATH = "f/content_research/research_db"
 IDENTITY_PATH = "f/content_research/automation_worker_identity"
 API_KEY_PATH = "f/content_research/tikhub_api_key"
 LOCK_NAME = "douyin_research:manual_golden_intake"
+_SAFE_ERROR_TOKEN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+_SAFE_LOGICAL_CALL_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\Z",
+    re.IGNORECASE,
+)
 
 
 class postgresql(TypedDict):
@@ -105,20 +111,29 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
             (f"research_brief:{brief_id}",),
         )
         cur.execute(
+            """update research_brief set status='paused', next_due_at=null,
+                 subject_gate_status='subject_required', updated_at=now()
+               where id=%s and status='active' and project_id is not null and subject_id is null""",
+            (brief_id,),
+        )
+        cur.execute(
             """
-            select brief.id, brief.project_id, brief.platform, brief.source_type,
+            select brief.id, brief.project_id, brief.subject_id, brief.platform, brief.source_type,
               brief.target, brief.time_window_hours, brief.max_items, brief.depth,
               brief.cadence_hours, brief.config_version, brief.next_due_at
             from research_brief as brief
             left join research_project as project on project.id = brief.project_id
             left join research_organization as organization
               on organization.id = project.organization_id
+            left join research_subject as subject
+              on subject.id = brief.subject_id and subject.project_id = brief.project_id
             where brief.id=%s and brief.status='active' and brief.next_due_at <= now()
               and (
                 brief.project_id is null
                 or (project.status='active' and organization.status='active')
               )
               and (brief.project_id is null or brief.depth='metadata')
+              and (brief.project_id is null or (brief.subject_id is not null and brief.subject_gate_status='ready' and subject.status='active'))
             for update of brief
             """,
             (brief_id,),
@@ -134,6 +149,7 @@ def _claim(dsn: str, brief_id: UUID, actor: str) -> dict[str, Any] | None:
             "max_items": row["max_items"],
             "depth": row["depth"],
             "cadence_hours": row["cadence_hours"],
+            "subject_id": str(row["subject_id"]) if row["subject_id"] is not None else None,
         }
         project_id = _project_id(row["project_id"])
         due_at: datetime = row["next_due_at"]
@@ -196,7 +212,9 @@ def _finish(
         )
 
 
-def _safe_result(result: Mapping[str, Any], brief_run_id: UUID) -> dict[str, Any]:
+def _safe_result(
+    result: Mapping[str, Any], brief_run_id: UUID, *, project_id: UUID | None = None,
+) -> dict[str, Any]:
     integer_fields = (
         "observations", "unique_platform_videos", "new_candidate_count",
         "scored_videos", "provider_call_count", "cached_call_count",
@@ -220,15 +238,86 @@ def _safe_result(result: Mapping[str, Any], brief_run_id: UUID) -> dict[str, Any
         raise RuntimeError("research brief returned an invalid summary")
     if flags["auto_submit_asr"] or flags["auto_submit_l3"]:
         raise RuntimeError("research brief analysis boundary is invalid")
+    project_count = result.get("relevant_new_project_count")
+    if project_count is not None and (
+        type(project_count) is not int or project_count < 0
+    ):
+        raise RuntimeError("research brief returned an invalid project candidate count")
+    scoring_status = result.get("subject_scoring_status")
+    if scoring_status is not None and (
+        not isinstance(scoring_status, str)
+        or scoring_status not in {"global_l1", "project_subject_l1"}
+    ):
+        raise RuntimeError("research brief returned an invalid scoring status")
+    if project_id is not None and scoring_status != "project_subject_l1":
+        raise RuntimeError("research brief project scoring contract is unavailable")
+    if project_id is None and scoring_status == "project_subject_l1":
+        raise RuntimeError("research brief returned a project score for a global task")
+    if values["scored_videos"] > values["unique_platform_videos"]:
+        raise RuntimeError("research brief returned an invalid scored count")
+    if scoring_status == "project_subject_l1" and (
+        values["new_candidate_count"] != 0
+        or flags["collect_comments"]
+        or flags["collect_media"]
+        or flags["review_required"]
+    ):
+        raise RuntimeError("research brief project analysis boundary is invalid")
     return {
         "status": "completed",
         "brief_run_id": str(brief_run_id),
         "run_id": str(UUID(str(result["run_id"]))),
         **values,
         **flags,
+        **({"relevant_new_project_count": project_count} if project_count is not None else {}),
+        **({"subject_scoring_status": scoring_status} if scoring_status is not None else {}),
         "external_calls": values["uncached_call_count"],
         "raw_provider_payload_included": False,
     }
+
+
+def _safe_failure_summary(exc: BaseException) -> dict[str, Any]:
+    """Keep Windmill results useful without copying provider exception text."""
+    fallback = {
+        "failure_schema": "provider_failure_v1",
+        "status": "failed",
+        "stage": "unknown",
+        "item_count": 0,
+        "error_type": type(exc).__name__,
+    }
+    candidate = getattr(exc, "research_failure_summary", None)
+    if not isinstance(candidate, Mapping):
+        return fallback
+    stage = candidate.get("stage")
+    item_count = candidate.get("item_count")
+    if stage not in {"discovery", "detail_enrichment", "finalize", "unknown"}:
+        return fallback
+    if isinstance(item_count, bool) or not isinstance(item_count, int) or item_count < 0:
+        return fallback
+    safe = {
+        "failure_schema": "provider_failure_v1",
+        "status": "failed",
+        "stage": stage,
+        "item_count": item_count,
+        "error_type": candidate.get("error_type")
+        if isinstance(candidate.get("error_type"), str)
+        and candidate["error_type"].isidentifier()
+        and len(candidate["error_type"]) <= 128
+        else type(exc).__name__,
+    }
+    if isinstance(candidate.get("http_status"), int) and 100 <= candidate["http_status"] <= 599:
+        safe["http_status"] = candidate["http_status"]
+    for key, limit in (("provider_error_code", 64), ("provider_request_id", 128)):
+        value = candidate.get(key)
+        if (
+            isinstance(value, str)
+            and len(value) <= limit
+            and _SAFE_ERROR_TOKEN.fullmatch(value)
+        ):
+            safe[key] = value
+    logical_call_id = candidate.get("ledger_logical_call_id")
+    if isinstance(logical_call_id, str) and _SAFE_LOGICAL_CALL_ID.fullmatch(logical_call_id):
+        safe["ledger_logical_call_id"] = logical_call_id.lower()
+    return safe
 
 
 def main(brief_id: str) -> dict[str, Any]:
@@ -264,14 +353,14 @@ def main(brief_id: str) -> dict[str, Any]:
                 triggered_by=actor,
                 project_id=claim["project_id"],
             )
-            safe = _safe_result(result, brief_run_id)
+            safe = _safe_result(result, brief_run_id, project_id=claim["project_id"])
             source_run_id = UUID(safe["run_id"])
             _finish(
                 dsn, brief_run_id, status="success", source_run_id=source_run_id,
                 summary=safe,
             )
             return safe
-        except Exception:
+        except Exception as exc:
             _finish(
                 dsn, brief_run_id, status="failed",
                 error_code="RESEARCH_BRIEF_EXECUTION_FAILED",
@@ -279,6 +368,7 @@ def main(brief_id: str) -> dict[str, Any]:
                     "external_calls": None,
                     "call_count_status": "use_external_api_call_ledger",
                     "raw_provider_payload_included": False,
+                    **_safe_failure_summary(exc),
                 },
             )
             raise RuntimeError("research brief execution failed") from None

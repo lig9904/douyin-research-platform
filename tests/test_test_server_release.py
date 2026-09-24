@@ -134,7 +134,7 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "select count(*) from research_brief_run" in source
     assert "research_brief_contract=%s" in source
     assert "project_contract=%s" in source
-    assert "verify_migration_ledger required \"$RESTORE_DATABASE\"" in source
+    assert "verify_migration_ledger prefix \"$RESTORE_DATABASE\"" in source
     assert "verify_project_contract \"$RESTORE_DATABASE\"" in source
     assert 'test-server-archive-counts.py\" project' in source
     assert "schema and migration ledger are inconsistent" in source
@@ -153,6 +153,26 @@ def test_release_script_contains_fail_closed_backup_migration_and_restore_contra
     assert "docker-compose.test-server-external-proxy.yml" in source
     assert "reviewed test-server overlay filename" in source
     assert "test-server-external-proxy-validate.sh" in source
+    assert "verify_subject_relevance_contract" in source
+    assert "subject_relevance_contract=%s" in source
+    assert "subject_relevance_027" in source
+    assert "'7|24'" in source
+    assert "027_subject_relevance_gate.sql" in source
+    assert "verify_migration_ledger prefix \"$RESTORE_DATABASE\"" in source
+    assert "verify_decision_loop_contract" in source
+    assert "decision_loop_contract=%s" in source
+    assert "decision_loop_028" in source
+    assert "'8|38'" in source
+    assert "028_project_decision_loop.sql" in source
+    assert "028.review_evidence_integrity" in source
+    assert "verify_project_subject_score_contract" in source
+    assert "subject_score_contract=%s" in source
+    assert "subject_score_029" in source
+    assert "'9|43'" in source
+    assert "029_project_subject_score.sql" in source
+    assert "029.eligible_trigger" in source
+    assert "029.immutable_trigger" in source
+    assert "029.no_nonowner_grants" in source
 
 
 def test_release_verify_contract_covers_project_migration_chain_fail_closed() -> None:

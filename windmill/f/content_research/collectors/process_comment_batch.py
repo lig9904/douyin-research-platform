@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.14.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@e32581b9f771ea75a4d53f579df1f83dac60521a",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@8101e7f91df7c1f7fd0d5cef5a5fbf43f4e5dcc2",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -83,9 +83,13 @@ def _configuration():
 
 def _preflight(dsn, source, settings):
     with psycopg.connect(dsn) as conn:
-        row = conn.execute("select run_type,status,platform from pipeline_run where id=%s", (source,)).fetchone()
-        if row != ("l0l1_discovery", "success", "douyin"):
+        row = conn.execute("select run_type,status,platform,project_id from pipeline_run where id=%s", (source,)).fetchone()
+        if row is None or row[:3] != ("l0l1_discovery", "success", "douyin"):
             raise ValueError("successful Douyin discovery batch required")
+        if row[3] is not None:
+            # Fail before budget preparation or credential lookup. Project
+            # comment/L2 must be introduced with its own subject gate.
+            raise ValueError("project discovery batch requires project-specific comment processing")
         novelty_clause = (
             " and coalesce((metadata->>'new_candidate')::boolean,false)"
             if getattr(settings, "new_candidates_only", False)

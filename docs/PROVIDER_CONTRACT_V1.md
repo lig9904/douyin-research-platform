@@ -265,6 +265,12 @@ class DouyinResearchProvider:
 
 Windmill Flow 只依赖这些统一错误。
 
+研究任务失败可额外写入 `provider_failure_v1` 安全摘要，仅允许包含
+`status`、`stage`、`item_count`、`error_type`、HTTP 状态、限长的供应商
+错误码/请求 ID 与账本逻辑调用 ID。异常 message、请求 URL、平台对象 ID
+和响应正文一律不得进入运行摘要或调用账本 metadata；该摘要不触发重试、
+拆批或任何新的 Provider 调用。
+
 ## 7. Freshness
 
 每一种业务能力有自己的 TTL，不由 TikHub cache_message决定。

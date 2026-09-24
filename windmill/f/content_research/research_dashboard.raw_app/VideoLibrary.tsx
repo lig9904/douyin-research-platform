@@ -20,6 +20,7 @@ import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTran
 import MetricTimeline from './src/components/MetricTimeline'
 import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
+import ProjectVideoEvidence from './ProjectVideoEvidence'
 import type { ProjectScope } from './src/projectScope'
 import {
   getResearchUserState,
@@ -360,6 +361,13 @@ export default function VideoLibrary({
     await load(filters, id)
   }
 
+  const showAcceptedVideo = (id: string) => {
+    const next = { ...initialFilters, days: 365 }
+    setSelectedVideoId(id)
+    setDraft(next)
+    setFilters(next)
+  }
+
   const toggleRow = (id: string, checked: boolean) => {
     const next = new Set(selectedRows)
     if (checked) next.add(id)
@@ -458,6 +466,7 @@ export default function VideoLibrary({
               { value: 7, label: '近7天' },
               { value: 30, label: '近30天' },
               { value: 90, label: '近90天' },
+              ...(isProject ? [{ value: 365, label: '近一年' }] : []),
             ]}
           />
           {!isProject && !!userState?.saved_filters.length && (
@@ -477,6 +486,7 @@ export default function VideoLibrary({
         </>
       }
     >
+          {projectId ? <ProjectVideoEvidence projectId={projectId} onAccepted={showAcceptedVideo} /> : null}
           {!isProject && writeNotice && (
             <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
           )}

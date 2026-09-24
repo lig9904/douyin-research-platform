@@ -95,12 +95,15 @@ def main(db: postgresql, project_id: str | None = None):
     }
     try:
         with psycopg.connect(**connect_args, row_factory=dict_row) as conn, conn.cursor() as cur:
-            cur.execute("set transaction read only")
+            # Keep authorization and the following brief/run reads on one
+            # snapshot: a membership revocation or project archival cannot
+            # otherwise race between the ACL check and the response.
+            cur.execute("set transaction isolation level repeatable read read only")
             if normalized_project_id is not None:
                 _project_readable(cur, project_id=normalized_project_id, actor=actor)
             cur.execute(
                 """
-                select id, name, platform, source_type, target,
+                select id, subject_id, subject_gate_status, name, platform, source_type, target,
                   time_window_hours, max_items, depth, cadence_hours,
                   status, config_version, next_due_at, last_dispatched_at,
                   created_at, updated_at
