@@ -126,6 +126,20 @@ def test_runner_summary_rejects_any_automatic_analysis_flag() -> None:
     safe = runner._safe_result(result, uuid4())
     assert safe["external_calls"] == 2
     assert safe["raw_provider_payload_included"] is False
+    project_result = {
+        **result,
+        "new_candidate_count": 0,
+        "scored_videos": 0,
+        "relevant_new_project_count": 2,
+        "subject_scoring_status": "deferred_project_score_storage",
+    }
+    project_safe = runner._safe_result(project_result, uuid4())
+    assert project_safe["new_candidate_count"] == 0
+    assert project_safe["relevant_new_project_count"] == 2
+    assert project_safe["subject_scoring_status"] == "deferred_project_score_storage"
+    project_result["relevant_new_project_count"] = "2"
+    with pytest.raises(RuntimeError, match="project candidate count"):
+        runner._safe_result(project_result, uuid4())
     result["auto_submit_l3"] = True
     with pytest.raises(RuntimeError, match="analysis boundary"):
         runner._safe_result(result, uuid4())

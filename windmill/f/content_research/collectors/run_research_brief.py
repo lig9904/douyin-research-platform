@@ -236,12 +236,25 @@ def _safe_result(result: Mapping[str, Any], brief_run_id: UUID) -> dict[str, Any
         raise RuntimeError("research brief returned an invalid summary")
     if flags["auto_submit_asr"] or flags["auto_submit_l3"]:
         raise RuntimeError("research brief analysis boundary is invalid")
+    project_count = result.get("relevant_new_project_count")
+    if project_count is not None and (
+        type(project_count) is not int or project_count < 0
+    ):
+        raise RuntimeError("research brief returned an invalid project candidate count")
+    scoring_status = result.get("subject_scoring_status")
+    if scoring_status is not None and (
+        not isinstance(scoring_status, str)
+        or scoring_status not in {"global_l1", "deferred_project_score_storage"}
+    ):
+        raise RuntimeError("research brief returned an invalid scoring status")
     return {
         "status": "completed",
         "brief_run_id": str(brief_run_id),
         "run_id": str(UUID(str(result["run_id"]))),
         **values,
         **flags,
+        **({"relevant_new_project_count": project_count} if project_count is not None else {}),
+        **({"subject_scoring_status": scoring_status} if scoring_status is not None else {}),
         "external_calls": values["uncached_call_count"],
         "raw_provider_payload_included": False,
     }
