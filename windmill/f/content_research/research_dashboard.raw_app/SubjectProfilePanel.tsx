@@ -19,7 +19,7 @@ type SubjectProfile = {
   content_fingerprint?: string | null
   approved_at?: string | null
 }
-type Result = { profiles?: SubjectProfile[]; can_manage?: boolean }
+type Result = { profiles?: SubjectProfile[]; can_manage?: boolean; viewer_actor?: string; pending_action?: { status: 'saved' | 'unknown'; profile_id?: string } }
 type FormValues = {
   profile_kind: ProfileKind
   target_audience?: string
@@ -31,6 +31,17 @@ type FormValues = {
   source_reference: string
   source_digest: string
 }
+
+type PendingDraft = {
+  action: 'create_draft'
+  actor_id: string
+  idempotency_key: string
+  intent_hash: string
+  created_at: number
+}
+
+const pendingDraftStoragePrefix = 'douyin-research:subject-profile:pending-draft:v1'
+const pendingDraftMaxAgeMs = 24 * 60 * 60 * 1000
 
 const kindLabels: Record<ProfileKind, string> = {
   ip_narrative: 'IP 叙事',
@@ -83,9 +94,71 @@ export function subjectProfileIntentSignature(action: ProfileAction, payload: Re
   return `${action}:${stableIntentValue(payload)}`
 }
 
-function isKnownActionError(error: unknown) {
+/** An opaque, stable browser-session key. It deliberately never contains form text. */
+export function subjectProfilePendingDraftStorageKey(projectId: string, subjectId: string) {
+  return `${pendingDraftStoragePrefix}:${encodeURIComponent(projectId)}:${encodeURIComponent(subjectId)}`
+}
+
+/**
+ * Hash the action intent before it reaches sessionStorage. Form text is kept only
+ * in component memory; after a refresh the user must re-enter it to retry.
+ */
+export async function subjectProfileIntentHash(action: ProfileAction, payload: Record<string, unknown>): Promise<string | null> {
+  if (!globalThis.crypto?.subtle || typeof TextEncoder === 'undefined') return null
+  try {
+    const bytes = new TextEncoder().encode(subjectProfileIntentSignature(action, payload))
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes)
+    return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+  } catch { return null }
+}
+
+function pendingDraftStorage(): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.sessionStorage
+  } catch {
+    return null
+  }
+}
+
+export function readPendingSubjectProfileDraft(projectId: string, subjectId: string): PendingDraft | null {
+  const storage = pendingDraftStorage()
+  if (!storage) return null
+  const key = subjectProfilePendingDraftStorageKey(projectId, subjectId)
+  try {
+    const value = JSON.parse(storage.getItem(key) || 'null') as Partial<PendingDraft> | null
+    if (!value || value.action !== 'create_draft' || typeof value.actor_id !== 'string' || !/^[^\s@]+@[^\s@]+$/.test(value.actor_id) || typeof value.idempotency_key !== 'string' || !/^[0-9a-f-]{16,}$/i.test(value.idempotency_key) || typeof value.intent_hash !== 'string' || !/^[0-9a-f]{64}$/i.test(value.intent_hash) || typeof value.created_at !== 'number' || !Number.isFinite(value.created_at) || value.created_at > Date.now() + 5 * 60 * 1000 || Date.now() - value.created_at > pendingDraftMaxAgeMs) {
+      storage.removeItem(key)
+      return null
+    }
+    return value as PendingDraft
+  } catch {
+    try { storage.removeItem(key) } catch { /* sessionStorage may be disabled */ }
+    return null
+  }
+}
+
+export function pendingSubjectProfileDraftBelongsToActor(pending: PendingDraft | null, actor: string) {
+  return pending !== null && pending.actor_id === actor
+}
+
+export function savePendingSubjectProfileDraft(projectId: string, subjectId: string, pending: PendingDraft) {
+  const storage = pendingDraftStorage()
+  if (!storage) return false
+  try {
+    const key = subjectProfilePendingDraftStorageKey(projectId, subjectId)
+    const value = JSON.stringify(pending)
+    storage.setItem(key, value)
+    return storage.getItem(key) === value
+  } catch { return false /* sessionStorage may be full or disabled */ }
+}
+
+function clearPendingSubjectProfileDraft(projectId: string, subjectId: string) {
+  try { pendingDraftStorage()?.removeItem(subjectProfilePendingDraftStorageKey(projectId, subjectId)) } catch { /* sessionStorage may be disabled */ }
+}
+
+export function isKnownActionError(error: unknown) {
   const text = error instanceof Error ? error.message : String(error)
-  return /\b(?:ACTION_INVALID|PROFILE_(?:ID_INVALID|KIND_INVALID|NOT_DRAFT|NOT_APPROVED)|RIGHTS_STATUS_INVALID|SOURCE_(?:REFERENCE|DIGEST)_INVALID|SUMMARY_INVALID|RESEARCH_(?:ACTION_IDEMPOTENCY_CONFLICT|PROJECT_PROFILE_MANAGE_DENIED|SUBJECT_(?:ACCESS_DENIED|PROFILE_ACCESS_DENIED)|SUBJECT_PROFILE_ALREADY_APPROVED))\b/.test(text)
+  return /\b(?:ACTION_INVALID|PROFILE_(?:ID_INVALID|KIND_INVALID|NOT_DRAFT|NOT_APPROVED|NOT_REVOCABLE)|RIGHTS_STATUS_INVALID|SOURCE_(?:REFERENCE|DIGEST)_INVALID|SUMMARY_INVALID|RESEARCH_(?:ACTION_(?:IDEMPOTENCY_CONFLICT|IDENTITY_REQUIRED)|PROJECT_PROFILE_MANAGE_DENIED|SUBJECT_(?:ACCESS_DENIED|PROFILE_ACCESS_DENIED)|SUBJECT_PROFILE_ALREADY_APPROVED))\b/.test(text)
 }
 
 function draftPayload(values: FormValues): Record<string, unknown> {
@@ -127,16 +200,26 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
   const [form] = Form.useForm<FormValues>()
   const [toast, contextHolder] = message.useMessage()
   const requestVersion = useRef(0)
+  const mounted = useRef(true)
   const scopeKey = `${projectId}:${subjectId}`
   const activeScope = useRef(scopeKey)
   activeScope.current = scopeKey
   const idempotencyKeys = useRef(new Map<string, string>())
   const pendingIntentByAction = useRef(new Map<ProfileAction, string>())
   const pendingDraftValues = useRef<FormValues | null>(null)
-  const pendingDraftPayload = useRef<Record<string, unknown> | null>(null)
+  const pendingDraft = useRef<PendingDraft | null>(null)
+  const viewerActor = useRef('')
+  const startingDraft = useRef(false)
+
+  const clearPendingDraft = () => {
+    pendingDraft.current = null
+    pendingDraftValues.current = null
+    clearPendingSubjectProfileDraft(projectId, subjectId)
+  }
 
   const load = async (includeHistory = false) => {
     const requestedScope = scopeKey
+    const requestedPending = includeHistory ? pendingDraft.current : null
     const version = ++requestVersion.current
     setLoading(true)
     setError('')
@@ -145,23 +228,30 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
         project_id: projectId,
         subject_id: subjectId,
         ...(includeHistory ? { include_history: true } : {}),
+        ...(requestedPending ? { pending_idempotency_key: requestedPending.idempotency_key } : {}),
       }) as Result
       if (version !== requestVersion.current || requestedScope !== activeScope.current) return
       const allowed = Boolean(result.can_manage)
+      viewerActor.current = allowed ? (result.viewer_actor || '') : ''
+      if (pendingDraft.current && !pendingSubjectProfileDraftBelongsToActor(pendingDraft.current, viewerActor.current)) clearPendingDraft()
       setCanManage(allowed)
       setProfiles(result.profiles || [])
-      const pendingDraftIntent = pendingIntentByAction.current.get('create_draft')
-      if (includeHistory && allowed && pendingDraftIntent && pendingDraftPayload.current) {
-        const confirmed = (result.profiles || []).some((profile) => {
-          const payload = profilePayload(profile)
-          return payload !== null && subjectProfileIntentSignature('create_draft', payload) === pendingDraftIntent
-        })
+      const pending = pendingDraft.current
+      if (includeHistory && allowed && pending && pending.idempotency_key === requestedPending?.idempotency_key) {
+        const receiptProfile = result.pending_action?.status === 'saved'
+          ? (result.profiles || []).find((profile) => profile.id === result.pending_action?.profile_id)
+          : null
+        const payload = receiptProfile ? profilePayload(receiptProfile) : null
+        const confirmed = payload !== null && await subjectProfileIntentHash('create_draft', payload) === pending.intent_hash
+        if (version !== requestVersion.current || requestedScope !== activeScope.current) return
         if (confirmed) {
-          idempotencyKeys.current.delete(pendingDraftIntent)
+          const pendingDraftIntent = pendingIntentByAction.current.get('create_draft')
+          if (pendingDraftIntent) idempotencyKeys.current.delete(pendingDraftIntent)
           pendingIntentByAction.current.delete('create_draft')
-          pendingDraftValues.current = null
-          pendingDraftPayload.current = null
+          clearPendingDraft()
           toast.success('已在档案历史确认上次草稿已保存。')
+        } else if (result.pending_action?.status === 'saved') {
+          setError('操作回执存在，但档案正文与本次待确认内容不一致；请停止重试并联系管理员核对。')
         }
       }
       // The first response is deliberately safe for ordinary readers. A
@@ -175,6 +265,7 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
   }
 
   useEffect(() => {
+    mounted.current = true
     setProfiles([])
     setCanManage(false)
     setModal(null)
@@ -182,9 +273,10 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
     idempotencyKeys.current.clear()
     pendingIntentByAction.current.clear()
     pendingDraftValues.current = null
-    pendingDraftPayload.current = null
+    pendingDraft.current = readPendingSubjectProfileDraft(projectId, subjectId)
+    viewerActor.current = ''
     void load()
-    return () => { requestVersion.current += 1 }
+    return () => { mounted.current = false; requestVersion.current += 1 }
   }, [projectId, subjectId])
 
   const approved = useMemo(() => profiles.find((item) => item.status === 'approved') || null, [profiles])
@@ -210,7 +302,7 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
     setModal('create')
   }
 
-  const mutate = async (action: ProfileAction, fields: Record<string, unknown>) => {
+  const mutate = async (action: ProfileAction, fields: Record<string, unknown>, existingIdempotencyKey?: string) => {
     const intent = subjectProfileIntentSignature(action, fields)
     const previous = pendingIntentByAction.current.get(action)
     if (previous && previous !== intent) {
@@ -218,7 +310,12 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
       toast.warning(conflict.message)
       throw conflict
     }
-    const idempotencyKey = idempotencyKeys.current.get(intent) || crypto.randomUUID()
+    const idempotencyKey = existingIdempotencyKey || idempotencyKeys.current.get(intent) || globalThis.crypto?.randomUUID?.()
+    if (!idempotencyKey) {
+      const error = new Error('浏览器无法生成操作凭据；未发送保存请求。')
+      toast.error(error.message)
+      throw error
+    }
     idempotencyKeys.current.set(intent, idempotencyKey)
     pendingIntentByAction.current.set(action, intent)
     setSaving(true)
@@ -233,32 +330,37 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
       idempotencyKeys.current.delete(intent)
       if (pendingIntentByAction.current.get(action) === intent) pendingIntentByAction.current.delete(action)
       if (action === 'create_draft') {
-        pendingDraftValues.current = null
-        pendingDraftPayload.current = null
+        clearPendingDraft()
       }
-      toast.success(action === 'create_draft' ? '档案草稿已保存，等待人工核准' : action === 'approve' ? '档案版本已核准' : action === 'supersede' ? '旧版本已标为替换' : '档案版本已撤销')
-      setModal(null)
-      await load(true)
+      if (mounted.current) {
+        toast.success(action === 'create_draft' ? '档案草稿已保存，等待人工核准' : action === 'approve' ? '档案版本已核准' : action === 'supersede' ? '旧版本已标为替换' : '档案版本已撤销')
+        setModal(null)
+        await load(true)
+      }
     } catch (e) {
       if (isKnownActionError(e)) {
         idempotencyKeys.current.delete(intent)
         if (pendingIntentByAction.current.get(action) === intent) pendingIntentByAction.current.delete(action)
         if (action === 'create_draft') {
-          pendingDraftValues.current = null
-          pendingDraftPayload.current = null
+          clearPendingDraft()
         }
-        toast.error(e instanceof Error ? e.message : '主体档案保存失败')
+        if (mounted.current) toast.error(e instanceof Error ? e.message : '主体档案保存失败')
       } else {
-        toast.error('提交结果尚未确认，已刷新档案历史；请核对后用相同内容重试。')
-        void load(true)
+        if (mounted.current) {
+          toast.error('提交结果尚未确认，已刷新档案历史；请核对后用相同内容重试。')
+          void load(true)
+        }
       }
       throw e
     } finally {
-      setSaving(false)
+      if (mounted.current) setSaving(false)
     }
   }
 
-  const createDraft = (values: FormValues) => {
+  const createDraft = async (values: FormValues) => {
+    if (startingDraft.current) return
+    startingDraft.current = true
+    try {
     const payload = draftPayload(values)
     const summary = payload.summary as ProfileSummary
     const groups = Object.values(summary) as string[][]
@@ -272,14 +374,39 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
     }
     const intent = subjectProfileIntentSignature('create_draft', payload)
     const pending = pendingIntentByAction.current.get('create_draft')
-    if (pending && pending !== intent) {
+    const intentHash = await subjectProfileIntentHash('create_draft', payload)
+    if (!intentHash) {
+      toast.error('当前浏览器无法生成待确认操作指纹；请在受支持的 HTTPS 浏览器中重试，未发送保存请求。')
+      return
+    }
+    const recovered = pendingDraft.current
+    if (!viewerActor.current) {
+      toast.error('项目身份尚未确认；未发送保存请求。请刷新档案后重试。')
+      return
+    }
+    if ((pending && pending !== intent) || (recovered && recovered.intent_hash !== intentHash)) {
       if (pendingDraftValues.current) form.setFieldsValue(pendingDraftValues.current)
-      toast.warning('上一次草稿保存结果尚未确认，已恢复原内容；请先刷新历史核对或按原内容重试。')
+      toast.warning('上一次草稿保存结果尚未确认；请先刷新历史核对，或按完全相同内容重试。刷新后不会保留正文。')
+      return
+    }
+    const idempotencyKey = recovered?.idempotency_key || globalThis.crypto?.randomUUID?.()
+    if (!idempotencyKey) {
+      toast.error('浏览器无法生成操作凭据；未发送保存请求。')
       return
     }
     pendingDraftValues.current = { ...values }
-    pendingDraftPayload.current = payload
-    void mutate('create_draft', payload).catch(() => undefined)
+    const nextPending: PendingDraft = { action: 'create_draft', actor_id: viewerActor.current, idempotency_key: idempotencyKey, intent_hash: intentHash, created_at: recovered?.created_at || Date.now() }
+    if (!savePendingSubjectProfileDraft(projectId, subjectId, nextPending)) {
+      toast.error('浏览器无法保存待确认操作凭据；未发送保存请求。请启用此页面的会话存储后重试。')
+      return
+    }
+    pendingDraft.current = nextPending
+    await mutate('create_draft', payload, idempotencyKey)
+    } catch {
+      // mutate already presents an actionable error and preserves an unconfirmed create.
+    } finally {
+      startingDraft.current = false
+    }
   }
 
   const confirmLifecycle = (action: 'approve' | 'supersede' | 'revoke', profile: SubjectProfile) => {
@@ -329,9 +456,9 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
     </>}
 
     <Modal open={modal === 'create'} title="新建主体档案草稿" width={760} onCancel={() => setModal(null)} onOk={() => form.submit()} okText="保存草稿" confirmLoading={saving} destroyOnClose>
-      {pendingIntentByAction.current.has('create_draft') ? <Alert type="warning" showIcon message="上一次草稿保存结果待核对" description="已保留原内容和幂等键。请按原内容重试，或先刷新档案历史确认是否已保存；修改内容前不能另起一次创建。" /> : null}
+      {pendingDraft.current || pendingIntentByAction.current.has('create_draft') ? <Alert type="warning" showIcon message="上一次草稿保存结果待核对" description="已保留幂等键，但不会写入浏览器正文。请先刷新档案历史确认是否已保存；若要重试，须按完全相同内容重新填写，不能另起一次创建。" /> : null}
       <Alert type="warning" showIcon message="只录入可核验摘要" description="不要粘贴完整剧本、未授权图片/视频、个人信息或凭据。来源摘要必须是对应资料的 SHA-256 指纹。" />
-      <Form form={form} layout="vertical" onFinish={createDraft} className="subject-profile-form">
+      <Form form={form} layout="vertical" onFinish={(values) => { void createDraft(values) }} className="subject-profile-form">
         <Form.Item name="profile_kind" label="档案类型" rules={[{ required: true }]}><Select options={Object.entries(kindLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
         {profileFields.map(({ key, title, hint }) => <Form.Item key={key} name={key} label={title} extra={`${hint}；一行一条，空行忽略，最多 50 条。`}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} /></Form.Item>)}
         <Form.Item name="rights_status" label="素材与表达权利状态" rules={[{ required: true }]}><Select options={Object.entries(rightsLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>

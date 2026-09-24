@@ -126,11 +126,28 @@ def test_subject_profile_routes_isolate_projects_drafts_and_replacement(monkeypa
             assert reader.main({}, project_id=str(project_a), subject_id=str(subject_a))["profiles"] == []
             history = reader.main({}, project_id=str(project_a), subject_id=str(subject_a), include_history=True)
             assert history["can_manage"] is True
+            assert history["viewer_actor"] == "owner@example.com"
             assert history["profiles"][0]["source_digest"] == "a" * 64
+            receipt = reader.main(
+                {}, project_id=str(project_a), subject_id=str(subject_a),
+                include_history=True, pending_idempotency_key=draft_key,
+            )
+            assert receipt["pending_action"] == {"status": "saved", "profile_id": profile_a["id"]}
+            # An identical historical body must not settle a different key.
+            unknown = reader.main(
+                {}, project_id=str(project_a), subject_id=str(subject_a),
+                include_history=True, pending_idempotency_key=str(uuid4()),
+            )
+            assert unknown["pending_action"] == {"status": "unknown"}
 
             monkeypatch.setenv("WM_END_USER_EMAIL", "reader@example.com")
             reader_view = reader.main({}, project_id=str(project_a), subject_id=str(subject_a), include_history=True)
             assert reader_view == {"project_id": str(project_a), "profiles": [], "can_manage": False}
+            reader_receipt = reader.main(
+                {}, project_id=str(project_a), subject_id=str(subject_a),
+                include_history=True, pending_idempotency_key=draft_key,
+            )
+            assert "pending_action" not in reader_receipt
             with pytest.raises(PermissionError, match="PROFILE_MANAGE_DENIED"):
                 writer.main(
                     {}, project_id=str(project_a), action="approve", idempotency_key=str(uuid4()),
@@ -143,6 +160,10 @@ def test_subject_profile_routes_isolate_projects_drafts_and_replacement(monkeypa
                     subject_id=str(subject_a), profile_id=profile_a["id"],
                 )
             monkeypatch.setenv("WM_END_USER_EMAIL", "admin@example.com")
+            assert reader.main(
+                {}, project_id=str(project_a), subject_id=str(subject_a),
+                include_history=True, pending_idempotency_key=draft_key,
+            )["pending_action"] == {"status": "unknown"}
             with pytest.raises(PermissionError, match="SUBJECT_ACCESS_DENIED"):
                 writer.main(
                     {}, project_id=str(project_a), action="approve", idempotency_key=str(uuid4()),

@@ -63,10 +63,12 @@ def _json(row: dict[str, Any]) -> dict[str, Any]:
 
 def main(
     db: postgresql, project_id: str, subject_id: str = "", include_history: bool = False,
+    pending_idempotency_key: str = "",
 ):
     actor = _actor()
     project = _uuid(project_id, "project_id")
     subject = None if not subject_id else _uuid(subject_id, "subject_id")
+    pending_key = None if not pending_idempotency_key else _uuid(pending_idempotency_key, "pending_idempotency_key")
     if not isinstance(include_history, bool):
         raise ValueError("INCLUDE_HISTORY_INVALID")
     try:
@@ -115,7 +117,29 @@ def main(
                 (project,) if subject is None else (project, subject),
             )
             profiles = [_json(dict(row)) for row in cur.fetchall()]
-        return {"project_id": str(project), "profiles": profiles, "can_manage": can_manage}
+            pending_action = None
+            if pending_key is not None and detailed and subject is not None:
+                # A matching profile body is not proof that this request saved:
+                # an identical older version may already exist.  Only the
+                # actor-bound, project-bound action receipt settles the key.
+                cur.execute(
+                    """select profile.id from research_user_action action_row
+                       join research_subject_profile_version profile
+                         on profile.id::text=(action_row.outcome #>> '{profile,id}')
+                       where action_row.idempotency_key=%s and action_row.actor=%s
+                         and action_row.action_type='subject_profile.create_draft'
+                         and action_row.outcome->>'status'='saved'
+                         and profile.project_id=%s and profile.subject_id=%s""",
+                    (pending_key, actor, project, subject),
+                )
+                receipt = cur.fetchone()
+                pending_action = {"status": "saved", "profile_id": str(receipt["id"])} if receipt else {"status": "unknown"}
+        result = {"project_id": str(project), "profiles": profiles, "can_manage": can_manage}
+        if can_manage:
+            result["viewer_actor"] = actor
+        if pending_action is not None:
+            result["pending_action"] = pending_action
+        return result
     except (PermissionError, ValueError):
         raise
     except Exception:

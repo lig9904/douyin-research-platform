@@ -293,6 +293,7 @@ export default function ResearchBriefs({
       /> : null}
 
       {projectId && selectedSubjectId ? <SubjectProfilePanel
+        key={`${projectId}:${selectedSubjectId}`}
         projectId={projectId}
         subjectId={selectedSubjectId}
         subjectName={projectSubjects.find((subject) => subject.id === selectedSubjectId)?.name}
