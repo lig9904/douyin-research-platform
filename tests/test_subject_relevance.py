@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from pathlib import Path
 from uuid import uuid4
 
@@ -9,7 +10,9 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-from douyin_research.l0l1.scoring import Candidate, L1Scorer
+from douyin_research.l0l1.scoring import L1Scorer
+from douyin_research.l2.comment_pipeline import CommentPipeline, CommentPipelineSettings
+from douyin_research.l2.promotion import L3PromotionGate
 from douyin_research.l0l1.research_briefs import make_config, run_live
 from douyin_research.l0l1.runner import L0L1Runner
 from douyin_research.l0l1.subject_relevance import SubjectRelevanceStore, SubjectTerms, classify
@@ -233,8 +236,8 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
                 ).fetchone()[0]
                 assert durable == "irrelevant"
             run = admin.execute(
-                """insert into pipeline_run(run_type,platform,project_id)
-                   values ('subject_test','douyin',%s) returning id""", (project,)
+                """insert into pipeline_run(run_type,platform,status,project_id)
+                   values ('l0l1_discovery','douyin','success',%s) returning id""", (project,)
             ).fetchone()[0]
             admin.execute(
                 """insert into pipeline_run_item(run_id,entity_type,entity_id,stage,outcome)
@@ -248,6 +251,35 @@ def test_027_pauses_unbound_active_briefs_and_manual_race_uses_durable_decision(
             with pytest.raises(RuntimeError, match="project-specific score storage"):
                 scorer.score_run(run, project_id=project, subject_id=subject)
             assert admin.execute("select count(*) from video_score where video_id=%s", (video,)).fetchone()[0] == 0
+
+            # A historical global score cannot bypass the project scope into
+            # either the global L3 gate or paid comment collector path.
+            admin.execute("update source_video set research_level=2 where id=%s", (video,))
+            admin.execute(
+                """insert into video_score(video_id,score_type,score,rule_version)
+                   values (%s,'priority',99,'historical-global')""", (video,)
+            )
+            gate = L3PromotionGate(scoped_dsn)
+            with pytest.raises(ValueError, match="project-specific L3 promotion"):
+                gate.promote(run, top_n=1, quota_date=date(2026, 9, 24))
+            assert admin.execute(
+                "select count(*) from research_promotion_batch where source_run_id=%s", (run,)
+            ).fetchone()[0] == 0
+
+            class NeverCollector:
+                calls = 0
+
+                def collect(self, *_args, **_kwargs):
+                    self.calls += 1
+                    raise AssertionError("project source must be rejected before collection")
+
+            collector = NeverCollector()
+            comments = CommentPipeline(
+                scoped_dsn, collector=collector, worker_identity="subject-gate-test",
+            )
+            with pytest.raises(ValueError, match="project-specific comment processing"):
+                comments.run(run, settings=CommentPipelineSettings(top_n=1, quota_date=date(2026, 9, 24)))
+            assert collector.calls == 0
             # The audit row is historical: removal of the mutable current
             # decision must not cascade away the manual reason or run link.
             store.correct(

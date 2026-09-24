@@ -242,7 +242,7 @@ class CommentPipeline:
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 """
-                select run_type, platform, status
+                select run_type, platform, status, project_id
                 from pipeline_run
                 where id=%s
                 """,
@@ -251,9 +251,14 @@ class CommentPipeline:
             source = cur.fetchone()
             if source is None:
                 raise ValueError("source pipeline run does not exist")
-            run_type, declared_platform, status = source
+            run_type, declared_platform, status, project_id = source
             if run_type != "l0l1_discovery" or status != "success":
                 raise ValueError("source must be a successful L0/L1 discovery run")
+            # This global comment/L2 pipeline may spend provider quota and
+            # eventually promotes through global L3. Project source runs need
+            # their own subject-gated L2 storage and cannot reuse this path.
+            if project_id is not None:
+                raise ValueError("project source runs require project-specific comment processing")
             if not declared_platform:
                 raise ValueError("source L0/L1 run must declare a platform")
             novelty_clause = (
