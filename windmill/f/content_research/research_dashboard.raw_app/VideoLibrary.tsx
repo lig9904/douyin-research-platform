@@ -493,7 +493,7 @@ export default function VideoLibrary({
         </>
       }
     >
-          {projectId ? <ProjectVideoEvidence projectId={projectId} onAccepted={showAcceptedVideo} /> : null}
+          {projectId ? <ProjectVideoEvidence key={projectId} projectId={projectId} onAccepted={showAcceptedVideo} /> : null}
           {!isProject && writeNotice && (
             <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
           )}

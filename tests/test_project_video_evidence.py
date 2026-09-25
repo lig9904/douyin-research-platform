@@ -39,6 +39,10 @@ def test_project_video_evidence_exact_public_reference_and_static_db(monkeypatch
     monkeypatch.delenv("WM_END_USER_EMAIL", raising=False)
     with pytest.raises(PermissionError):
         module._actor()
+    monkeypatch.setenv("WM_END_USER_EMAIL", "owner@example.com")
+    for reviewed in (False, "true", 1):
+        with pytest.raises(ValueError, match="content review confirmation is required"):
+            module.main({}, str(uuid4()), "accept", "12345678", str(uuid4()), reviewed)
     assert BACKEND.with_suffix(".yaml").read_text() == (
         "type: inline\nfields:\n  db:\n    type: static\n"
         "    value: $res:f/content_research/research_db\n"
@@ -49,6 +53,12 @@ def test_project_video_evidence_exact_public_reference_and_static_db(monkeypatch
     assert "https://www.douyin.com/video/${candidate.platform_video_id}" in page
     assert 'rel="noopener noreferrer"' in page
     assert "若原视频无法打开，不要仅凭标题或指标判断是否可比" in page
+    assert "content_review_confirmed: true" in page
+    assert r"/^\d{8,32}$/" in page
+    assert "disabled={!contentReviewed || candidate.project_status === 'accepted'}" in page
+    assert "key={projectId}" in (BACKEND.parent.parent / "VideoLibrary.tsx").read_text()
+    assert module._video_key("12345678") == "12345678"
+    assert module._video_key("1" * 32) == "1" * 32
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
@@ -100,14 +110,19 @@ def test_project_video_evidence_requires_manager_and_exact_acceptance(monkeypatc
             assert "source_url" not in preview["video"]
             assert "raw_payload" not in preview["video"]
             key = str(uuid4())
-            result = module.main(db, str(a), "accept", "1234567890123456789", key)
+            with pytest.raises(ValueError, match="content review confirmation is required"):
+                module.main(db, str(a), "accept", "1234567890123456789", key)
+            with pytest.raises(ValueError, match="content review confirmation is required"):
+                module.main(db, str(a), "accept", "1234567890123456789", key, "true")
+            assert conn.execute("select count(*) from research_user_action where action_type='project_video.accept'").fetchone()[0] == 0
+            result = module.main(db, str(a), "accept", "1234567890123456789", key, True)
             assert result["changed"] and result["video_id"] == str(video)
-            assert module.main(db, str(a), "accept", "1234567890123456789", key)["idempotent_replay"] is True
-            assert module.main(db, str(a), "accept", "1234567890123456789", str(uuid4()))["changed"] is False
+            assert module.main(db, str(a), "accept", "1234567890123456789", key, True)["idempotent_replay"] is True
+            assert module.main(db, str(a), "accept", "1234567890123456789", str(uuid4()), True)["changed"] is False
             assert conn.execute(
-                "select source_type,status,metadata->>'last_accepted_by' from project_video_inclusion where project_id=%s and video_id=%s",
+                "select source_type,status,metadata->>'last_accepted_by',metadata->>'content_review_confirmed_by' from project_video_inclusion where project_id=%s and video_id=%s",
                 (a, video),
-            ).fetchone() == ("manual", "accepted", "owner-a@example.com")
+            ).fetchone() == ("manual", "accepted", "owner-a@example.com", "owner-a@example.com")
             assert conn.execute(
                 "select count(*) from research_user_action where action_type='project_video.accept'"
             ).fetchone()[0] == 2

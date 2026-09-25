@@ -21,7 +21,7 @@
 
 `get_project_collaboration(db, project_id)` 是只读入口；`mutate_project_collaboration(db, project_id, action, ...)` 管理成员与共享状态。两者只接 Windmill 受控的研究库资源，页面不接收数据库密钥。Windmill 用户创建和登录仍由 Windmill 负责；本功能只管理业务项目成员，不创建账号或修改密码。Raw App 只能精确发布 `f/content_research/research_dashboard`，不能全工作区同步。
 
-视频库新增 `manage_project_video_evidence(db, project_id, action, video_reference, idempotency_key)`：项目负责人/管理员输入精确抖音视频 ID 或直链，先预览**现有公开库**中的标题、公开账号和合并指标，再确认将该视频状态设为 `accepted`。该操作不调用 TikHub、不自动批量纳入历史视频、不复制全局 ASR/L3 结果；成员身份仍来自 Windmill 服务端，写入通过 `research_user_action` 记录操作者、动作、幂等键与结果。找不到视频时应走项目研究任务采集，不把任意 URL 当作已入库证据。代码、CI、测试服 v42 发布及真实页面预览/写入均已验证。
+视频库新增 `manage_project_video_evidence(db, project_id, action, video_reference, idempotency_key, content_review_confirmed)`：项目负责人/管理员输入精确抖音视频 ID 或直链，先预览**现有公开库**中的标题、公开账号和合并指标，再核对视频实际内容并勾选人工确认，才可将其状态设为 `accepted`。这是可审计的操作者自我确认，不是系统自动识别视频内容；原视频打不开时不得仅凭标题或指标认定可比。该操作不调用 TikHub、不自动批量纳入历史视频、不复制全局 ASR/L3 结果；成员身份仍来自 Windmill 服务端，写入通过 `research_user_action` 记录操作者、动作、幂等键与结果。找不到视频时应走项目研究任务采集，不把任意 URL 当作已入库证据。原接口已在测试服 v42 验证；新增人工确认门槛须另按本轮代码与发布证据验收。
 
 ## 测试服验收
 

@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import { Alert, Button, Input, Popconfirm, Tag } from 'antd'
+import { Alert, Button, Checkbox, Input, Popconfirm, Tag } from 'antd'
 import { backend } from './backend'
 import PlatformIcon from './src/components/PlatformIcon'
 import { useProjectScope } from './src/projectScope'
@@ -29,6 +29,7 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [contentReviewed, setContentReviewed] = useState(false)
   const requestVersion = useRef(0)
 
   if (role !== 'owner' && role !== 'admin') return null
@@ -41,6 +42,7 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
     setNotice('')
     setCandidate(null)
     setLookedUp(false)
+    setContentReviewed(false)
     try {
       const result = await backend.manage_project_video_evidence({
         project_id: projectId, action: 'preview', video_reference: reference.trim(),
@@ -56,7 +58,7 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
   }
 
   const accept = async () => {
-    if (!candidate || busy) return
+    if (!candidate || busy || !contentReviewed) return
     const version = ++requestVersion.current
     setBusy(true)
     setError('')
@@ -66,6 +68,7 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
         project_id: projectId, action: 'accept',
         video_reference: candidate.platform_video_id,
         idempotency_key: crypto.randomUUID(),
+        content_review_confirmed: true,
       }) as { status: string; video_id: string }
       if (version !== requestVersion.current) return
       setNotice(result.status === 'accepted' ? '已纳入本项目公开依据；项目共享仍需双方单独授权。' : '保存状态待核对。')
@@ -79,7 +82,7 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
   }
 
   const fmt = (value?: number | null) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
-  const publicVideoUrl = candidate?.platform === 'douyin' && /^\d{16,25}$/.test(candidate.platform_video_id)
+  const publicVideoUrl = candidate?.platform === 'douyin' && /^\d{8,32}$/.test(candidate.platform_video_id)
     ? `https://www.douyin.com/video/${candidate.platform_video_id}` : null
   return <section className="card project-video-evidence" aria-label="纳入已有公开视频">
     <div className="project-video-evidence-head">
@@ -94,6 +97,7 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
           setReference(event.target.value)
           setCandidate(null)
           setLookedUp(false)
+          setContentReviewed(false)
           setBusy(false)
           setError('')
           setNotice('')
@@ -111,10 +115,13 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
         <small>播放 {fmt(candidate.play_count)} · 点赞 {fmt(candidate.like_count)} · 评论 {fmt(candidate.comment_count)}</small>
         <small>这里只核对元数据。请先查看原视频内容；若原视频无法打开，不要仅凭标题或指标判断是否可比。</small>
         {publicVideoUrl ? <a href={publicVideoUrl} target="_blank" rel="noopener noreferrer">打开原视频 ↗</a> : null}
+        <Checkbox checked={contentReviewed} onChange={(event) => setContentReviewed(event.target.checked)}>
+          我已核对视频实际内容，而非只看标题或指标
+        </Checkbox>
       </div>
       <Popconfirm title="确认纳入本项目公开依据？" description="仅本项目可见；如需给其它项目看，还须双方单独授权。"
         onConfirm={() => void accept()}>
-        <Button type="primary" loading={busy} disabled={candidate.project_status === 'accepted'}>
+        <Button type="primary" loading={busy} disabled={!contentReviewed || candidate.project_status === 'accepted'}>
           {candidate.project_status === 'accepted' ? '已纳入' : '确认纳入'}
         </Button>
       </Popconfirm>
