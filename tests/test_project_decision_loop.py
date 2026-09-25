@@ -220,8 +220,12 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             assert not ({"profile_source_digest", "profile_content_fingerprint", "bound_by"} & reviewed_card["profile_binding"].keys())
             conn.execute("update research_subject_profile_version set status='revoked' where id=%s", (profile,))
             assert next(card for card in read.main(db, str(project))["cards"] if card["id"] == card_id)["profile_binding"]["profile_current_status"] == "revoked"
-            assert result["publications"][0]["daily_observations"][0]["impressions"] == 1100
-            assert result["publications"][0]["platform_content_id"] == "7777777777777777777"
+            reviewed_publication = next(
+                item for item in result["publications"]
+                if item["id"] == publication["publication_id"]
+            )
+            assert reviewed_publication["daily_observations"][0]["impressions"] == 1100
+            assert reviewed_publication["platform_content_id"] == "7777777777777777777"
             with pytest.raises(psycopg.Error, match="immutable"):
                 conn.execute("update project_decision_card set review_conclusion='篡改' where id=%s", (card_id,))
             with pytest.raises(psycopg.Error, match="immutable"):
