@@ -3,8 +3,10 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -63,6 +65,13 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             conn.execute((ROOT / "db/migrations/028_project_decision_loop.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/033_project_experiment_contract.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/033_project_experiment_contract.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/034_project_experiment_timeline.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/034_project_experiment_timeline.sql").read_text(), prepare=False)
+            local_now = datetime.now(ZoneInfo("Asia/Shanghai"))
+            today = local_now.date()
+            yesterday = today - timedelta(days=1)
+            published_at = datetime.combine(yesterday, time(0, 1), ZoneInfo("Asia/Shanghai"))
+            fixture_card_created_at = published_at - timedelta(days=1)
             org = conn.execute("insert into research_organization(slug,name) values('loop-org','闭环组织') returning id").fetchone()[0]
             project = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'loop-a','项目 A','active') returning id", (org,)).fetchone()[0]
             other = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'loop-b','项目 B','active') returning id", (org,)).fetchone()[0]
@@ -118,6 +127,8 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
                     (project, accepted),
                 )
             assert mutate.main(db, str(project), "create_card", payload, create_key)["idempotent_replay"] is True
+            with pytest.raises(psycopg.Error, match="immutable"):
+                conn.execute("update project_decision_card set created_at=%s where id=%s", (fixture_card_created_at, created["card_id"]))
             assert conn.execute("select count(*) from project_decision_card_profile_binding where decision_card_id=%s", (created["card_id"],)).fetchone()[0] == 1
             with pytest.raises(psycopg.Error, match="immutable"):
                 conn.execute("update project_decision_card set success_rule='事后改规则' where id=%s", (created["card_id"],))
@@ -131,18 +142,18 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             observed = mutate.main(db, str(project), "create_card", {**payload, "subject_id": None, "profile_id": None, "decision": "observe", "owner_actor": "researcher@example.com"}, str(uuid4()))
             assert observed["status"] == "observing"
             excluded = mutate.main(db, str(project), "create_card", {**payload, "subject_id": None, "profile_id": None, "decision": "exclude"}, str(uuid4()))
-            rejected_publication = {"decision_card_id": excluded["card_id"], "publication_date": "2026-09-24", "title": "不得发布的排除卡", "content_reference": "internal:rejected", "platform": "douyin", "account_reference": "public-account-001", "platform_content_id": "6666666666666666666", "content_version": "script-approved-v1", "distribution_mode": "organic"}
+            rejected_publication = {"decision_card_id": excluded["card_id"], "publication_date": today.isoformat(), "published_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(), "title": "不得发布的排除卡", "content_reference": "internal:rejected", "platform": "douyin", "account_reference": "public-account-001", "platform_content_id": "6666666666666666666", "content_version": "script-approved-v1", "distribution_mode": "organic"}
             with pytest.raises(ValueError, match="requires an active"):
                 mutate.main(db, str(project), "create_publication", rejected_publication, str(uuid4()))
             with pytest.raises(psycopg.Error, match="requires active preregistered"):
                 conn.execute(
                     """insert into project_publication_record
-                       (project_id,decision_card_id,publication_date,title,content_reference,status,created_by,
+                       (project_id,decision_card_id,publication_date,published_at,title,content_reference,status,created_by,
                         platform,account_reference,platform_content_id,content_version,distribution_mode)
-                       values (%s,%s,'2026-09-24','不得发布的排除卡','internal:rejected','published',
+                       values (%s,%s,%s,now(),'不得发布的排除卡','internal:rejected','published',
                                'writer@example.com','douyin','public-account-001','6666666666666666666',
                                'script-approved-v1','organic')""",
-                    (project, excluded["card_id"]),
+                    (project, excluded["card_id"], today),
                 )
             mutate.main(db, str(project), "set_card_status", {"card_id": observed["card_id"], "status": "archived"}, str(uuid4()))
             with pytest.raises(ValueError, match="requires an active"):
@@ -150,6 +161,10 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")
             second = mutate.main(db, str(project), "create_card", {**payload, "hypothesis": "同一参考也可验证另一条策略假设"}, str(uuid4()))
             assert second["card_id"] != created["card_id"]
+            another_accepted = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','8888888888888888887','另一条已接受视频') returning id").fetchone()[0]
+            conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','local','accepted')", (project, another_accepted))
+            with pytest.raises(psycopg.Error, match="immutable"):
+                conn.execute("update project_decision_card set source_video_id=%s where id=%s", (another_accepted, created["card_id"]))
             bad = {**payload, "source_video_id": str(shared_only)}
             with pytest.raises(Exception):
                 mutate.main(db, str(project), "create_card", bad, str(uuid4()))
@@ -166,23 +181,49 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             assert advanced == {"changed": True, "card_id": card_id, "status": "adopted"}
             with pytest.raises(psycopg.Error, match="active project member"):
                 conn.execute("update project_decision_card set owner_actor='outside@example.com' where id=%s", (card_id,))
-            publication_payload = {"decision_card_id": card_id, "publication_date": "2026-09-24", "title": "我方测试内容", "content_reference": "internal:content-001", "platform": "douyin", "account_reference": "public-account-001", "platform_content_id": "7777777777777777777", "content_version": "script-approved-v1", "distribution_mode": "organic"}
+            publication_payload = {"decision_card_id": card_id, "publication_date": yesterday.isoformat(), "published_at": published_at.isoformat(), "title": "我方测试内容", "content_reference": "internal:content-001", "platform": "douyin", "account_reference": "public-account-001", "platform_content_id": "7777777777777777777", "content_version": "script-approved-v1", "distribution_mode": "organic"}
+            with pytest.raises(ValueError, match="follow preregistration"):
+                mutate.main(db, str(project), "create_publication", publication_payload, str(uuid4()))
+            with pytest.raises(psycopg.Error, match="must follow preregistration"):
+                conn.execute(
+                    """insert into project_publication_record
+                       (project_id,decision_card_id,publication_date,published_at,title,content_reference,
+                        status,created_by,platform,account_reference,platform_content_id,content_version,distribution_mode)
+                       values (%s,%s,%s,%s,'倒填发布','internal:backfill','published','writer@example.com',
+                               'douyin','public-account-001','7777777777777777779','script-approved-v1','organic')""",
+                    (project, card_id, yesterday, published_at),
+                )
+            # Integration clock fixture: emulate a card genuinely created before
+            # yesterday's publication, without weakening the production trigger.
+            conn.execute("alter table project_decision_card disable trigger trg_project_decision_card_experiment_contract")
+            try:
+                conn.execute("update project_decision_card set created_at=%s where id=%s", (fixture_card_created_at, card_id))
+            finally:
+                conn.execute("alter table project_decision_card enable trigger trg_project_decision_card_experiment_contract")
             publication = mutate.main(db, str(project), "create_publication", publication_payload, str(uuid4()))
             with pytest.raises(psycopg.Error, match="immutable"):
                 conn.execute("update project_publication_record set content_version='v2' where id=%s", (publication["publication_id"],))
             with pytest.raises(RuntimeError, match="MUTATION_UNAVAILABLE"):
                 mutate.main(db, str(project), "create_publication", publication_payload, str(uuid4()))
             metrics = {"impressions": 1000, "engagements": 80, "likes": 50, "comments": 10, "shares": 8, "follows": 2, "conversions": 1}
-            evidence = {"source": "manual", "source_reference": "internal:daily-sheet-001", "source_reported_at": "2026-09-24T10:00:00+00:00", "source_version_or_digest": "manual-v1", "measurement_scope": "发布后24小时累计"}
-            saved = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": "2026-09-24", "metrics": metrics, **evidence}, str(uuid4()))
+            evidence = {"source": "manual", "source_reference": "internal:daily-sheet-001", "source_reported_at": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(), "source_version_or_digest": "manual-v1", "measurement_scope": "发布后24小时累计"}
+            saved = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": today.isoformat(), "metrics": metrics, **evidence}, str(uuid4()))
             assert saved["version"] == 1
+            incomplete_report = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": today.isoformat(), "metrics": metrics, **{**evidence, "source_reference": "internal:early-report", "source_reported_at": (published_at + timedelta(hours=12)).isoformat()}}, str(uuid4()))
+            with pytest.raises(ValueError, match="observation window is not complete"):
+                mutate.main(db, str(project), "record_review", {"card_id": card_id, "observation_id": incomplete_report["observation_id"], "verdict": "supported", "conclusion": "过早结论", "evidence": "观察窗未满", "next_action": "等待"}, str(uuid4()))
             windowed = mutate.main(db, str(project), "create_card", {**payload, "hypothesis": "至少观察两天才能复盘", "observation_window_days": 2}, str(uuid4()))
+            conn.execute("alter table project_decision_card disable trigger trg_project_decision_card_experiment_contract")
+            try:
+                conn.execute("update project_decision_card set created_at=%s where id=%s", (fixture_card_created_at, windowed["card_id"]))
+            finally:
+                conn.execute("alter table project_decision_card enable trigger trg_project_decision_card_experiment_contract")
             windowed_publication = mutate.main(db, str(project), "create_publication", {**publication_payload, "decision_card_id": windowed["card_id"], "platform_content_id": "7777777777777777778"}, str(uuid4()))
-            early_metric = mutate.main(db, str(project), "record_daily_metric", {"publication_id": windowed_publication["publication_id"], "metric_date": "2026-09-24", "metrics": metrics, **evidence}, str(uuid4()))
+            early_metric = mutate.main(db, str(project), "record_daily_metric", {"publication_id": windowed_publication["publication_id"], "metric_date": today.isoformat(), "metrics": metrics, **evidence}, str(uuid4()))
             with pytest.raises(ValueError, match="observation window is not complete"):
                 mutate.main(db, str(project), "record_review", {"card_id": windowed["card_id"], "observation_id": early_metric["observation_id"], "verdict": "supported", "conclusion": "提前宣称成功", "evidence": "只有第一天数据", "next_action": "等待观察"}, str(uuid4()))
-            corrected = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": "2026-09-24", "metrics": {**metrics, "impressions": 1100, "likes": None}, **{**evidence, "source_reference": "internal:daily-sheet-001-revision", "source_version_or_digest": "manual-v2", "measurement_scope": "发布后24小时累计，补录"}}, str(uuid4()))
-            assert corrected["version"] == 2 and corrected["observation_id"] != saved["observation_id"]
+            corrected = mutate.main(db, str(project), "record_daily_metric", {"publication_id": publication["publication_id"], "metric_date": today.isoformat(), "metrics": {**metrics, "impressions": 1100, "likes": None}, **{**evidence, "source_reference": "internal:daily-sheet-001-revision", "source_version_or_digest": "manual-v2", "measurement_scope": "发布后24小时累计，补录"}}, str(uuid4()))
+            assert corrected["version"] == 3 and corrected["observation_id"] != saved["observation_id"]
             assert conn.execute("select likes from project_publication_metric_observation where id=%s", (corrected["observation_id"],)).fetchone()[0] is None
             with pytest.raises(psycopg.Error, match="append-only"):
                 conn.execute("update project_publication_metric_observation set impressions=1 where id=%s", (saved["observation_id"],))
@@ -197,6 +238,7 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
                     (saved["observation_id"], card_id),
                 )
             conn.execute("delete from project_video_inclusion where project_id=%s and video_id=%s", (project, accepted))
+            assert conn.execute("select count(*) from research_project_member where project_id=%s and actor_id='writer@example.com' and status='active'", (project,)).fetchone()[0] == 1
             reviewed = mutate.main(db, str(project), "record_review", {"card_id": card_id, "observation_id": saved["observation_id"], "verdict": "inconclusive", "conclusion": "保留现场开头的做法，但缩短铺垫", "evidence": "首日汇总曝光1000、互动80、转化1；缺同账号对照", "next_action": "下周制作两条不同开头版本"}, str(uuid4()))
             assert reviewed["status"] == "reviewed"
             monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
@@ -282,6 +324,9 @@ def test_033_upgrade_keeps_legacy_cards_readable_without_backfilling_goals() -> 
             ).fetchone()[0]
             conn.execute(migration, prepare=False)
             conn.execute(migration, prepare=False)
+            timeline = (ROOT / "db/migrations/034_project_experiment_timeline.sql").read_text()
+            conn.execute(timeline, prepare=False)
+            conn.execute(timeline, prepare=False)
             assert conn.execute(
                 "select status,evaluation_metric,success_rule,review_verdict from project_decision_card where id=%s",
                 (old_card,),

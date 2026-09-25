@@ -190,7 +190,8 @@ def _card(cur, project: UUID, card_id: object) -> dict[str, Any]:
     card = _uuid(card_id, "card_id")
     cur.execute(
         """select c.id, c.source_video_id, c.hypothesis, c.reference_point, c.adaptation_difference,
-                  c.owner_actor, c.decision, c.status, c.subject_id, c.evaluation_metric
+                  c.owner_actor, c.decision, c.status, c.subject_id, c.evaluation_metric,
+                  c.created_at
            from project_decision_card c
            where c.id=%s and c.project_id=%s for update of c""",
         (card, project),
@@ -340,6 +341,7 @@ def _record_review(cur, project: UUID, actor: str, payload: dict[str, Any]) -> d
     observation = _uuid(payload["observation_id"], "observation_id")
     cur.execute(
         """select metric.id, metric.version, metric.metric_date, publication.publication_date,
+                  publication.published_at,
                   card_contract.observation_window_days, metric.impressions,
                   metric.engagements, metric.likes, metric.comments, metric.shares,
                   metric.follows, metric.conversions, metric.source, metric.measurement_scope,
@@ -368,9 +370,12 @@ def _record_review(cur, project: UUID, actor: str, payload: dict[str, Any]) -> d
     observation_row = cur.fetchone()
     if observation_row is None:
         raise ValueError("an observation for this card's published record is required before review")
-    if observation_row["observation_window_days"] is not None and observation_row["metric_date"] < (
-        observation_row["publication_date"] + timedelta(days=observation_row["observation_window_days"] - 1)
-    ):
+    if observation_row["published_at"] is None:
+        raise ValueError("historical publication without a recorded time cannot prove preregistration")
+    window_end = observation_row["published_at"] + timedelta(days=observation_row["observation_window_days"])
+    if (datetime.now(_BUSINESS_TIMEZONE) < window_end
+            or observation_row["source_reported_at"] < window_end
+            or observation_row["metric_date"] < window_end.astimezone(_BUSINESS_TIMEZONE).date()):
         raise ValueError("the preregistered observation window is not complete")
     verdict = payload["verdict"]
     if verdict not in {"supported", "not_supported", "inconclusive"}:
@@ -392,7 +397,7 @@ def _record_review(cur, project: UUID, actor: str, payload: dict[str, Any]) -> d
 
 
 def _create_publication(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if set(payload) != {"decision_card_id", "publication_date", "title", "content_reference", "platform", "account_reference", "platform_content_id", "content_version", "distribution_mode"}:
+    if set(payload) != {"decision_card_id", "publication_date", "published_at", "title", "content_reference", "platform", "account_reference", "platform_content_id", "content_version", "distribution_mode"}:
         raise ValueError("create_publication payload is invalid")
     card = _card(cur, project, payload["decision_card_id"])
     if not ((card["decision"] == "adopt" and card["status"] in {"active", "adopted"})
@@ -407,18 +412,20 @@ def _create_publication(cur, project: UUID, actor: str, payload: dict[str, Any])
     if distribution not in {"organic", "paid", "mixed"}:
         raise ValueError("distribution_mode is invalid")
     publication_day = _date(payload["publication_date"], "publication_date")
-    if publication_day > datetime.now(_BUSINESS_TIMEZONE).date():
-        raise ValueError("publication_date cannot be in the future")
+    published_at = _timestamp(payload["published_at"], "published_at")
+    if (published_at < card["created_at"] or published_at > datetime.now(_BUSINESS_TIMEZONE)
+            or publication_day != published_at.astimezone(_BUSINESS_TIMEZONE).date()):
+        raise ValueError("published_at must follow preregistration and match publication_date")
     cur.execute(
         """insert into project_publication_record
            (project_id,decision_card_id,publication_date,title,content_reference,status,created_by,
-            platform,account_reference,platform_content_id,content_version,distribution_mode)
-           values (%s,%s,%s,%s,%s,'published',%s,%s,%s,%s,%s,%s) returning id""",
+            platform,account_reference,platform_content_id,content_version,distribution_mode,published_at)
+           values (%s,%s,%s,%s,%s,'published',%s,%s,%s,%s,%s,%s,%s) returning id""",
         (project, card["id"], publication_day,
          _text(payload["title"], "title", 160), _text(payload["content_reference"], "content_reference", 512), actor,
          platform, _text(payload["account_reference"], "account_reference", 160),
          _text(payload["platform_content_id"], "platform_content_id", 160),
-         _text(payload["content_version"], "content_version", 160), distribution),
+         _text(payload["content_version"], "content_version", 160), distribution, published_at),
     )
     return {"changed": True, "publication_id": str(cur.fetchone()["id"]), "status": "published"}
 
@@ -452,6 +459,8 @@ def _record_daily_metric(cur, project: UUID, actor: str, payload: dict[str, Any]
     scope = _text(payload["measurement_scope"], "measurement_scope", 300)
     source_reference = _text(payload["source_reference"], "source_reference", 512)
     source_reported_at = _timestamp(payload["source_reported_at"], "source_reported_at")
+    if source_reported_at > datetime.now(_BUSINESS_TIMEZONE):
+        raise ValueError("source_reported_at cannot be in the future")
     source_version_or_digest = _text(payload["source_version_or_digest"], "source_version_or_digest", 256)
     cur.execute(
         """select coalesce(max(version),0)+1 as next_version

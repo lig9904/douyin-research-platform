@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_preregistered_experiment_is_generic_and_release_gated() -> None:
     migration = (ROOT / "db/migrations/033_project_experiment_contract.sql").read_text(encoding="utf-8")
+    timeline = (ROOT / "db/migrations/034_project_experiment_timeline.sql").read_text(encoding="utf-8")
     bootstrap = (ROOT / "db/schema.sql").read_text(encoding="utf-8")
     release = (ROOT / "scripts/test-server-release.sh").read_text(encoding="utf-8")
     page = (ROOT / "windmill/f/content_research/research_dashboard.raw_app/DecisionLoop.tsx").read_text(encoding="utf-8")
@@ -35,11 +36,16 @@ def test_preregistered_experiment_is_generic_and_release_gated() -> None:
         "reject_preregistered_publication_change",
     ):
         pattern = rf"create or replace function {function}\(\).*?as \$\$(.*?)\$\$;"
-        migration_body = re.search(pattern, migration, re.S)
-        bootstrap_body = re.search(pattern, bootstrap, re.S)
+        source = timeline if function != "reject_preregistered_publication_change" else migration
+        migration_body = re.search(pattern, source, re.S)
+        bootstrap_body = list(re.finditer(pattern, bootstrap, re.S))[-1] if re.search(pattern, bootstrap, re.S) else None
         assert migration_body and bootstrap_body
         assert migration_body.group(1) == bootstrap_body.group(1)
         assert hashlib.md5(migration_body.group(1).encode()).hexdigest() in release
+    assert "new.source_video_id" in timeline and "new.created_at" in timeline
+    assert "new.published_at < card_created_at" in timeline
+    assert "published_at" in timeline and "published_at" in bootstrap
+    assert "034_project_experiment_timeline.sql" in release
     assert "the preregistered observation window is not complete" in mutate
     assert "review verdict is invalid" in mutate
     assert "证据不足" in page

@@ -171,7 +171,7 @@ def main(db: postgresql, project_id: str):
             )
             approved_profiles = [_json(dict(row)) for row in cur.fetchall()]
             cur.execute(
-                """select p.id, p.decision_card_id, p.publication_date, p.title,
+                """select p.id, p.decision_card_id, p.publication_date, p.published_at, p.title,
                           p.platform, p.account_reference, p.platform_content_id,
                           p.content_version, p.distribution_mode,
                           p.content_reference, p.status, p.created_by, p.created_at, p.updated_at,
