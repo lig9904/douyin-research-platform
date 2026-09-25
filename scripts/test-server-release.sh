@@ -610,6 +610,27 @@ verify_project_experiment_timeline_contract() {
   [[ -z "$failed" ]] || { printf 'ERROR: project experiment timeline contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
+verify_project_decision_evidence_contract() {
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with checks(name, ok) as (values
+      ('035.evidence_ref', to_regclass('public.project_decision_card_evidence_ref') is not null),
+      ('035.card_scope_fk', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_evidence_ref') and contype='f' and convalidated and confrelid=to_regclass('public.project_decision_card') and pg_get_constraintdef(oid) like '%(decision_card_id, project_id)%')),
+      ('035.video_fk', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_evidence_ref') and contype='f' and convalidated and confrelid=to_regclass('public.source_video'))),
+      ('035.unique_video', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_evidence_ref') and contype='u' and convalidated and pg_get_constraintdef(oid) like '%(decision_card_id, video_id)%')),
+      ('035.role_check', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_evidence_ref') and contype='c' and convalidated and pg_get_constraintdef(oid) like '%counterexample%' and pg_get_constraintdef(oid) like '%comparable%')),
+      ('035.reason_check', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_evidence_ref') and contype='c' and convalidated and pg_get_constraintdef(oid) like '%reason%' and pg_get_constraintdef(oid) like '%500%')),
+      ('035.ref_index', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_decision_card_evidence_ref_project_card') and indisvalid and indisready)),
+      ('035.guard', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card_evidence_ref') and tgname='trg_project_decision_card_evidence_ref' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.enforce_project_decision_card_evidence_ref()'))),
+      ('035.guard_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_evidence_ref()') and md5(prosrc)='0488770c97c9d2a44f12b8334ec70ffb')),
+      ('035.owner', exists(select 1 from pg_tables where schemaname='public' and tablename='project_decision_card_evidence_ref' and tableowner=current_user)),
+      ('035.owner_grants', coalesce(has_table_privilege(current_user,to_regclass('public.project_decision_card_evidence_ref'),'SELECT,INSERT'),false)),
+      ('035.no_nonowner_grants', not exists(select 1 from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace cross join lateral aclexplode(coalesce(relation_row.relacl,acldefault('r',relation_row.relowner))) grant_row where namespace_row.nspname='public' and relation_row.relname='project_decision_card_evidence_ref' and grant_row.grantee<>relation_row.relowner))
+    ) select coalesce(string_agg(name, ',' order by name), '') from checks where ok is distinct from true
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: project decision evidence migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
 archive_profile_count() {
   # Count only the profile COPY body while discarding every row.  The restore
   # drill compares counts without logging source content or references.
@@ -685,10 +706,11 @@ cmd_migrate() {
   verify_project_private_analysis_contract
   verify_project_experiment_contract
   verify_project_experiment_timeline_contract
+  verify_project_decision_evidence_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, and experiment timeline contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, and decision evidence contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -703,6 +725,7 @@ cmd_restore_drill() (
   local private_analysis_contract=legacy_absent private_analysis_state private_analysis_source_counts private_analysis_restored_counts
   local experiment_contract=legacy_absent experiment_state
   local timeline_contract=legacy_absent timeline_state
+  local evidence_contract=legacy_absent evidence_state evidence_source_counts evidence_restored_counts
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
@@ -900,6 +923,18 @@ cmd_restore_drill() (
     '1|1') verify_project_experiment_timeline_contract "$RESTORE_DATABASE"; timeline_contract=present ;;
     *) echo 'ERROR: restored experiment timeline schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
+  evidence_state="$(research_query "$RESTORE_DATABASE" "select exists(select 1 from schema_migrations where filename='035_project_decision_evidence.sql')::int || '|' || (to_regclass('public.project_decision_card_evidence_ref') is not null)::int")"
+  case "$evidence_state" in
+    '0|0') evidence_contract=legacy_absent ;;
+    '1|1')
+      verify_project_decision_evidence_contract "$RESTORE_DATABASE"
+      evidence_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project_decision_evidence_035)"
+      evidence_restored_counts="$(research_query "$RESTORE_DATABASE" "select count(*) from project_decision_card_evidence_ref")"
+      [[ "$evidence_source_counts" == "$evidence_restored_counts" ]] || { echo 'ERROR: project decision evidence restore counts do not match the backup archive.' >&2; exit 1; }
+      evidence_contract=present
+      ;;
+    *) echo 'ERROR: restored decision evidence schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
   local business_sql business_result business_summary
@@ -923,8 +958,8 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   trap - EXIT
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   duration_seconds="$(( $(date +%s) - start_epoch ))"
-  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s experiment_contract=%s timeline_contract=%s\n' \
-    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract" "$decision_binding_contract" "$private_analysis_contract" "$experiment_contract" "$timeline_contract"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s experiment_contract=%s timeline_contract=%s evidence_contract=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$decision_binding_contract" "$private_analysis_contract" "$experiment_contract" "$timeline_contract" "$evidence_contract"
 )
 
 case "$command_name" in

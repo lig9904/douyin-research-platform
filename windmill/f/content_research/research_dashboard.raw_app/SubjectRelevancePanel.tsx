@@ -144,7 +144,7 @@ export default function SubjectRelevancePanel({ projectId, selectedSubjectId, on
       </div> : <p className="subject-empty">创建主体后，项目任务才能明确哪些候选值得进入决策。</p>}
     </Card>
     {selected ? <Card className="subject-score-card" title={`相关候选优先级 · ${selected.name}`} extra={<Space><span>最近一批评分 · 最多前 20 条</span>{onOpenVideoLibrary ? <Button size="small" onClick={onOpenVideoLibrary}>到视频库核对原始依据</Button> : null}</Space>}>
-      <Alert type="info" showIcon message="批内相对排序，不是经营效果预测" description="只展示本项目本主体最近一批、当前仍相关的公开视频；不同运行批次的分数不能直接比较。低置信度或样本不足时先核对原始依据。评论、转写和大模型分析仍未在项目链路启用。" />
+      <Alert type="info" showIcon message="批内相对排序，不是经营效果预测" description="只展示本项目本主体最近一批、当前仍相关的公开视频；不同运行批次的分数不能直接比较。低置信度或样本不足时先核对原始依据。评论、转写和 L3 分析按项目权限及审核状态到视频库核对，不参与本项 L1 排序。" />
       <Table<ProjectScore> rowKey={(row) => `${row.source_run_id}:${row.video_id}`} pagination={{ pageSize: 8 }} dataSource={scores} locale={{ emptyText: '暂无可展示的项目级评分。运行主体绑定任务并核对相关性后再查看。' }} columns={[
         { title: '公开视频', key: 'video', render: (_, row) => <div><strong>{row.title}</strong><small>{row.account_name || '公开账号未提供名称'}</small></div> },
         { title: 'L1 优先级', dataIndex: 'score', key: 'score', render: (value: number) => <strong>{Number(value).toFixed(2)} / 100</strong> },

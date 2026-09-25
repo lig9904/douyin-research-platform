@@ -27,6 +27,7 @@ TARGETS = {
         'project_decision_card', 'project_decision_card_event',
         'project_publication_record', 'project_publication_metric_observation',
     ),
+    'project_decision_evidence_035': ('project_decision_card_evidence_ref',),
     'subject_score_029': ('project_video_subject_score',),
     'project_private_analysis_032': (
         'project_asr_media_review', 'project_research_task_cost',

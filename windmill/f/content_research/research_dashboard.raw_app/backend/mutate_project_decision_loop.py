@@ -213,9 +213,26 @@ def _record_event(cur, project: UUID, card: UUID, actor: str, action: str,
 
 
 def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if set(payload) != {"source_video_id", "subject_id", "profile_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision", "evaluation_metric", "success_rule", "observation_window_days", "comparison_basis", "confounder_plan"}:
+    required = {"source_video_id", "subject_id", "profile_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision", "evaluation_metric", "success_rule", "observation_window_days", "comparison_basis", "confounder_plan"}
+    if not required.issubset(payload) or set(payload) - required - {"evidence_refs"}:
         raise ValueError("create_card payload is invalid")
     video = _uuid(payload["source_video_id"], "source_video_id")
+    raw_refs = payload.get("evidence_refs", [])
+    if not isinstance(raw_refs, list) or len(raw_refs) > 12:
+        raise ValueError("evidence_refs must contain at most 12 videos")
+    evidence_refs: list[tuple[UUID, str, str]] = []
+    seen_videos = {video}
+    for item in raw_refs:
+        if not isinstance(item, dict) or set(item) != {"video_id", "role", "reason"}:
+            raise ValueError("evidence_refs item is invalid")
+        ref_video = _uuid(item["video_id"], "evidence_refs.video_id")
+        if ref_video in seen_videos:
+            raise ValueError("evidence_refs must be unique and differ from the primary video")
+        seen_videos.add(ref_video)
+        ref_role = item["role"]
+        if not isinstance(ref_role, str) or ref_role not in {"comparable", "counterexample"}:
+            raise ValueError("evidence_refs.role is invalid")
+        evidence_refs.append((ref_video, ref_role, _text(item["reason"], "evidence_refs.reason", 500)))
     decision = payload["decision"]
     if decision not in _DECISIONS:
         raise ValueError("decision is invalid")
@@ -268,6 +285,13 @@ def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, A
          values["comparison_basis"], values["confounder_plan"]),
     )
     card = cur.fetchone()["id"]
+    for position, (ref_video, ref_role, ref_reason) in enumerate(evidence_refs, start=1):
+        cur.execute(
+            """insert into project_decision_card_evidence_ref
+               (project_id,decision_card_id,position,video_id,role,reason)
+               values (%s,%s,%s,%s,%s,%s)""",
+            (project, card, position, ref_video, ref_role, ref_reason),
+        )
     if profile is not None:
         cur.execute(
             """insert into project_decision_card_profile_binding
@@ -275,7 +299,10 @@ def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, A
                values (%s,%s,%s,%s,%s)""",
             (project, card, subject, profile, actor),
         )
-    _record_event(cur, project, card, actor, "created", ["subject_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision", "experiment_contract"], None, status)
+    changed_fields = ["subject_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision", "experiment_contract"]
+    if evidence_refs:
+        changed_fields.append("evidence_refs")
+    _record_event(cur, project, card, actor, "created", changed_fields, None, status)
     return {"changed": True, "card_id": str(card), "status": status}
 
 

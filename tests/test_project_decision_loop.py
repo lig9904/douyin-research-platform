@@ -47,6 +47,10 @@ def test_decision_loop_contract_is_project_local_and_strict() -> None:
     preregistration = (ROOT / "db/migrations/033_project_experiment_contract.sql").read_text()
     assert "experiment contract is immutable" in preregistration
     assert "requires linked action and real platform provenance" in preregistration
+    evidence = (ROOT / "db/migrations/035_project_decision_evidence.sql").read_text()
+    assert "project_decision_card_evidence_ref" in evidence
+    assert "requires locally accepted available video" in evidence
+    assert "is append-only" in evidence
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
@@ -67,6 +71,8 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             conn.execute((ROOT / "db/migrations/033_project_experiment_contract.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/034_project_experiment_timeline.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/034_project_experiment_timeline.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/035_project_decision_evidence.sql").read_text(), prepare=False)
+            conn.execute((ROOT / "db/migrations/035_project_decision_evidence.sql").read_text(), prepare=False)
             local_now = datetime.now(ZoneInfo("Asia/Shanghai"))
             today = local_now.date()
             yesterday = today - timedelta(days=1)
@@ -165,6 +171,73 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','local','accepted')", (project, another_accepted))
             with pytest.raises(psycopg.Error, match="immutable"):
                 conn.execute("update project_decision_card set source_video_id=%s where id=%s", (another_accepted, created["card_id"]))
+            counterexample = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','8888888888888888886','低效反例') returning id").fetchone()[0]
+            conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','local','accepted')", (project, counterexample))
+            refs = [
+                {"video_id": str(another_accepted), "role": "comparable", "reason": "同类开头，比较节奏"},
+                {"video_id": str(counterexample), "role": "counterexample", "reason": "铺垫过长，作为反例"},
+            ]
+            refs_payload = {**payload, "hypothesis": "多案例与反例形成对照", "evidence_refs": refs}
+            refs_key = str(uuid4())
+            ref_card = mutate.main(db, str(project), "create_card", refs_payload, refs_key)
+            assert mutate.main(db, str(project), "create_card", refs_payload, refs_key)["idempotent_replay"] is True
+            assert conn.execute("select count(*) from project_decision_card_evidence_ref where decision_card_id=%s", (ref_card["card_id"],)).fetchone()[0] == 2
+            assert "evidence_refs" in conn.execute("select changed_fields from project_decision_card_event where decision_card_id=%s and action='created'", (ref_card["card_id"],)).fetchone()[0]
+            with pytest.raises(psycopg.Error, match="must be bound when the card is created"):
+                conn.execute(
+                    """insert into project_decision_card_evidence_ref
+                       (project_id,decision_card_id,position,video_id,role,reason)
+                       values (%s,%s,1,%s,'counterexample','事后追加的反例')""",
+                    (project, created["card_id"], another_accepted),
+                )
+            for bad_refs, error in [
+                ([refs[0], refs[0]], "unique"),
+                ([{**refs[0], "video_id": str(accepted)}], "primary video"),
+                ([{**refs[0], "video_id": str(shared_only)}], "MUTATION_UNAVAILABLE"),
+                ([{**refs[0], "role": "primary"}], "role is invalid"),
+                (refs * 7, "at most 12"),
+            ]:
+                with pytest.raises((ValueError, RuntimeError), match=error):
+                    mutate.main(db, str(project), "create_card", {**refs_payload, "evidence_refs": bad_refs}, str(uuid4()))
+            def assert_direct_evidence_rejected(ref_video, expected):
+                conn.execute("begin")
+                try:
+                    fresh_card = conn.execute(
+                        """insert into project_decision_card
+                           (project_id,source_video_id,hypothesis,reference_point,adaptation_difference,
+                            owner_actor,decision,status,created_by,evaluation_metric,success_rule,
+                            observation_window_days,comparison_basis,confounder_plan)
+                           values (%s,%s,'数据库直接建卡','参考','差异','writer@example.com','observe',
+                                   'observing','writer@example.com','新增关注','高于基线',7,'同类','无')
+                           returning id""",
+                        (project, accepted),
+                    ).fetchone()[0]
+                    with pytest.raises(psycopg.Error, match=expected):
+                        conn.execute(
+                            """insert into project_decision_card_evidence_ref
+                               (project_id,decision_card_id,position,video_id,role,reason)
+                               values (%s,%s,1,%s,'comparable','直接 SQL 绕过')""",
+                            (project, fresh_card, ref_video),
+                        )
+                finally:
+                    conn.execute("rollback")
+
+            assert_direct_evidence_rejected(shared_only, "requires locally accepted available video")
+            assert_direct_evidence_rejected(accepted, "cannot repeat primary video")
+            with pytest.raises(psycopg.Error, match="append-only"):
+                conn.execute("update project_decision_card_evidence_ref set reason='篡改' where decision_card_id=%s", (ref_card["card_id"],))
+            with pytest.raises(psycopg.Error, match="append-only"):
+                conn.execute("delete from project_decision_card_evidence_ref where decision_card_id=%s", (ref_card["card_id"],))
+            conn.execute("update source_video set availability_status='unavailable' where id=%s", (another_accepted,))
+            with pytest.raises(RuntimeError, match="MUTATION_UNAVAILABLE"):
+                mutate.main(db, str(project), "create_card", {**refs_payload, "hypothesis": "不可用对照不能新建"}, str(uuid4()))
+            monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
+            ref_read = next(card for card in read.main(db, str(project))["cards"] if card["id"] == ref_card["card_id"])
+            assert [item["role"] for item in ref_read["evidence_refs"]] == ["comparable", "counterexample"]
+            assert ref_read["evidence_refs"][0]["video_title"] == "另一条已接受视频"
+            assert ref_read["evidence_refs"][0]["reference_withdrawn"] is True
+            assert ref_read["evidence_refs"][1]["reference_withdrawn"] is False
+            monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")
             bad = {**payload, "source_video_id": str(shared_only)}
             with pytest.raises(Exception):
                 mutate.main(db, str(project), "create_card", bad, str(uuid4()))

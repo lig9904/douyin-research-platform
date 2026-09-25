@@ -111,7 +111,8 @@ def main(db: postgresql, project_id: str):
                             'profile_version_no', binding.profile_version_no,
                             'rights_status_at_binding', binding.rights_status_at_binding,
                             'profile_current_status', bound_profile.status
-                          ) end as profile_binding
+                          ) end as profile_binding,
+                          coalesce(evidence_ref_rows.refs, '[]'::jsonb) as evidence_refs
                    from project_decision_card c
                    left join project_decision_card_profile_binding binding
                      on binding.decision_card_id=c.id and binding.project_id=c.project_id
@@ -123,6 +124,21 @@ def main(db: postgresql, project_id: str):
                    left join source_account a on a.id=v.account_id
                    left join research_subject subject_row
                      on subject_row.id=c.subject_id and subject_row.project_id=c.project_id
+                   left join lateral (
+                     select jsonb_agg(jsonb_build_object(
+                       'id', ref.id, 'video_id', ref.video_id, 'role', ref.role,
+                       'reason', ref.reason, 'video_title', ref.video_title_at_binding,
+                       'account_name', ref.account_name_at_binding,
+                       'reference_withdrawn',
+                         (ref_inclusion.project_id is null or ref_inclusion.status <> 'accepted'
+                          or ref_video.availability_status <> 'available')
+                     ) order by ref.position) as refs
+                     from project_decision_card_evidence_ref ref
+                     join source_video ref_video on ref_video.id=ref.video_id
+                     left join project_video_inclusion ref_inclusion
+                       on ref_inclusion.project_id=ref.project_id and ref_inclusion.video_id=ref.video_id
+                     where ref.project_id=c.project_id and ref.decision_card_id=c.id
+                   ) evidence_ref_rows on true
                    where c.project_id=%s
                    order by c.updated_at desc, c.id
                    limit 200""",
