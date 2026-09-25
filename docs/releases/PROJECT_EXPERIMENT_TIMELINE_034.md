@@ -1,6 +1,12 @@
 # 034 行动实验时间线修复：发布候选
 
-状态（2026-09-25）：本地完整 pytest 套件在隔离 PostgreSQL 上通过（退出码 0）；034 迁移重放和时间线正反例通过，前端 esbuild、Python compileall、Shell 语法和 `git diff --check` 通过。**未部署测试服，未完成九九业务验收**。033 的测试服结构和只读权限验收记录见 [TEST_SERVER_033_20260925.md](TEST_SERVER_033_20260925.md)。
+状态（2026-09-25）：本地完整 pytest 套件在隔离 PostgreSQL 上通过（退出码 0）；034 迁移重放和时间线正反例通过，前端 esbuild、Python compileall、Shell 语法和 `git diff --check` 通过。测试服研究库已应用 034 并验证，**Raw App 尚未发布，不可视为页面或九九业务验收**。033 的测试服结构和只读权限验收记录见 [TEST_SERVER_033_20260925.md](TEST_SERVER_033_20260925.md)。
+
+## 测试服数据库阶段证据
+
+- 发布前工作树干净，原 HEAD `b3451261`；033 迁移合同 `verify` 通过。前备份 `/srv/douyin-research-test/backups/20260925T071559Z` 独立校验为 `BACKUP_VALID`，manifest SHA-256 `b171dc9ed69e3cb39fe07ebc6387533e5dab2702f9ec03cba161dc411e570f2b`。
+- 固定候选提交 `111309f5` 的 GitHub build/test/validate 全部通过后，测试服切换到该提交。`migrate` 仅应用缺失迁移并先自动备份到 `/srv/douyin-research-test/backups/20260925T071703Z`；随后独立 `verify` 对迁移账本及 034 函数摘要返回 `VERIFIED`。
+- 迁移后备份 `/srv/douyin-research-test/backups/20260925T071749Z` 独立校验为 `BACKUP_VALID`，manifest SHA-256 `819cb33b09b504d9d62384a5a2e46e48565197a9d32e3404dccf714fcb7cd97a`。双库隔离恢复返回 `RESTORE_DRILL_VALID`、`timeline_contract=present`、`invalid_link_count=0`、`v1_release_accepted=false`，耗时 21 秒；临时库由脚本清理，运行库未被覆盖。
 
 ## 输入、输出与边界
 
