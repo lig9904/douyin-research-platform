@@ -79,6 +79,8 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
   }
 
   const fmt = (value?: number | null) => value == null ? '—' : Number(value).toLocaleString('zh-CN')
+  const publicVideoUrl = candidate?.platform === 'douyin' && /^\d{16,25}$/.test(candidate.platform_video_id)
+    ? `https://www.douyin.com/video/${candidate.platform_video_id}` : null
   return <section className="card project-video-evidence" aria-label="纳入已有公开视频">
     <div className="project-video-evidence-head">
       <div><span className="project-video-evidence-eyebrow">项目公开依据</span><h2>纳入已有视频</h2></div>
@@ -107,6 +109,8 @@ export default function ProjectVideoEvidence({ projectId, onAccepted }: {
         <strong>{candidate.title || '未命名视频'}</strong>
         <span>{candidate.account_name || '未知账号'} · ID {candidate.platform_video_id}</span>
         <small>播放 {fmt(candidate.play_count)} · 点赞 {fmt(candidate.like_count)} · 评论 {fmt(candidate.comment_count)}</small>
+        <small>这里只核对元数据。请先查看原视频内容；若原视频无法打开，不要仅凭标题或指标判断是否可比。</small>
+        {publicVideoUrl ? <a href={publicVideoUrl} target="_blank" rel="noopener noreferrer">打开原视频 ↗</a> : null}
       </div>
       <Popconfirm title="确认纳入本项目公开依据？" description="仅本项目可见；如需给其它项目看，还须双方单独授权。"
         onConfirm={() => void accept()}>

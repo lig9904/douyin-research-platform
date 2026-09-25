@@ -14,6 +14,7 @@
 .project-video-evidence-copy { display: grid; gap: 4px; flex: 1; min-width: 0; }
 .project-video-evidence-copy strong { color: #183658; overflow-wrap: anywhere; }
 .project-video-evidence-copy span, .project-video-evidence-copy small { color: #65768b; }
+.project-video-evidence-copy a { color: #1768a8; font-weight: 600; width: fit-content; }
 @media (max-width: 720px) {
   .project-video-evidence-form, .project-video-evidence-preview { flex-wrap: wrap; }
   .project-video-evidence-form .ant-input, .project-video-evidence-form .ant-btn { width: 100%; }

@@ -46,6 +46,9 @@ def test_project_video_evidence_exact_public_reference_and_static_db(monkeypatch
     page = (BACKEND.parent.parent / "ProjectVideoEvidence.tsx").read_text()
     assert "backend.manage_project_video_evidence" in page
     assert "确认纳入本项目公开依据" in page
+    assert "https://www.douyin.com/video/${candidate.platform_video_id}" in page
+    assert 'rel="noopener noreferrer"' in page
+    assert "若原视频无法打开，不要仅凭标题或指标判断是否可比" in page
 
 
 @pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
