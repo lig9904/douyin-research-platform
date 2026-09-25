@@ -1,6 +1,6 @@
 # 034 行动实验时间线修复：发布候选
 
-状态（2026-09-25）：本地完整 pytest 套件在隔离 PostgreSQL 上通过（退出码 0）；034 迁移重放和时间线正反例通过，前端 esbuild、Python compileall、Shell 语法和 `git diff --check` 通过。测试服研究库已应用 034 并验证；单个研究台 Raw App 已发布为 Windmill 版本 51。**这只是技术发布，不等于 A/B/C 写路径或九九真实业务验收**。033 的测试服结构和只读权限验收记录见 [TEST_SERVER_033_20260925.md](TEST_SERVER_033_20260925.md)。
+状态（2026-09-25）：本地完整 pytest 套件在隔离 PostgreSQL 上通过（退出码 0）；034 迁移重放和时间线正反例通过，前端 esbuild、Python compileall、Shell 语法和 `git diff --check` 通过。测试服研究库已应用 034 并验证；单个研究台 Raw App 已发布为 Windmill 版本 51。A/B/C 真实账号的写接口**权限边界**已验证，但未保存有效行动卡，也未完成三身份前端或九九真实业务验收。033 的测试服结构和只读权限验收记录见 [TEST_SERVER_033_20260925.md](TEST_SERVER_033_20260925.md)。
 
 ## 测试服数据库阶段证据
 
@@ -8,6 +8,7 @@
 - 固定候选提交 `111309f5` 的 GitHub build/test/validate 全部通过后，测试服切换到该提交。`migrate` 仅应用缺失迁移并先自动备份到 `/srv/douyin-research-test/backups/20260925T071703Z`；随后独立 `verify` 对迁移账本及 034 函数摘要返回 `VERIFIED`。
 - 迁移后备份 `/srv/douyin-research-test/backups/20260925T071749Z` 独立校验为 `BACKUP_VALID`，manifest SHA-256 `819cb33b09b504d9d62384a5a2e46e48565197a9d32e3404dccf714fcb7cd97a`。双库隔离恢复返回 `RESTORE_DRILL_VALID`、`timeline_contract=present`、`invalid_link_count=0`、`v1_release_accepted=false`，耗时 21 秒；临时库由脚本清理，运行库未被覆盖。
 - 经用户确认，在测试 Windmill 创建 1 小时有效的单应用发布令牌，仅授予 `apps:write`、`raw_apps:write`、`users:read`。本机 `wmill app push` 仅发布 `f/content_research/research_dashboard`，返回 `Raw app pushed`；刷新 Windmill 编辑器后，部署历史从版本 50 增至版本 51。公开研究台可按原管理身份选择“验收项目 A”并进入“行动复盘”页面。用户选择**不立即撤销令牌，等待 1 小时自动过期**；不在仓库或文档记录令牌值。
+- 用 `dy-a`、`dy-b`、`dy-c` 三个真实 Operator 账号分别登录 Windmill，读取 Version 51 App 自身的 `mutate_project_decision_loop` 内联脚本，通过应用组件接口提交独立随机幂等键的 `create_card` 空参数。A→A 与 B→B 均进入业务校验并返回 `ValueError: create_card payload is invalid`；A→B、B→A、C→A 均在业务校验前返回 `PermissionError: RESEARCH_PROJECT_WRITE_DENIED`。测试任务 ID 分别为 `01a0d786-6061-a49c-54ae-7760ecd8360c`、`01a0d787-c3c9-97d2-fcc8-742ae08616b3`、`01a0d787-1eb9-ea86-bf63-638b86cea7a2`、`01a0d787-216c-c86e-a345-10e89c6d375e`、`01a0d787-2430-562e-1eef-ea944e94dbbf`。各账号测试后退出；故意不给合法业务字段，未创建行动卡或伪造发布。
 
 ## 输入、输出与边界
 
@@ -20,7 +21,7 @@
 
 - `create_publication` 增加必填 `published_at`，ISO 8601 且带时区；`publication_date` 仍为上海业务日期。调用方需与 034 数据库迁移同批发布，旧版页面/后端不得混用。
 - `get_project_decision_loop` 返回 `published_at`；页面显示人工登记时间与证据等级。Windmill 发布只针对 `f/content_research/research_dashboard` 单个 Raw App，继续使用原有项目 ACL，不扩大脚本、资源或 Secret 权限。
-- 034 测试服发布已经完成备份、迁移账本与触发器函数验证、双库隔离恢复及单 App 部署。下一阶段仍须用 A/B/C 真实身份分别验证页面/接口写入边界；此前完成的是三身份后端只读隔离，不可替代写路径验收。正式行动和发布只能使用真实业务材料；不得为测试伪造九九发布。
+- 034 测试服发布已经完成备份、迁移账本与触发器函数验证、双库隔离恢复及单 App 部署。A/B/C 的真实写接口权限分支已验证，但空参数失败任务不能替代有效写入、页面操作、状态转移和结果回读；下一阶段仍须用真实项目行动验证这些业务步骤。正式行动和发布只能使用真实业务材料；不得为测试伪造九九发布。
 
 ## 验收
 
