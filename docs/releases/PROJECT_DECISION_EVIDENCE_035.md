@@ -1,6 +1,6 @@
 # 035 项目行动卡：多案例与反例依据
 
-状态（2026-09-25）：代码与隔离 PostgreSQL 验证完成；**尚未发布测试服**。测试服仍为 034 / Raw App Version 51。未创建“九九”项目或付费采集任务。
+状态（2026-09-25）：代码与隔离 PostgreSQL 验证完成；测试服**数据库已发布 035，Raw App 尚未发布**，页面仍为 Version 51。未创建“九九”项目或付费采集任务。
 
 ## 业务输入、输出与边界
 
@@ -19,4 +19,11 @@
 
 035 是加法迁移。发布顺序为：固定候选提交并使 CI 通过；测试服备份；应用 035；核验迁移账本、表/索引/触发器及函数内容；做双库隔离恢复并比对依据表行数；最后仅发布研究台 Raw App。旧页面配新表可继续单案例写入；新页面依赖新表，不能先于迁移发布。发布后由 A/B/C 真身份再次核对项目隔离，并用**真实、项目内已接受的公开案例**保存一张有效行动卡及回读；没有合适案例时不凑数。
 
-代码检查：隔离 PostgreSQL 上 `tests/test_project_decision_loop.py` 与 `tests/test_server_release_decision_evidence.py` 共 6 项通过，覆盖旧请求兼容、重复应用迁移、两类依据、越界拒绝、迟到追加拒绝、撤回历史标记、发布契约禁用/篡改检测。按 CI 方法先加载完整 schema 与全部迁移后，全量 pytest 退出码 0（5 项因环境条件跳过），原始输出留在本机 `work/verification/035-full-pytest-r2.log`；前端打包、页面静态契约和 Shell 语法检查通过。首次全量试跑只启动了空数据库，因缺表大量失败；随后按 CI 初始化并保留失败结果，不将其计为代码回归。部署、真实业务写入和九九首轮发布/结果仍待独立验收。
+代码检查：隔离 PostgreSQL 上 `tests/test_project_decision_loop.py` 与 `tests/test_server_release_decision_evidence.py` 共 6 项通过，覆盖旧请求兼容、重复应用迁移、两类依据、越界拒绝、迟到追加拒绝、撤回历史标记、发布契约禁用/篡改检测。按 CI 方法先加载完整 schema 与全部迁移后，全量 pytest 退出码 0（5 项因环境条件跳过），原始输出留在本机 `work/verification/035-full-pytest-r2.log`；前端打包、页面静态契约和 Shell 语法检查通过。首次全量试跑只启动了空数据库，因缺表大量失败；随后按 CI 初始化并保留失败结果，不将其计为代码回归。真实业务写入和九九首轮发布/结果仍待独立验收。
+
+## 测试服数据库阶段证据
+
+- GitHub CI 的 build、test、validate 均通过后，测试服从干净的 `111309f5` 切换到固定提交 `353a3ba4`。发布前备份：`/srv/douyin-research-test/backups/20260925T082438Z`；迁移脚本另生成前备份 `20260925T082537Z`。
+- `migrate` 仅应用缺失的 035；迁移内置契约检查通过，随后独立 `verify` 返回 `VERIFIED`，包括迁移账本、依据表、约束、索引、触发器和审阅过的函数指纹。
+- 迁移后备份 `/srv/douyin-research-test/backups/20260925T082611Z` 完成；对该备份的双库隔离恢复返回 `RESTORE_DRILL_VALID`、`evidence_contract=present`、`invalid_link_count=0`、`v1_release_accepted=false`，耗时 21 秒。脚本已清理两个临时库，另经 PostgreSQL 目录查询确认没有残留。运行库未被覆盖。
+- 截至数据库阶段结束，Windmill `f/content_research/research_dashboard` 仍为 43 个版本、最高版本 ID 51。**不能把数据库迁移通过写成新页面已部署或业务案例已验收。**
