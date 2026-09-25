@@ -1,6 +1,6 @@
 # 035 项目行动卡：多案例与反例依据
 
-状态（2026-09-25）：代码与隔离 PostgreSQL 验证完成；测试服**数据库已发布 035，Raw App 尚未发布**，页面仍为 Version 51。未创建“九九”项目或付费采集任务。
+状态（2026-09-25）：代码与隔离 PostgreSQL 验证完成；测试服已发布 035 数据库迁移和研究台单个 Raw App，最高应用版本 ID 52。页面已出现可比案例/反例入口。**真实多案例行动卡尚未验收**：验收项目 A 目前仅有一条合格的已接受视频，不能把同一条视频重复当成主案例和对照。未创建“九九”项目或付费采集任务。
 
 ## 业务输入、输出与边界
 
@@ -21,9 +21,14 @@
 
 代码检查：隔离 PostgreSQL 上 `tests/test_project_decision_loop.py` 与 `tests/test_server_release_decision_evidence.py` 共 6 项通过，覆盖旧请求兼容、重复应用迁移、两类依据、越界拒绝、迟到追加拒绝、撤回历史标记、发布契约禁用/篡改检测。按 CI 方法先加载完整 schema 与全部迁移后，全量 pytest 退出码 0（5 项因环境条件跳过），原始输出留在本机 `work/verification/035-full-pytest-r2.log`；前端打包、页面静态契约和 Shell 语法检查通过。首次全量试跑只启动了空数据库，因缺表大量失败；随后按 CI 初始化并保留失败结果，不将其计为代码回归。真实业务写入和九九首轮发布/结果仍待独立验收。
 
-## 测试服数据库阶段证据
+## 测试服发布证据
 
 - GitHub CI 的 build、test、validate 均通过后，测试服从干净的 `111309f5` 切换到固定提交 `353a3ba4`。发布前备份：`/srv/douyin-research-test/backups/20260925T082438Z`；迁移脚本另生成前备份 `20260925T082537Z`。
 - `migrate` 仅应用缺失的 035；迁移内置契约检查通过，随后独立 `verify` 返回 `VERIFIED`，包括迁移账本、依据表、约束、索引、触发器和审阅过的函数指纹。
 - 迁移后备份 `/srv/douyin-research-test/backups/20260925T082611Z` 完成；对该备份的双库隔离恢复返回 `RESTORE_DRILL_VALID`、`evidence_contract=present`、`invalid_link_count=0`、`v1_release_accepted=false`，耗时 21 秒。脚本已清理两个临时库，另经 PostgreSQL 目录查询确认没有残留。运行库未被覆盖。
-- 截至数据库阶段结束，Windmill `f/content_research/research_dashboard` 仍为 43 个版本、最高版本 ID 51。**不能把数据库迁移通过写成新页面已部署或业务案例已验收。**
+- 数据库阶段结束时，Windmill `f/content_research/research_dashboard` 为 43 个版本、最高版本 ID 51。随后只执行该路径的 `wmill app push`，返回 `Raw app pushed`；数据库回读为 44 个版本、最高版本 ID 52。没有执行工作区批量同步或脚本推送。
+- 在公开研究台 URL 刷新后选中“验收项目 A”，行动复盘表单显示“主要参考视频”“可比案例与反例（可选）”及“添加案例或反例”。主视频候选列表只有《那一刻，我也被净化了》一条。新页面部署可见，但真实多案例卡的写入与回读仍待有第二条独立、合格的公开视频后验证。
+- 发布后直接回读 Windmill `app` 记录：`policy.execution_mode=publisher`，`extra_perms` 仍只有 `u/liguo9904dya`、`u/liguo9904dyb`、`u/liguo9904dyc` 三个测试身份，均为 Reader（`false`）。这是权限配置核对，**不等同于 A/B/C 真身份页面隔离复测**；该复测仍待执行。
+- 单应用发布使用一小时限时令牌，范围仅 `raw_apps:write`、`apps:write`、`users:read`，界面显示 2026-09-25 17:41 到期。令牌未写入仓库或发布文档；本地临时密钥桥已清理。依此前对同类发布令牌的选择，等待其自动过期，不提前撤销。
+
+**验收边界：**035 的代码检查、数据库发布、隔离恢复和页面发布已完成；真实多案例业务价值验收尚未完成，不可据此宣布“九九”业务闭环已通过。下一步应为验收项目 A 纳入至少一条与主案例表达形式不同、可说明可比/反例理由的真实公开视频，再以 A/B/C 真身份完成项目隔离及行动卡写入回读。此步骤不得伪造来源或效果数字。
