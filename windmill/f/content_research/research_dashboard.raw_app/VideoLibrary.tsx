@@ -65,6 +65,7 @@ type VideoItem = {
   sources: string[]
   source_count: number
   collection_count: number | null
+  project_inclusion_status?: 'candidate' | 'shortlisted' | 'accepted' | 'rejected' | null
   evidence?: {
     source_type: string
     source_key?: string | null
@@ -158,6 +159,22 @@ function formatCount(v?: number | null) {
   if (v >= 100000000) return `${(v / 100000000).toFixed(1)}亿`
   if (v >= 10000) return `${(v / 10000).toFixed(1)}万`
   return Number(v).toLocaleString('zh-CN')
+}
+
+function hasContradictoryZeroPlay(item: VideoItem) {
+  return item.play_count === 0 && [
+    item.like_count, item.comment_count, item.share_count, item.collect_count,
+  ].some(value => typeof value === 'number' && value > 0)
+}
+
+function projectInclusionLabel(status?: VideoItem['project_inclusion_status']) {
+  switch (status) {
+    case 'accepted': return '已接受'
+    case 'shortlisted': return '已预选'
+    case 'candidate': return '待核候选'
+    case 'rejected': return '未采纳'
+    default: return '待核'
+  }
 }
 
 function formatDate(v?: string | null) {
@@ -453,7 +470,7 @@ export default function VideoLibrary({
       activeView="videos"
       onNavigate={onNavigate}
       title="视频库"
-      subtitle={isProject ? `项目范围：${scope.projectName} · 仅显示已明确纳入本项目的视频与安全依据` : '多平台视频资产 / 黑马候选 / 研究流转'}
+      subtitle={isProject ? `项目范围：${scope.projectName} · 含采集候选；逐条核对实际内容后才算研究依据` : '多平台视频资产 / 黑马候选 / 研究流转'}
       mainClassName="video-library-main"
       headerClassName="video-library-topbar"
       actions={
@@ -699,6 +716,7 @@ export default function VideoLibrary({
                         <th>账号名称</th>
                         <th>平台</th>
                         <th>来源标签</th>
+                        {isProject && <th>项目状态</th>}
                         <th>发布时间</th>
                         <th>播放量</th>
                         <th>点赞</th>
@@ -757,8 +775,14 @@ export default function VideoLibrary({
                               ))}
                             </div>
                           </td>
+                          {isProject && <td><Tag color={item.project_inclusion_status === 'accepted'
+                            ? 'green' : item.project_inclusion_status === 'rejected' ? 'default' : 'blue'}>
+                            {projectInclusionLabel(item.project_inclusion_status)}
+                          </Tag></td>}
                           <td>{formatDate(item.published_at)}</td>
-                          <td>{formatCount(item.play_count)}</td>
+                          <td>{hasContradictoryZeroPlay(item)
+                            ? <Tooltip title="上游返回播放量 0，但已有正向互动；可能是字段缺失或合并时点不一致，不能把 0 当真实播放量。">0 · 待核</Tooltip>
+                            : formatCount(item.play_count)}</td>
                           <td>{formatCount(item.like_count)}</td>
                           <td>{formatCount(item.comment_count)}</td>
                           <td>{formatCount(item.share_count)}</td>
@@ -774,7 +798,7 @@ export default function VideoLibrary({
                         </tr>
                       ))}
                       {!data?.items?.length && (
-                        <tr><td colSpan={isProject ? 13 : 16} className="empty-row">当前筛选下暂无视频</td></tr>
+                        <tr><td colSpan={isProject ? 14 : 16} className="empty-row">当前筛选下暂无视频</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -826,6 +850,19 @@ export default function VideoLibrary({
 
                     <h3 className="detail-title">{detail.title}</h3>
 
+                    {isProject && detail.project_inclusion_status !== 'accepted' && <Alert
+                      type="info"
+                      showIcon
+                      message={detail.project_inclusion_status === 'rejected'
+                        ? '本项目未采纳这条视频'
+                        : detail.project_inclusion_status === 'shortlisted'
+                          ? '已预选，尚未确认为项目研究依据'
+                          : detail.project_inclusion_status === 'candidate'
+                            ? '项目候选视频，尚未确认为研究依据'
+                            : '项目依据状态待核，请刷新后再审核'}
+                      description="可查看公开资料和合并指标；只有核对实际内容并明确接受的视频，才能在本项目试听私有音频或提交 ASR/L3 审核。"
+                    />}
+
                     <div className="detail-account-row">
                       <div className="detail-account">
                         <span className="avatar large">{(detail.account_name || '?').slice(0, 1)}</span>
@@ -871,9 +908,15 @@ export default function VideoLibrary({
                         <h4>数据表现</h4>
                         <span>合并数据 · 最近字段更新 {formatFullDate(detail.metric_captured_at)}</span>
                       </div>
+                      {hasContradictoryZeroPlay(detail) && <Alert
+                        type="warning"
+                        showIcon
+                        message="播放量为 0 与正向互动冲突，指标待核"
+                        description="保留上游原值供复核；当前不能用播放量计算互动率，也不能据此比较传播效果。账号粉丝等字段同样应核对来源与时间。"
+                      />}
                       <div className="detail-metrics">
                         {[
-                          [formatCount(detail.play_count), '播放量'],
+                          [hasContradictoryZeroPlay(detail) ? '0 · 待核' : formatCount(detail.play_count), '播放量'],
                           [formatCount(detail.like_count), '点赞'],
                           [formatCount(detail.comment_count), '评论'],
                           [formatCount(detail.share_count), '分享'],
@@ -894,7 +937,7 @@ export default function VideoLibrary({
 
                     <details key={`metric-evidence-${detail.id}`}>
                       <summary>查看合并依据与指标历史</summary>
-                      <p className="muted">播放量、账号粉丝优先采用榜单记录；其余指标采用最新非缺失记录。保留真实零值，各字段时间可能不同。</p>
+                      <p className="muted">播放量、账号粉丝优先采用榜单记录；其余指标采用最新非缺失记录。保留上游零值供核查；与正向互动冲突时不能当作真实播放量。各字段时间可能不同。</p>
                       {Object.entries(detail.metric_provenance || {}).map(([field, evidence]) => (
                         <p key={field} className="muted">
                           {({play_count:'播放量', like_count:'点赞', comment_count:'评论', share_count:'分享', collect_count:'收藏', author_follower_count:'账号粉丝'} as Record<string,string>)[field] || field}
@@ -962,13 +1005,13 @@ export default function VideoLibrary({
                     />}
 
                     {!isProject && <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />}
-                    {projectId && canReviewProject && <ProjectASRMediaReviewPanel
+                    {projectId && canReviewProject && detail.project_inclusion_status === 'accepted' && <ProjectASRMediaReviewPanel
                       key={`project-media-${projectId}-${detail.id}`}
                       projectId={projectId} videoId={detail.id} />}
                     <ASRTranscriptPanel transcript={detail.asr_transcript} />
-                    {projectId && canReviewProject && !canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
+                    {projectId && detail.project_inclusion_status === 'accepted' && canReviewProject && !canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
                       <p className="project-review-hint">本项目 L3 云端正文审核还需要服务端审核资质；当前账号不可提交。请由工作区管理员核对审核名单，不要借用其他项目的审核记录。</p>}
-                    {projectId && canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
+                    {projectId && detail.project_inclusion_status === 'accepted' && canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
                       <ProjectL3ReviewPanel
                         key={`project-l3-${projectId}-${detail.id}-${detail.asr_transcript.transcript_id}`}
                         projectId={projectId} videoId={detail.id}
@@ -1048,7 +1091,7 @@ export default function VideoLibrary({
 
           <div className="video-library-page-note">
             第 {filters.page} / {totalPages} 页 · {isProject
-              ? '项目视图只显示已纳入项目的公开视频事实及安全依据，不展示全局研究状态或模型审核内容'
+              ? '项目视图显示项目关联视频及其状态；只有已接受视频可进入项目私有 ASR/L3 审核，不展示全局模型审核内容'
               : '收藏、专题、监测与筛选均记录实际登录用户'}
           </div>
           {!isProject && <Modal

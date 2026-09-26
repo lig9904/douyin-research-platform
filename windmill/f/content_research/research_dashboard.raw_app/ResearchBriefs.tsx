@@ -276,7 +276,7 @@ export default function ResearchBriefs({
         showIcon
         message={projectId ? '当前项目任务只采公开元数据' : '任务负责确定研究范围，不替你作结论'}
         description={projectId
-          ? '采集会纳入当前项目；项目任务暂不采新评论或媒体。已保存的公开视频评论可在视频库查看；ASR 和 L3 尚未建立项目归属与审核边界。'
+          ? '采集会生成当前项目的候选视频，不等于已确认为可比的研究依据；项目任务暂不采新评论或媒体。需要 ASR 或 L3 时，先核对实际内容并接受视频，再受控入库媒体、逐条试听与审核。'
           : '系统按来源、时间窗和深度采集并合并到现有视频、账号、热点资产；ASR 与 L3 始终保留独立人工审核。'}
       />
       {error && <Alert type="error" showIcon message="研究任务加载失败" description={error} />}
@@ -391,7 +391,7 @@ export default function ResearchBriefs({
             <li><b>发现</b><span>按指定来源抓取有限候选并补齐详情。</span></li>
             <li><b>合并</b><span>同一视频和账号进入统一资产，不制造重复记录。</span></li>
             <li><b>加深</b><span>{projectId ? '项目任务暂不采新评论或私有媒体；已保存的公开评论仅作阅读依据。' : '按深度采评论或私有媒体；无需的步骤直接停止。'}</span></li>
-            <li><b>人工判断</b><span>{projectId ? '项目级转写与大模型分析仍待归属和审核链路。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
+            <li><b>人工判断</b><span>{projectId ? '先判断候选与项目目标是否可比；只有确认纳入的视频，才能在视频库继续逐条试听音频、审核待发送正文。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
           </ol>
         </Card>
       </div>

@@ -176,8 +176,17 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
             assert item["account_id"] is None
             assert item["priority"] is None
             assert item["collection_count"] is None
+            assert item["project_inclusion_status"] == "candidate"
             assert scoped["detail"]["id"] == str(video_a)
             assert scoped["detail"]["sources"] == ["manual"]
+            assert scoped["detail"]["project_inclusion_status"] == "candidate"
+            for status in ("shortlisted", "rejected"):
+                conn.execute(
+                    "update project_video_inclusion set status=%s where project_id=%s and video_id=%s",
+                    (status, project_a, video_a),
+                )
+                scoped_status = module.main(params, project_id=str(project_a), selected_video_id=str(video_a))
+                assert scoped_status["detail"]["project_inclusion_status"] == status
             assert scoped["detail"]["evidence"] == []
             assert scoped["detail"]["priority"] is None
             assert scoped["detail"]["collection_count"] is None
@@ -193,6 +202,8 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
                 "update project_video_inclusion set status='accepted' where project_id=%s and video_id=%s",
                 (project_a, video_a),
             )
+            accepted = module.main(params, project_id=str(project_a), selected_video_id=str(video_a))
+            assert accepted["detail"]["project_inclusion_status"] == "accepted"
             digest = "a" * 64
             asset_id = conn.execute(
                 """insert into media_asset(video_id,kind,storage_location,bucket,object_key,
@@ -346,6 +357,18 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
             assert project_result["detail"]["asr_transcript"]["text"] == "项目 A 私有转写"
             assert project_result["detail"]["l3_analysis"]["output"]["narrative_structure"] == ["项目 A 私有结论"]
             assert project_result["detail"]["asr_transcript"]["cost"]["total_cost"] == 0.02
+            conn.execute(
+                "update project_video_inclusion set status='rejected' where project_id=%s and video_id=%s",
+                (project_a, video_a),
+            )
+            rejected_result = module.main(params, project_id=str(project_a), selected_video_id=str(video_a))
+            assert rejected_result["detail"]["project_inclusion_status"] == "rejected"
+            assert rejected_result["detail"]["asr_transcript"] is None
+            assert rejected_result["detail"]["l3_analysis"] is None
+            conn.execute(
+                "update project_video_inclusion set status='accepted' where project_id=%s and video_id=%s",
+                (project_a, video_a),
+            )
             # A review revoked concurrently with a real model request must
             # wait for the exact approved call and its result transaction.
             concurrent_evidence = ProjectL3EvidenceService(project_dsn).prepare(

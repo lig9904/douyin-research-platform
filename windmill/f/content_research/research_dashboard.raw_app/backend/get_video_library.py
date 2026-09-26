@@ -354,6 +354,7 @@ def main(
               v.monitoring_priority,
     """
     item_account_id_field = "a.id::text as account_id,"
+    item_project_status_field = "null::text as project_inclusion_status,"
     item_priority_field = "coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,"
     item_source_fields = """
               coalesce(h.sources, array[]::text[]) as sources,
@@ -386,6 +387,7 @@ def main(
               null::numeric as monitoring_priority,
         """
         item_account_id_field = "null::text as account_id,"
+        item_project_status_field = "inclusion_row.status as project_inclusion_status,"
         item_priority_field = "null::numeric as priority,"
         item_source_fields = """
               array[inclusion_row.source_type] as sources,
@@ -478,6 +480,7 @@ def main(
               v.duration_ms,
               {item_research_fields}
               {item_account_id_field}
+              {item_project_status_field}
               a.nickname as account_name,
               m.play_count,
               m.like_count,
@@ -559,6 +562,7 @@ def main(
                   v.published_at,
                   v.duration_ms,
                   {item_research_fields}
+                  {item_project_status_field}
                   a.nickname as account_name,
                   m.play_count,
                   m.like_count,
@@ -737,6 +741,10 @@ def main(
                       and c.video_id=t.video_id and c.status='completed'
                       and c.task_type='asr_transcription' and c.task_key=j.task_key
                     where t.project_id=%s::uuid and t.video_id=%s::uuid
+                      and exists (select 1 from project_video_inclusion current_inclusion
+                        where current_inclusion.project_id=t.project_id
+                          and current_inclusion.video_id=t.video_id
+                          and current_inclusion.status='accepted')
                     order by t.created_at desc, t.id desc limit 1
                     """,
                     (_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT,
@@ -770,6 +778,10 @@ def main(
                       and c.task_type='l3_structured_research' and c.task_key=j.task_key
                     where a.project_id=%s::uuid and a.video_id=%s::uuid
                       and a.analysis_type=%s and j.schema_version=%s
+                      and exists (select 1 from project_video_inclusion current_inclusion
+                        where current_inclusion.project_id=a.project_id
+                          and current_inclusion.video_id=a.video_id
+                          and current_inclusion.status='accepted')
                     order by a.created_at desc, a.id desc limit 1
                     """,
                     (scoped_project_id, normalized_selected_id,
