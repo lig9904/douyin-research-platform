@@ -101,9 +101,9 @@ def clear_and_seed() -> str:
               follower_count, following_count, total_favorited, video_count
             )
             values
-              (%s,'tikhub','fixture','acct-snap-1',now()-interval '20 days',
+              (%s,'tikhub','fixture','account-profile:acct-snap-1',now()-interval '20 days',
                100000,300,4000000,40),
-              (%s,'tikhub','fixture','acct-snap-2',now(),
+              (%s,'tikhub','fixture','account-profile:acct-snap-2',now(),
                123500,321,5286000,43)
             """,
             (account_id, account_id),
@@ -301,7 +301,7 @@ def test_account_growth_is_null_with_only_one_snapshot() -> None:
             """
             delete from account_metric_snapshot
             where account_id=%s::uuid
-              and observation_key='acct-snap-1'
+              and observation_key='account-profile:acct-snap-1'
             """,
             (account_id,),
         )
@@ -317,6 +317,26 @@ def test_account_growth_is_null_with_only_one_snapshot() -> None:
 
     assert result["items"][0]["follower_growth"] is None
     assert len(result["detail"]["trend"]) == 1
+
+
+def test_fresh_verified_profile_beats_newer_video_author_zero() -> None:
+    assert DSN
+    account_id = clear_and_seed()
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """insert into account_metric_snapshot(
+                 account_id,provider,source_endpoint,observation_key,
+                 captured_at,follower_count)
+               values (%s,'tikhub','douyin.app.one_video','video-author-zero',
+                       now()+interval '1 minute',0)""",
+            (account_id,),
+        )
+    result = load_backend().main(
+        resource_from_dsn(DSN), platform="douyin", days=30,
+        selected_account_id=account_id,
+    )
+    assert result["items"][0]["follower_count"] == 123500
+    assert result["items"][0]["follower_growth"] == 23500
 
 
 def test_account_library_empty_search() -> None:

@@ -1,6 +1,31 @@
 .video-library-main { padding-bottom: 18px; }
+.project-l3-review-summary { overflow-wrap: anywhere; }
+.project-l3-review-dialog .ant-modal-body { max-height: min(76vh, 820px); overflow-y: auto; }
+.project-l3-review-dialog .project-l3-review-body { line-height: 1.65; overflow-wrap: anywhere; }
+.project-l3-review-dialog .project-l3-review-body pre { padding: 12px; background: #f5f8fc; border-radius: 8px; }
+.project-l3-review-dialog .project-l3-review-exact-bundle { white-space: pre-wrap; overflow-wrap: anywhere; }
+.project-l3-review-dialog .project-l3-review-body code { overflow-wrap: anywhere; }
 .video-library-topbar { margin-bottom: 16px; }
 .video-library-shell .nav-item:disabled { opacity: 1; cursor: default; }
+
+.project-video-evidence { padding: 18px 20px; margin-bottom: 14px; }
+.project-video-evidence-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.project-video-evidence-eyebrow { color: #476b95; font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+.project-video-evidence h2 { margin: 4px 0 0; color: #183658; font-size: 19px; }
+.project-video-evidence p { margin: 10px 0 14px; color: #5f7085; line-height: 1.65; }
+.project-video-evidence-form { display: flex; gap: 8px; max-width: 760px; margin-bottom: 12px; }
+.project-video-evidence-form .ant-input { flex: 1; min-width: 0; }
+.project-video-evidence-empty { padding: 13px 15px; color: #69788b; background: #f5f8fc; border-radius: 9px; }
+.project-video-evidence-preview { display: flex; align-items: center; gap: 14px; padding: 14px; border: 1px solid #dce8f4; border-radius: 11px; background: #f8fbff; }
+.project-video-evidence-copy { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.project-video-evidence-copy strong { color: #183658; overflow-wrap: anywhere; }
+.project-video-evidence-copy span, .project-video-evidence-copy small { color: #65768b; }
+.project-video-evidence-copy a { color: #1768a8; font-weight: 600; width: fit-content; }
+@media (max-width: 720px) {
+  .project-video-evidence-form, .project-video-evidence-preview { flex-wrap: wrap; }
+  .project-video-evidence-form .ant-input, .project-video-evidence-form .ant-btn { width: 100%; }
+  .project-video-evidence-preview .ant-btn { width: 100%; }
+}
 
 .video-filter-card { padding: 14px; margin-bottom: 12px; }
 .video-filter-grid {
@@ -234,6 +259,14 @@
 .detail-metrics strong { display: block; color: #0f2850; font-size: 15px; }
 .detail-metrics span { display: block; color: #8190a5; font-size: 9px; margin-top: 2px; }
 
+.comment-feature-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.comment-feature-metrics > div { grid-column: span 2; }
+.comment-feature-metrics > div:nth-child(4),
+.comment-feature-metrics > div:nth-child(5) { grid-column: span 3; }
+.comment-feature-metrics > div:nth-child(4n) { border-right: 1px solid #edf1f6; }
+.comment-feature-metrics > div:nth-child(3),
+.comment-feature-metrics > div:last-child { border-right: 0; }
+
 .l3-empty-state { margin: 0; line-height: 1.6; }
 .l3-analysis-content { display: grid; gap: 9px; }
 .l3-version-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
@@ -342,6 +375,17 @@
 .raw-record-section details { margin-top: 6px; border: 1px solid #e4e7ec; border-radius: 6px; background: #f9fafb; }
 .raw-record-section summary { cursor: pointer; padding: 7px 9px; color: #475467; font-size: 10px; }
 .raw-record-section pre { margin: 0; max-height: 300px; overflow: auto; padding: 9px; border-top: 1px solid #e4e7ec; color: #344054; background: #fff; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; line-height: 1.5; }
+
+.project-case-review { display: grid; gap: 9px; }
+.project-case-review > .muted { margin: 0; color: #63758b; font-size: 10px; line-height: 1.6; }
+.project-case-review-summary { padding: 10px; border: 1px solid #dce8f4; border-radius: 8px; background: #f7fbff; }
+.project-case-review-summary > span { color: #617389; font-size: 10px; }
+.project-case-review-summary p { margin: 7px 0 0; color: #304b69; font-size: 10px; line-height: 1.55; overflow-wrap: anywhere; }
+.project-case-review-form { display: grid; gap: 9px; padding: 11px; border: 1px solid #e2eaf3; border-radius: 8px; background: #fcfdff; }
+.project-case-review-form label { display: grid; gap: 5px; color: #385473; font-size: 10px; font-weight: 600; }
+.project-case-review-form .ant-select, .project-case-review-form .ant-input { width: 100%; font-weight: 400; }
+.project-case-review-form > a { color: #1768a8; font-size: 10px; font-weight: 600; overflow-wrap: anywhere; }
+.project-case-review-form > .ant-btn { justify-self: start; font-size: 10px; }
 
 @media (max-width: 1500px) {
   .video-library-layout { grid-template-columns: minmax(0, 1fr) 310px; }

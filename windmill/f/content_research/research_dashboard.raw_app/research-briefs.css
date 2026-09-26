@@ -81,6 +81,40 @@
 
 .brief-table-card { margin-top: 18px; }
 
+.subject-relevance-panel,
+.subject-review-card {
+  margin-bottom: 18px;
+  border: 1px solid #dce9ff;
+  box-shadow: 0 12px 36px rgba(27, 47, 79, .05);
+}
+
+.subject-relevance-panel .ant-alert { margin-bottom: 14px; }
+
+.subject-relevance-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 14px 0;
+}
+
+.subject-relevance-toolbar .ant-select { min-width: min(100%, 380px); }
+
+.subject-rule-summary {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: #f8fbff;
+  border: 1px solid #e2ecfa;
+  border-radius: 9px;
+}
+
+.subject-rule-summary small { grid-column: 1 / -1; color: #60708a; line-height: 1.6; }
+.subject-rule-summary > div { grid-column: 1 / -1; }
+.subject-empty { color: #68778d; }
+.subject-review-card small { display: block; color: #718096; margin-top: 3px; }
+
 .brief-scope,
 .brief-status {
   display: flex;
@@ -103,4 +137,5 @@
 
 @media (max-width: 700px) {
   .brief-form-grid { grid-template-columns: 1fr; }
+  .subject-relevance-toolbar { align-items: stretch; flex-direction: column; }
 }

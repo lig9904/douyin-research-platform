@@ -150,6 +150,24 @@ def test_project_account_matrix_isolates_shared_account_videos_and_revoked_membe
                 assert "credential_ref" not in row
             assert results[project_a]["last_included_at"] < results[project_b]["last_included_at"]
             conn.execute(
+                """insert into account_metric_snapshot(
+                     account_id,provider,source_endpoint,observation_key,
+                     captured_at,follower_count)
+                   values (%s,'tikhub','douyin.app.user_profile',
+                           'account-profile:matrix',now(),1755)""",
+                (account_id,),
+            )
+            conn.execute(
+                """insert into account_metric_snapshot(
+                     account_id,provider,source_endpoint,observation_key,
+                     captured_at,follower_count)
+                   values (%s,'tikhub','douyin.app.one_video',
+                           'video-author-zero',now()+interval '2 minutes',0)""",
+                (account_id,),
+            )
+            for project_id in (project_a, project_b):
+                assert module.main(params, str(project_id))["accounts"][0]["follower_count"] == 1755
+            conn.execute(
                 """insert into project_account_relation(
                      project_id,idempotency_key,source_account_id,relation_type,task_roles,evidence_ref,
                      verification_status,verified_by

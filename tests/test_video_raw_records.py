@@ -44,7 +44,7 @@ def test_raw_record_panel_is_on_demand_and_not_part_of_mcp() -> None:
     assert "<RawRecordPanel videoId={detail.id}" in video
     assert "只在展开时读取" in panel
     assert "MCP 不返回本区域正文" in panel
-    assert "set transaction read only" in backend
+    assert "set transaction isolation level repeatable read read only" in backend
     assert "insert into" not in backend
     assert "update " not in backend
     assert "delete from" not in backend

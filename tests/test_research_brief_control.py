@@ -70,6 +70,31 @@ def test_brief_configuration_is_strict_and_normalized() -> None:
             name="媒体越界", platform="douyin", source_type="keyword", target="文旅",
             time_window_hours=24, max_items=6, depth="media", cadence_hours=None,
         )
+    with pytest.raises(mutate.ResearchBriefError, match="requires subject_id"):
+        mutate._config(
+            name="项目研究", platform="douyin", source_type="keyword", target="文旅",
+            time_window_hours=24, max_items=5, depth="metadata", cadence_hours=None,
+            project_scoped=True,
+        )
+    subject_config = mutate._config(
+        name="项目研究", platform="douyin", source_type="keyword", target="文旅",
+        time_window_hours=24, max_items=5, depth="metadata", cadence_hours=None,
+        project_scoped=True, subject_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert subject_config["subject_id"] == "00000000-0000-4000-8000-000000000001"
+    exact = mutate._config(
+        name="历史对标", platform="douyin", source_type="video_ids",
+        target="7521318904971578681\n7653684558261710777",
+        time_window_hours=0, max_items=2, depth="metadata", cadence_hours=None,
+        project_scoped=True, subject_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert exact["target"] == "7521318904971578681,7653684558261710777"
+    with pytest.raises(mutate.ResearchBriefError, match="one-time project"):
+        mutate._config(
+            name="越界", platform="douyin", source_type="video_ids",
+            target="7521318904971578681", time_window_hours=0, max_items=1,
+            depth="metadata", cadence_hours=None,
+        )
 
 
 def test_schema_records_control_plane_and_keeps_analysis_gate_separate() -> None:
@@ -91,9 +116,15 @@ def test_dashboard_exposes_briefs_as_a_first_class_research_view() -> None:
     assert "backend.get_research_briefs" in page
     assert "backend.mutate_research_brief" in page
     assert "project_id: projectId" in page
+    assert "subject_id: values?.subject_id" in page
+    assert "<SubjectRelevancePanel" in page
+    assert "请选择研究主体" in page
     assert "crypto.randomUUID" in page
     assert "确认激活" in page
     assert "ASR 与 L3 始终保留独立人工审核" in page
+    assert "已有持续 ASR 授权" in page
+    assert "计划任务可能自动提交云端转写" in page
+    assert "L3 正文仍须单独审核" in page
     assert "确认归档" in page
     assert "WM_END_USER_EMAIL" not in page
     assert "tikhub_api_key" not in page

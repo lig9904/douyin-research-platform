@@ -1,0 +1,29 @@
+summary: Approve exact project ASR media manifest
+description: Owner/admin or server-configured global reviewer only. Requires
+  exact preview manifest and an explicit consent statement.
+lock: '!inline f/content_research/project_asr/approve_media_review.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    asset_id:
+      type: string
+    consent_statement:
+      type: string
+      minLength: 8
+    expected_manifest_fingerprint:
+      type: string
+    project_id:
+      type: string
+    review_version:
+      type: string
+    video_id:
+      type: string
+  required:
+    - project_id
+    - video_id
+    - asset_id
+    - review_version
+    - expected_manifest_fingerprint
+    - consent_statement
+timeout: 30

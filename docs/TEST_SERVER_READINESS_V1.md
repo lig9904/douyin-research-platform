@@ -262,12 +262,12 @@ HTTPS 路径验收。
    ```
 
    迁移由研究数据库专用账号在单事务执行；已记录 migration 必须是仓库文件名/SHA-256 的连续合法前缀，完成后必须与仓库完整集合一致。任何历史 migration 改写、缺失中间版本、未知记录或数据前置约束失败都会在继续前关闭。
-   对 021–024 项目迁移，`migrate` 和 `verify` 还必须通过独立 `verify_project_contract`：组织/项目/成员/关系及授权元数据表、项目归属字段和不可变触发器、项目读取 ACL 函数及其审阅源码指纹/函数属性、024 游标索引、owner 与无任何非 owner 直授权限缺一即失败。研究台数据库资源须另行核对确实使用受控研究库角色，不能以 owner 自检替代资源身份核验。部署前的旧归档恢复演练允许 `project_contract=legacy_absent`；迁移后的归档必须得到 `project_contract=present` 并核对全部十张新增项目表的归档与恢复行数。恢复演练使用 `--no-privileges`，不证明归档 ACL 的原样恢复；源库权限以迁移/验证门检查，实际完整恢复另需核对授权清单。两者不能互相替代，任何一项失败都不得推送新版研究台。
+   对 021–025 项目迁移，`migrate` 和 `verify` 还必须通过独立 `verify_project_contract`：组织/项目/成员/关系/共享及授权元数据表、项目归属字段和不可变触发器、项目读取与共享 ACL 函数及其审阅源码指纹/函数属性、024 游标索引、025 共享索引、owner 与无任何非 owner 直授权限缺一即失败。研究台数据库资源须另行核对确实使用受控研究库角色，不能以 owner 自检替代资源身份核验。归档恢复演练分别接受无项目表的 `legacy_absent`、021–024 完整旧项目的 `pre_collaboration` 和 021–025 完整新项目的 `present`；后两者须分别核对十张、十二张项目表的归档与恢复行数。恢复演练使用 `--no-privileges`，不证明归档 ACL 的原样恢复；源库权限以迁移/验证门检查，实际完整恢复另需核对授权清单。两者不能互相替代，任何一项失败都不得推送新版研究台。项目协作的真实身份验收另见 [项目多人协作与可选共享](PROJECT_COLLABORATION_V1.md)。
 3. 按已审阅 commit 通过 Windmill CLI 只发布本次验收清单中的对象；研究台必须精确发布 `f/content_research/research_dashboard` Raw App，项目任务涉及的独立脚本/Flow 须逐项列名并复核后才可同步。不执行全工作区 sync/push，也不覆盖无关对象。先比较变更计划，拒绝意外删除或未审阅覆盖。发布前由管理员生成**只含** `path` 与 `is_secret` 的 `0600` 变量元数据文件，再运行只读对象预检；不得使用可能返回变量值的 CLI 列表：
 
    ```bash
    scripts/test-server-windmill-preflight.sh \
-     --workspace test-research \
+     --workspace test-server \
      --profile /srv/douyin-research-test/wmill-profile \
      --app f/content_research/research_dashboard \
      --script f/content_research/analysis/manual_l3_preview \
@@ -279,7 +279,7 @@ HTTPS 路径验收。
      --variable-metadata /srv/douyin-research-test/variable-metadata.json
    ```
 
-   元数据文件契约仅允许 `{"variables":[{"path":"...","is_secret":true|false}]}`；脚本只调用 `wmill app|script|resource list --json`，不会读取值、get、sync 或 push。
+   上例中的 `test-server` 是该服务器 Windmill CLI 的本地配置名，指向远端工作区 `test-research`；`--workspace` 不能误填远端工作区 ID。元数据文件契约仅允许 `{"variables":[{"path":"...","is_secret":true|false}]}`；脚本只调用 `wmill app|script|resource list --json`，不会读取值、get、sync 或 push。
 4. 在浏览器确认 App 可加载，后端 runnable 可完成无 Provider 的读取/预览路径。
 
 输出与验收：迁移记录、备份校验、目标对象发布记录、App 版本和基础读路径成功。业务库与 Windmill 内部库不可混用；失败时不继续导入 Provider Secret。

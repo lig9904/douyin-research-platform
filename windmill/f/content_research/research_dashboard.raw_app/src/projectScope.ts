@@ -8,6 +8,8 @@ export type ProjectRosterItem = {
   id: string
   name: string
   organization_name?: string | null
+  member_role?: string | null
+  can_review_l3?: boolean
 }
 
 export type ProjectScopeContextValue = {

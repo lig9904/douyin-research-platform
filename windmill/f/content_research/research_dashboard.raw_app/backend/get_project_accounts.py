@@ -159,7 +159,10 @@ def main(db: postgresql, project_id: str, limit: int = _MAX_LIMIT, after_relatio
                     from account_metric_snapshot metric_row
                     where metric_row.account_id = a.id
                       and metric_row.follower_count is not null
-                    order by metric_row.captured_at desc, metric_row.id desc
+                    order by
+                      coalesce(metric_row.observation_key like 'account-profile:%%'
+                       and metric_row.captured_at >= now() - interval '30 days', false) desc,
+                      metric_row.captured_at desc, metric_row.id desc
                     limit 1
                   ) latest_account_metric on true
                   where r.project_id = p.id

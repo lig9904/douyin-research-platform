@@ -50,6 +50,8 @@ class CommentCollectionSummary:
     cross_page_duplicates_removed: int
     estimated_api_cost_usd: float
     cached: bool
+    next_cursor: str | None = None
+    has_more: bool = False
 
 
 class CommentCollector:
@@ -75,16 +77,20 @@ class CommentCollector:
         max_items: int = 20,
         sample_reason: str = "top",
         triggered_by: str = "system",
+        project_id: UUID | None = None,
+        cursor: int | str = 0,
     ) -> CommentCollectionSummary:
         run_id = self.run_store.create_run(
             "comment_collection",
             "v1.0.0",
             triggered_by,
             platform=self.provider.platform_name,
+            project_id=project_id,
         )
         try:
             page = self.provider.fetch_comments(
                 video_platform_id,
+                cursor=cursor,
                 count=count,
                 max_pages=max_pages,
                 max_items=max_items,
@@ -111,11 +117,20 @@ class CommentCollector:
                 get_endpoint("douyin.app.comments").unit_cost_usd or 0.0
             )
             estimated_api_cost = external_pages * unit_cost
+            has_more = page.pagination.get("has_more") in (True, 1, "1", "true", "True")
+            raw_next_cursor = page.pagination.get("cursor")
+            if raw_next_cursor is None:
+                raw_next_cursor = page.pagination.get("max_cursor")
+            next_cursor = str(raw_next_cursor) if has_more and raw_next_cursor not in (None, "") else None
+            if next_cursor == str(cursor):
+                next_cursor = None
+                has_more = False
             self.run_store.finish_run(
                 run_id,
                 input_count=len(page.items),
                 output_count=ingested.observations_inserted,
                 api_cost=estimated_api_cost,
+                cost_currency="USD",
                 summary={
                     "llm_calls": 0,
                     "cached": page.cached,
@@ -124,6 +139,8 @@ class CommentCollector:
                     "external_pages": external_pages,
                     "cross_page_duplicates_removed": duplicates_removed,
                     "estimated_api_cost_usd": estimated_api_cost,
+                    "api_cost_basis": "estimated",
+                    "unknown_cost_calls": 0,
                     "new_comments": ingested.new_comments,
                     "duplicate_observations": ingested.duplicate_observations,
                 },
@@ -141,6 +158,8 @@ class CommentCollector:
                 cross_page_duplicates_removed=duplicates_removed,
                 estimated_api_cost_usd=estimated_api_cost,
                 cached=page.cached,
+                next_cursor=next_cursor,
+                has_more=has_more,
             )
         except Exception as exc:
             self.run_store.finish_run(

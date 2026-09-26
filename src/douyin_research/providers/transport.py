@@ -16,6 +16,7 @@ from .errors import (
     ProviderPermanentError,
     ProviderRateLimitError,
     ProviderTemporaryError,
+    attach_provider_diagnostic,
 )
 
 
@@ -122,7 +123,9 @@ class TikHubTransport:
                 except httpx.RequestError as exc:
                     attempts[-1]["error_type"] = type(exc).__name__
                     if retry_count >= self.max_retries - 1:
-                        raise ProviderTemporaryError(str(exc)) from exc
+                        raise attach_provider_diagnostic(
+                            ProviderTemporaryError("TikHub REST request failed"),
+                        ) from exc
                     retry_count += 1
                     time.sleep(_backoff(retry_count))
                     continue
@@ -130,8 +133,11 @@ class TikHubTransport:
                 if response.status_code == 429:
                     if retry_count >= self.max_retries - 1:
                         retry_after = _retry_after(response)
-                        raise ProviderRateLimitError(
-                            "TikHub rate limited REST fallback", retry_after=retry_after
+                        raise _response_failure(
+                            ProviderRateLimitError(
+                                "TikHub rate limited REST fallback", retry_after=retry_after
+                            ),
+                            response,
                         )
                     retry_count += 1
                     time.sleep(_retry_after(response) or _backoff(retry_count))
@@ -139,33 +145,36 @@ class TikHubTransport:
 
                 if 500 <= response.status_code < 600:
                     if retry_count >= self.max_retries - 1:
-                        raise ProviderTemporaryError(
-                            f"TikHub REST {response.status_code}: {response.text[:300]}"
+                        raise _response_failure(
+                            ProviderTemporaryError(f"TikHub REST {response.status_code}"),
+                            response,
                         )
                     retry_count += 1
                     time.sleep(_backoff(retry_count))
                     continue
 
                 if response.status_code == 401:
-                    raise ProviderAuthError("TikHub authentication failed")
+                    raise _response_failure(ProviderAuthError("TikHub authentication failed"), response)
                 if response.status_code == 402:
-                    raise ProviderBalanceError(
-                        f"TikHub balance/credit error: {response.text[:300]}"
+                    raise _response_failure(
+                        ProviderBalanceError("TikHub balance/credit error"), response,
                     )
                 if response.status_code == 403:
                     text = response.text.lower()
                     if any(x in text for x in ("balance", "credit", "余额")):
-                        raise ProviderBalanceError(
-                            f"TikHub balance/credit error: {response.text[:300]}"
+                        raise _response_failure(
+                            ProviderBalanceError("TikHub balance/credit error"), response,
                         )
-                    raise ProviderPermanentError(
-                        f"TikHub permission/quota error: {response.text[:300]}"
+                    raise _response_failure(
+                        ProviderPermanentError("TikHub permission/quota error"), response,
                     )
                 if response.status_code == 404:
-                    raise ProviderNotFound(f"TikHub endpoint/resource not found: {spec.path}")
+                    raise _response_failure(
+                        ProviderNotFound("TikHub endpoint/resource not found"), response,
+                    )
                 if response.status_code >= 400:
-                    raise ProviderPermanentError(
-                        f"TikHub REST {response.status_code}: {response.text[:300]}"
+                    raise _response_failure(
+                        ProviderPermanentError(f"TikHub REST {response.status_code}"), response,
                     )
 
                 payload = response.json()
@@ -203,41 +212,113 @@ def _map_sdk_exception(exc: Exception) -> Exception | None:
         return None
 
     if isinstance(exc, TikHubAuthError):
-        return ProviderAuthError(str(exc))
+        return attach_provider_diagnostic(
+            ProviderAuthError("TikHub authentication failed"),
+            provider_request_id=getattr(exc, "request_id", None),
+        )
     if isinstance(exc, TikHubRateLimitError):
-        return ProviderRateLimitError(str(exc), retry_after=getattr(exc, "retry_after", None))
+        return attach_provider_diagnostic(
+            ProviderRateLimitError("TikHub rate limited", retry_after=getattr(exc, "retry_after", None)),
+            http_status=getattr(exc, "status_code", None),
+            provider_request_id=getattr(exc, "request_id", None),
+        )
     if isinstance(exc, TikHubNotFoundError):
-        return ProviderNotFound(str(exc))
+        return attach_provider_diagnostic(
+            ProviderNotFound("TikHub endpoint/resource not found"),
+            http_status=getattr(exc, "status_code", None),
+            provider_request_id=getattr(exc, "request_id", None),
+        )
     if isinstance(exc, TikHubPermissionError):
         body = getattr(exc, "response_body", None)
         text = str(body).lower()
         if any(x in text for x in ("balance", "credit", "余额")):
-            return ProviderBalanceError(str(exc))
-        return ProviderPermanentError(str(exc))
+            return attach_provider_diagnostic(
+                ProviderBalanceError("TikHub balance/credit error"),
+                http_status=getattr(exc, "status_code", None),
+                provider_request_id=getattr(exc, "request_id", None),
+            )
+        return attach_provider_diagnostic(
+            ProviderPermanentError("TikHub permission/quota error"),
+            http_status=getattr(exc, "status_code", None),
+            provider_request_id=getattr(exc, "request_id", None),
+        )
     if isinstance(exc, (TikHubServerError, TikHubUpstreamError, TikHubConnectionError)):
-        return ProviderTemporaryError(str(exc))
+        return attach_provider_diagnostic(
+            ProviderTemporaryError("TikHub temporary upstream failure"),
+            http_status=getattr(exc, "status_code", None),
+            provider_request_id=getattr(exc, "request_id", None),
+        )
     if isinstance(exc, TikHubHTTPError):
         status = getattr(exc, "status_code", None)
         body = getattr(exc, "response_body", None)
         text = f"{body} {exc}".lower()
         if status == 402 or any(x in text for x in ("balance", "credit", "余额")):
-            return ProviderBalanceError(str(exc))
+            return attach_provider_diagnostic(
+                ProviderBalanceError("TikHub balance/credit error"),
+                http_status=status,
+                provider_request_id=getattr(exc, "request_id", None),
+            )
         if status == 401:
-            return ProviderAuthError(str(exc))
+            return attach_provider_diagnostic(
+                ProviderAuthError("TikHub authentication failed"),
+                http_status=status,
+                provider_request_id=getattr(exc, "request_id", None),
+            )
         if status == 404:
-            return ProviderNotFound(str(exc))
+            return attach_provider_diagnostic(
+                ProviderNotFound("TikHub endpoint/resource not found"),
+                http_status=status,
+                provider_request_id=getattr(exc, "request_id", None),
+            )
         if status == 429:
-            return ProviderRateLimitError(
-                str(exc), retry_after=getattr(exc, "retry_after", None)
+            return attach_provider_diagnostic(
+                ProviderRateLimitError("TikHub rate limited", retry_after=getattr(exc, "retry_after", None)),
+                http_status=status,
+                provider_request_id=getattr(exc, "request_id", None),
             )
         if status is not None and 500 <= status < 600:
-            return ProviderTemporaryError(str(exc))
-        return ProviderPermanentError(str(exc))
+            return attach_provider_diagnostic(
+                ProviderTemporaryError("TikHub temporary upstream failure"),
+                http_status=status,
+                provider_request_id=getattr(exc, "request_id", None),
+            )
+        return attach_provider_diagnostic(
+            ProviderPermanentError("TikHub permanent request failure"),
+            http_status=status,
+            provider_request_id=getattr(exc, "request_id", None),
+        )
     return None
 
 
 def _request_id(payload: Any) -> str | None:
     return payload.get("request_id") if isinstance(payload, dict) else None
+
+
+def _response_failure(exc: Exception, response: httpx.Response) -> Exception:
+    """Extract only bounded diagnostic tokens from an HTTP error response."""
+    return attach_provider_diagnostic(
+        exc,
+        http_status=response.status_code,
+        provider_error_code=_response_error_code(response),
+        provider_request_id=(
+            response.headers.get("x-request-id")
+            or response.headers.get("request-id")
+        ),
+    )
+
+
+def _response_error_code(response: httpx.Response) -> object:
+    try:
+        payload = response.json()
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in ("code", "status_code", "error_code"):
+        value = payload.get(key)
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            return value
+    return None
 
 
 def _retry_after(response: httpx.Response) -> float | None:

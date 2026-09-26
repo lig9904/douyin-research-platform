@@ -171,9 +171,11 @@ def _public_asr_transcript(row: dict[str, Any]) -> dict[str, Any]:
     """Return the bounded transcript display contract, excluding execution internals."""
 
     return {
+        "transcript_id": row.get("transcript_id"),
         "text": row["text"],
         "truncated": row["truncated"],
         "quality_status": row["quality_status"],
+        "authorization_kind": row.get("authorization_kind"),
         "provider": row["asr_provider"],
         "model_id": row["model_id"],
         "model_revision": row["model_revision"],
@@ -242,7 +244,8 @@ def main(
 
     where_sql = """
       (%s='all' or v.platform=%s)
-      and v.last_seen_at >= now() - (%s || ' days')::interval
+      and (v.last_seen_at >= now() - (%s || ' days')::interval
+           or v.platform_video_id=%s)
       and (%s < 0 or v.research_level=%s)
       and (%s < 0 or coalesce(s.score, v.monitoring_priority, 0) >= %s)
       and (%s='all' or v.monitoring_status=%s)
@@ -260,6 +263,7 @@ def main(
         or coalesce(v.title,'') ilike '%%' || %s || '%%'
         or coalesce(v.description,'') ilike '%%' || %s || '%%'
         or coalesce(a.nickname,'') ilike '%%' || %s || '%%'
+        or v.platform_video_id=%s
       )
       and (
         %s='all'
@@ -270,7 +274,7 @@ def main(
       )
     """
     args = (
-        platform, platform, days,
+        platform, platform, days, query,
         research_level, research_level,
         priority_min, priority_min,
         status, status,
@@ -279,13 +283,15 @@ def main(
         follower_min, follower_min,
         follower_max, follower_max,
         collected, collected, collected,
-        query, query, query, query,
+        query, query, query, query, query,
         source_type, source_type,
     )
 
+    # Project UI intentionally hides the legacy recency selector. Return all
+    # non-archived project inclusions; a hidden 30-day cutoff would make older
+    # accepted evidence disappear even when the project member searches for it.
     scoped_where_sql = """
       (%s='all' or v.platform=%s)
-      and inclusion_row.last_seen_at >= now() - (%s || ' days')::interval
       and (%s < 0 or (m.play_count is not null and m.play_count >= %s))
       and (%s < 0 or (m.play_count is not null and m.play_count <= %s))
       and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count >= %s))
@@ -295,22 +301,44 @@ def main(
         or coalesce(v.title,'') ilike '%%' || %s || '%%'
         or coalesce(v.description,'') ilike '%%' || %s || '%%'
         or coalesce(a.nickname,'') ilike '%%' || %s || '%%'
+        or v.platform_video_id=%s
       )
       and (%s='all' or inclusion_row.source_type=%s)
     """
     scoped_args = (
-        platform, platform, days,
+        platform, platform,
         play_min, play_min,
         play_max, play_max,
         follower_min, follower_min,
         follower_max, follower_max,
-        query, query, query, query,
+        query, query, query, query, query,
         source_type, source_type,
     )
 
     base_cte = """
     with latest_metric as (
-      select * from merged_video_metric
+      select m.video_id, m.play_count, m.like_count, m.comment_count,
+        m.share_count, m.collect_count,
+        coalesce(profile.follower_count, m.author_follower_count) as author_follower_count,
+        m.captured_at, m.oldest_field_captured_at, m.metric_source_kind,
+        case when profile.follower_count is not null
+          then m.metric_provenance || jsonb_build_object(
+            'author_follower_count', jsonb_build_object(
+              'source_kind', 'verified_account_profile',
+              'captured_at', profile.captured_at))
+          else m.metric_provenance end as metric_provenance
+      from merged_video_metric m
+      join source_video metric_video on metric_video.id=m.video_id
+      left join lateral (
+        select am.follower_count, am.captured_at
+        from account_metric_snapshot am
+        where am.account_id=metric_video.account_id
+          and am.observation_key like 'account-profile:%%'
+          and am.captured_at >= now() - interval '30 days'
+          and am.follower_count is not null
+        order by am.captured_at desc, am.id desc
+        limit 1
+      ) profile on true
     ),
     latest_score as (
       select distinct on (video_id)
@@ -353,6 +381,7 @@ def main(
               v.monitoring_priority,
     """
     item_account_id_field = "a.id::text as account_id,"
+    item_project_status_field = "null::text as project_inclusion_status,"
     item_priority_field = "coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,"
     item_source_fields = """
               coalesce(h.sources, array[]::text[]) as sources,
@@ -385,6 +414,7 @@ def main(
               null::numeric as monitoring_priority,
         """
         item_account_id_field = "null::text as account_id,"
+        item_project_status_field = "inclusion_row.status as project_inclusion_status,"
         item_priority_field = "null::numeric as priority,"
         item_source_fields = """
               array[inclusion_row.source_type] as sources,
@@ -394,7 +424,7 @@ def main(
 
     with _connect(db) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("set transaction read only")
+            cur.execute("set transaction isolation level repeatable read read only")
             if scoped_project_id is None:
                 try:
                     legacy_allowed = _legacy_reader_allowed(actor, _get_legacy_allowlist())
@@ -477,6 +507,7 @@ def main(
               v.duration_ms,
               {item_research_fields}
               {item_account_id_field}
+              {item_project_status_field}
               a.nickname as account_name,
               m.play_count,
               m.like_count,
@@ -558,6 +589,7 @@ def main(
                   v.published_at,
                   v.duration_ms,
                   {item_research_fields}
+                  {item_project_status_field}
                   a.nickname as account_name,
                   m.play_count,
                   m.like_count,
@@ -631,11 +663,27 @@ def main(
                 """,
                 (selected_id,),
             )
-            asr_row = _legacy_analysis_row(
-                conn,
-                project_id=scoped_project_id,
-                sql=
-                """
+            comment_features = None
+            if scoped_project_id is None or detail.get("project_inclusion_status") == "accepted":
+                comment_features = _fetch_one(
+                    conn,
+                    """
+                    select feature_version, calculated_at, sampled_comment_count,
+                      source_observation_count, eligible_text_count,
+                      question_text_count, duplicate_text_count
+                    from video_comment_feature_snapshot
+                    where video_id=%s::uuid
+                    order by calculated_at desc, id desc
+                    limit 1
+                    """,
+                    (selected_id,),
+                )
+            if scoped_project_id is None:
+                asr_row = _legacy_analysis_row(
+                    conn,
+                    project_id=None,
+                    sql=
+                    """
                 select
                   left(t.text_content, %s) as text,
                   char_length(t.text_content) > %s as truncated,
@@ -663,13 +711,13 @@ def main(
                 order by t.created_at desc, t.id desc
                 limit 1
                 """,
-                args=(_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
-            )
-            l3_row = _legacy_analysis_row(
-                conn,
-                project_id=scoped_project_id,
-                sql=
-                """
+                    args=(_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT, selected_id),
+                )
+                l3_row = _legacy_analysis_row(
+                    conn,
+                    project_id=None,
+                    sql=
+                    """
                 select
                   a.analysis_type,
                   a.model,
@@ -701,16 +749,89 @@ def main(
                 order by a.created_at desc, a.id desc
                 limit 1
                 """,
-                args=(
-                    selected_id,
-                    _L3_ANALYSIS_TYPE,
-                    _L3_SCHEMA_VERSION,
-                    _L3_ANALYSIS_TYPE,
-                    _L3_SCHEMA_VERSION,
-                ),
-            )
+                    args=(
+                        selected_id,
+                        _L3_ANALYSIS_TYPE,
+                        _L3_SCHEMA_VERSION,
+                        _L3_ANALYSIS_TYPE,
+                        _L3_SCHEMA_VERSION,
+                    ),
+                )
+            else:
+                # Project results are read only from project-private execution
+                # tables, after the project/video ACL check above.  A global
+                # transcript or analysis_run is never a project fallback.
+                asr_row = _fetch_one(
+                    conn,
+                    """
+                    select t.id::text as transcript_id, left(t.text_content, %s) as text,
+                      char_length(t.text_content) > %s as truncated,
+                      'unreviewed' as quality_status,
+                      t.asr_provider, t.model_id, t.model_revision,
+                      t.engine_version, t.language, t.audio_duration_ms,
+                      t.created_at, r.authorization_kind, c.api_cost, c.asr_cost, c.llm_cost,
+                      c.total_cost, c.cost_currency, c.cost_basis
+                    from project_transcript t
+                    join project_asr_execution_job j
+                      on j.id=t.execution_job_id and j.project_id=t.project_id
+                      and j.video_id=t.video_id and j.status='completed'
+                    join project_asr_media_review r
+                      on r.id=t.media_review_id and r.project_id=t.project_id
+                      and r.video_id=t.video_id and r.status='approved'
+                    left join project_research_task_cost c
+                      on c.id=t.task_cost_id and c.project_id=t.project_id
+                      and c.video_id=t.video_id and c.status='completed'
+                      and c.task_type='asr_transcription' and c.task_key=j.task_key
+                    where t.project_id=%s::uuid and t.video_id=%s::uuid
+                      and exists (select 1 from project_video_inclusion current_inclusion
+                        where current_inclusion.project_id=t.project_id
+                          and current_inclusion.video_id=t.video_id
+                          and current_inclusion.status='accepted')
+                    order by t.created_at desc, t.id desc limit 1
+                    """,
+                    (_ASR_TRANSCRIPT_TEXT_LIMIT, _ASR_TRANSCRIPT_TEXT_LIMIT,
+                     scoped_project_id, normalized_selected_id),
+                )
+                l3_row = _fetch_one(
+                    conn,
+                    """
+                    select a.analysis_type, j.model_id as model,
+                      j.model_revision, j.prompt_version, j.schema_version,
+                      a.output, a.created_at, c.api_cost, c.asr_cost,
+                      c.llm_cost, c.total_cost, c.cost_currency, c.cost_basis
+                    from project_l3_analysis_result a
+                    join project_l3_execution_job j
+                      on j.id=a.execution_job_id and j.project_id=a.project_id
+                      and j.video_id=a.video_id and j.status='completed'
+                    join project_l3_privacy_review r
+                      on r.id=a.privacy_review_id and r.project_id=a.project_id
+                      and r.video_id=a.video_id and r.status='approved'
+                    join project_transcript t
+                      on t.id=r.transcript_id and t.project_id=a.project_id
+                      and t.video_id=a.video_id
+                    join project_asr_media_review media_review
+                      on media_review.id=t.media_review_id
+                      and media_review.project_id=a.project_id
+                      and media_review.video_id=a.video_id
+                      and media_review.status='approved'
+                    left join project_research_task_cost c
+                      on c.id=a.task_cost_id and c.project_id=a.project_id
+                      and c.video_id=a.video_id and c.status='completed'
+                      and c.task_type='l3_structured_research' and c.task_key=j.task_key
+                    where a.project_id=%s::uuid and a.video_id=%s::uuid
+                      and a.analysis_type=%s and j.schema_version=%s
+                      and exists (select 1 from project_video_inclusion current_inclusion
+                        where current_inclusion.project_id=a.project_id
+                          and current_inclusion.video_id=a.video_id
+                          and current_inclusion.status='accepted')
+                    order by a.created_at desc, a.id desc limit 1
+                    """,
+                    (scoped_project_id, normalized_selected_id,
+                     _L3_ANALYSIS_TYPE, _L3_SCHEMA_VERSION),
+                )
             detail["evidence"] = evidence
             detail["comments"] = comments
+            detail["comment_features"] = comment_features or None
             detail["asr_transcript"] = (
                 _public_asr_transcript(asr_row) if asr_row else None
             )

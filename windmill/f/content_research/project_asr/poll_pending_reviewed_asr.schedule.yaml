@@ -1,0 +1,7 @@
+summary: Resume project-private reviewed ASR every five minutes
+schedule: "0 2-59/5 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/project_asr/poll_pending_reviewed_asr
+is_flow: false
+enabled: false
+args: {}

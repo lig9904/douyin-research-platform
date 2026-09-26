@@ -84,3 +84,28 @@ def plan_video_fetches(
         result.append(VideoFetchRequest(key, tuple(tail[offset:offset + count])))
         offset += count
     return tuple(result)
+
+
+def plan_exact_video_brief(video_ids: Iterable[str]) -> tuple[VideoFetchRequest, ...]:
+    """Plan 1-20 exact IDs within the brief's two-HTTP-call boundary.
+
+    At reviewed base tariffs, single calls are cheapest for one or two IDs;
+    larger sets use one or two 10-ID detail batches.  The 11th ID can use a
+    second single call.  No statistics-only route substitutes for details.
+    """
+    ids = tuple(video_ids)
+    if not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids):
+        raise ValueError("exact video brief requires 1-20 distinct IDs")
+    if len(ids) <= 2:
+        return plan_video_fetches(ids, strategy="cost_aware")
+    if len(ids) <= 10:
+        return (VideoFetchRequest("douyin.app.multi_video", ids),)
+    if len(ids) == 11:
+        return (
+            VideoFetchRequest("douyin.app.multi_video", ids[:10]),
+            VideoFetchRequest("douyin.app.one_video", ids[10:]),
+        )
+    return (
+        VideoFetchRequest("douyin.app.multi_video", ids[:10]),
+        VideoFetchRequest("douyin.app.multi_video", ids[10:]),
+    )

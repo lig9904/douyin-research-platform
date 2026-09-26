@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
+from contextlib import nullcontext
 from datetime import datetime, timedelta
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, ContextManager, Iterable
 from uuid import uuid4
 
 from .endpoints import EndpointSpec, get_endpoint
 from .fingerprint import request_fingerprint
 from .normalizer import (
+    extract_batch_detail_ids,
     extract_pagination,
     normalize_comment_samples,
+    normalize_account_profile,
+    normalize_exact_video_statistics,
     normalize_video_observations,
     validate_tikhub_envelope,
 )
 from .store import ProviderStore, utcnow
 from .transport import ProviderTransport, TikHubTransport
-from .types import CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
-from .video_fetch_plan import plan_video_fetches
+from .types import AccountRef, CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
+from .video_fetch_plan import plan_exact_video_brief, plan_video_fetches
 from .cost_accounting import quote_call
+from .errors import attach_provider_diagnostic, provider_failure_summary
 
 
 class TikHubDouyinProvider:
@@ -32,6 +38,7 @@ class TikHubDouyinProvider:
         "video.batch_detail",
         "video.statistics",
         "account.posts",
+        "account.profile",
         "comments.list",
         "comments.replies",
     })
@@ -43,12 +50,16 @@ class TikHubDouyinProvider:
         store: ProviderStore,
         auth_scope: str = "default",
         before_external_call: Callable[[EndpointSpec], None] | None = None,
+        uncached_transport_guard: Callable[
+            [EndpointSpec, tuple[str, ...] | None], ContextManager[None]
+        ] | None = None,
         detail_strategy: str = "batch50",
     ) -> None:
         self.transport = transport
         self.store = store
         self.auth_scope = auth_scope
         self.before_external_call = before_external_call
+        self.uncached_transport_guard = uncached_transport_guard
         if detail_strategy not in {"batch50", "cost_aware"}:
             raise ValueError("invalid detail strategy")
         self.detail_strategy = detail_strategy
@@ -125,6 +136,33 @@ class TikHubDouyinProvider:
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         return self._video_page(spec, kwargs, force_refresh=force_refresh)
 
+    def fetch_account_profile(
+        self, sec_user_id: str, *, force_refresh: bool = False,
+    ) -> ProviderPage[AccountRef]:
+        stable_id = sec_user_id.strip() if isinstance(sec_user_id, str) else ""
+        if not stable_id or len(stable_id) > 256 or any(c.isspace() for c in stable_id):
+            raise ValueError("sec_user_id must be a stable nonempty identifier")
+        spec = get_endpoint("douyin.app.user_profile")
+
+        def validate_profile(payload: dict[str, Any]) -> None:
+            normalize_account_profile(
+                payload, requested_sec_user_id=stable_id,
+                raw_ref=None, observed_at=utcnow(),
+            )
+
+        payload, fp, cached, raw_ref, observed_at = self._call(
+            spec, {"sec_user_id": stable_id},
+            validate_payload=validate_profile, force_refresh=force_refresh,
+        )
+        account = normalize_account_profile(
+            payload, requested_sec_user_id=stable_id,
+            raw_ref=raw_ref, observed_at=observed_at,
+        )
+        return ProviderPage(
+            items=[account], endpoint_key=spec.key,
+            request_fingerprint=fp, cached=cached, raw_ref=raw_ref,
+        )
+
     def fetch_videos(
         self,
         video_ids: Iterable[str],
@@ -133,6 +171,69 @@ class TikHubDouyinProvider:
     ) -> list[VideoObservation]:
         return self._fetch_video_plan(
             self.plan_videos(video_ids), force_refresh=force_refresh,
+        )
+
+    def fetch_exact_video_ids(
+        self, video_ids: Iterable[str], *, force_refresh: bool = False,
+    ) -> ProviderPage[VideoObservation]:
+        """Fetch a bounded, exact-ID discovery page without a keyword/date filter.
+
+        Every returned video must be one of the requested IDs, and every ID
+        must be present.  Callers can then ingest it through the ordinary
+        discovery path rather than bypassing project candidate review.
+        """
+        ids = tuple(video_ids)
+        if not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids):
+            raise ValueError("exact video IDs must be 1-20 distinct values")
+        requests = plan_exact_video_brief(ids)
+        items: list[VideoObservation] = []
+        fingerprints: list[str] = []
+        cached = True
+        for request in requests:
+            spec = get_endpoint(request.endpoint_key)
+            kwargs = request.kwargs()
+            def validate_exact_payload(payload: dict[str, Any]) -> None:
+                observations = normalize_video_observations(
+                    payload, endpoint_key=spec.key, raw_ref=None, observed_at=utcnow(),
+                )
+                returned_ids = [item.video.platform_video_id for item in observations]
+                detail_ids = extract_batch_detail_ids(payload)
+                duplicate_count = len(detail_ids) - len(set(detail_ids))
+                if duplicate_count or set(returned_ids) != set(request.video_ids):
+                    exc = ValueError("exact video response IDs do not match the request")
+                    attach_provider_diagnostic(
+                        exc,
+                        exact_video_missing_positions=[
+                            index for index, video_id in enumerate(ids)
+                            if video_id not in returned_ids
+                            and video_id in request.video_ids
+                        ],
+                        exact_video_unexpected_count=len(set(returned_ids) - set(request.video_ids)),
+                        exact_video_duplicate_count=duplicate_count,
+                    )
+                    raise exc
+            page = self._video_page(
+                spec, kwargs,
+                fingerprint_body=kwargs.get("body"),
+                request_video_ids=request.video_ids,
+                validate_payload=validate_exact_payload,
+                force_refresh=force_refresh,
+            )
+            batch_ids = [item.video.platform_video_id for item in page.items]
+            if len(batch_ids) != len(set(batch_ids)) or set(batch_ids) != set(request.video_ids):
+                raise ValueError("exact video response IDs do not match the request")
+            items.extend(page.items)
+            fingerprints.append(page.request_fingerprint)
+            cached = cached and page.cached
+        ordered = {item.video.platform_video_id: item for item in items}
+        fingerprint = hashlib.sha256(
+            ("exact-video-ids-v1:" + ":".join(fingerprints)).encode("ascii")
+        ).hexdigest()
+        return ProviderPage(
+            items=[ordered[video_id] for video_id in ids],
+            endpoint_key="douyin.app.exact_video_ids",
+            request_fingerprint=fingerprint,
+            cached=cached,
         )
 
     def plan_videos(self, video_ids: Iterable[str]):
@@ -146,6 +247,38 @@ class TikHubDouyinProvider:
             plan_video_fetches(video_ids, purpose="statistics"), force_refresh=force_refresh,
         )
 
+    def fetch_exact_video_statistics(
+        self, video_ids: Iterable[str], *, force_refresh: bool = False,
+    ) -> ProviderPage[VideoObservation]:
+        """Read one or two exact IDs, requiring a reported play count for each.
+
+        This stricter project-review path does not accept partial or unrelated
+        supplier rows as evidence. It retains the original response and call
+        accounting through the ordinary provider store.
+        """
+        ids = tuple(video_ids)
+        if not 1 <= len(ids) <= 2 or len(set(ids)) != len(ids):
+            raise ValueError("statistics refresh requires one or two distinct IDs")
+        request = plan_video_fetches(ids, purpose="statistics")
+        if len(request) != 1 or request[0].endpoint_key != "douyin.app.video_statistics":
+            raise ValueError("unexpected statistics request plan")
+        spec = get_endpoint(request[0].endpoint_key)
+
+        # Persist a successfully returned supplier envelope before the
+        # endpoint-specific business validation. A paid 200 with malformed
+        # statistics must remain auditable, including its estimated cost.
+        payload, fingerprint, cached, raw_ref, observed_at = self._call(
+            spec, request[0].kwargs(), request_video_ids=ids,
+            force_refresh=force_refresh,
+        )
+        items = normalize_exact_video_statistics(
+            payload, video_ids=ids, raw_ref=raw_ref, observed_at=observed_at,
+        )
+        return ProviderPage(
+            items=items, endpoint_key=spec.key,
+            request_fingerprint=fingerprint, cached=cached, raw_ref=raw_ref,
+        )
+
     def _fetch_video_plan(self, requests, *, force_refresh: bool):
         results: list[VideoObservation] = []
         for request in requests:
@@ -154,6 +287,7 @@ class TikHubDouyinProvider:
             page = self._video_page(
                 spec, kwargs,
                 fingerprint_body=kwargs.get("body"),
+                request_video_ids=tuple(request.video_ids),
                 force_refresh=force_refresh,
             )
             # Do not ingest unrelated IDs if an upstream route returns extra data.
@@ -347,12 +481,16 @@ class TikHubDouyinProvider:
         kwargs: dict[str, Any],
         *,
         fingerprint_body: Any = None,
+        request_video_ids: tuple[str, ...] | None = None,
+        validate_payload: Callable[[dict[str, Any]], None] | None = None,
         force_refresh: bool = False,
     ) -> ProviderPage[VideoObservation]:
         payload, fp, cached, raw_ref, observed_at = self._call(
             spec,
             kwargs,
             fingerprint_body=fingerprint_body,
+            request_video_ids=request_video_ids,
+            validate_payload=validate_payload,
             force_refresh=force_refresh,
         )
         items = normalize_video_observations(
@@ -376,6 +514,8 @@ class TikHubDouyinProvider:
         kwargs: dict[str, Any],
         *,
         fingerprint_body: Any = None,
+        request_video_ids: tuple[str, ...] | None = None,
+        validate_payload: Callable[[dict[str, Any]], None] | None = None,
         force_refresh: bool = False,
     ) -> tuple[dict[str, Any], str, bool, str | None, datetime]:
         started = utcnow()
@@ -396,6 +536,14 @@ class TikHubDouyinProvider:
             cached = self.store.get_cached(self.provider_name, self.platform_name, spec.key, fp, started)
             if cached is not None:
                 validate_tikhub_envelope(cached.payload)
+                if validate_payload is not None:
+                    try:
+                        validate_payload(cached.payload)
+                    except (TypeError, ValueError):
+                        # Old or foreign malformed cache entries remain as raw
+                        # evidence, but cannot block a corrected live response.
+                        cached = None
+            if cached is not None:
                 finished = utcnow()
                 estimate, actual, cost_meta = quote_call(spec, cached=True)
                 self.store.record_call(
@@ -419,19 +567,34 @@ class TikHubDouyinProvider:
                 )
                 return cached.payload, fp, True, cached.raw_ref or f"cache:{fp}", cached.requested_at
 
-        if self.before_external_call is not None:
-            # One reservation must correspond to at most one visible HTTP attempt.
-            # Check at the call boundary too: transport configuration is mutable.
-            if isinstance(self.transport, TikHubTransport) and (
-                self.transport.prefer_sdk or self.transport.max_retries > 1
-            ):
-                raise ValueError("guarded TikHub calls require single-attempt REST transport")
-            self.before_external_call(spec)
-
         result = None
+        call_attempted = False
         try:
-            result = self.transport.call(spec, kwargs)
+            # This guard starts only after the persistent-cache decision.  It is
+            # deliberately around both reservation and HTTP so a project gate can
+            # validate the exact batch that is about to leave the process.
+            guard = (
+                self.uncached_transport_guard(spec, request_video_ids)
+                if self.uncached_transport_guard is not None
+                else nullcontext()
+            )
+            with guard:
+                if self.before_external_call is not None:
+                    # One reservation must correspond to at most one visible HTTP
+                    # attempt. Check at the call boundary: transport configuration
+                    # is mutable after provider construction.
+                    if isinstance(self.transport, TikHubTransport) and (
+                        self.transport.prefer_sdk or self.transport.max_retries > 1
+                    ):
+                        raise ValueError(
+                            "guarded TikHub calls require single-attempt REST transport"
+                        )
+                    self.before_external_call(spec)
+                call_attempted = True
+                result = self.transport.call(spec, kwargs)
             payload = validate_tikhub_envelope(result.payload)
+            if validate_payload is not None:
+                validate_payload(payload)
             requested_at = utcnow()
             expires_at = requested_at + timedelta(seconds=spec.cache_ttl_seconds)
             raw_ref = self.store.save_response(
@@ -473,8 +636,14 @@ class TikHubDouyinProvider:
             )
             return payload, fp, False, raw_ref, requested_at
         except Exception as exc:
+            # A project gate or budget refusal happened before transport.
+            # It is not a paid provider attempt and must not enter the call
+            # ledger as an unknown-cost failure.
+            if not call_attempted:
+                raise
             finished = utcnow()
             attempts = result.attempts if result is not None else getattr(exc, "provider_attempts", None)
+            attach_provider_diagnostic(exc, logical_call_id=logical_call_id)
             estimate, actual, cost_meta = quote_call(
                 spec, successful_response=result is not None and result.http_status == 200,
                 attempts=attempts,
@@ -496,6 +665,9 @@ class TikHubDouyinProvider:
                     retry_count=max(0, len(attempts) - 1) if attempts is not None else None,
                     metadata={
                         "error_type": type(exc).__name__,
+                        "failure": provider_failure_summary(
+                            exc, stage="unknown", item_count=0,
+                        ),
                         **cost_meta, "logical_call_id": logical_call_id,
                     },
                 )

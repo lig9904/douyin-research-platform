@@ -17,7 +17,10 @@ import {
 import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import type { ProjectScope } from './src/projectScope'
+import SubjectRelevancePanel, { type ProjectSubject } from './SubjectRelevancePanel'
 import './research-briefs.css'
+import './subject-profile.css'
+import SubjectProfilePanel from './SubjectProfilePanel'
 
 type BriefStatus = 'draft' | 'active' | 'paused'
 
@@ -25,9 +28,9 @@ type ResearchBrief = {
   id: string
   name: string
   platform: 'douyin'
-  source_type: 'low_fan' | 'keyword' | 'account'
+  source_type: 'low_fan' | 'keyword' | 'account' | 'video_ids'
   target?: string | null
-  time_window_hours: 24 | 72 | 168 | 720
+  time_window_hours: 0 | 24 | 72 | 168 | 720
   max_items: number
   depth: 'metadata' | 'comments' | 'media' | 'review_ready'
   cadence_hours?: 6 | 12 | 24 | null
@@ -36,6 +39,8 @@ type ResearchBrief = {
   next_due_at?: string | null
   last_dispatched_at?: string | null
   updated_at: string
+  subject_id?: string | null
+  subject_gate_status?: 'not_applicable' | 'ready' | 'subject_required'
 }
 
 type BriefRun = {
@@ -56,12 +61,14 @@ type FormValues = {
   max_items: number
   depth: ResearchBrief['depth']
   cadence_hours: 0 | 6 | 12 | 24
+  subject_id?: string
 }
 
 const sourceNames = {
   low_fan: '低粉高热榜',
   keyword: '关键词检索',
   account: '指定账号作品',
+  video_ids: '指定视频 ID',
 }
 
 const depthNames = {
@@ -93,8 +100,18 @@ function dateTime(value?: string | null) {
 }
 
 function discoveryEstimate(source: FormValues['source_type']) {
+  if (source === 'video_ids') return '按实际 ID 路由，最多 2 次详情请求；基础报价约 $0.001–$0.020 / 次'
   if (source === 'keyword') return '发现阶段最多约 $0.060 / 次'
   return '发现阶段最多约 $0.051 / 次'
+}
+
+function exactIds(value: string): string[] {
+  const ids = value.trim().split(/[,\s]+/)
+  if (ids.length < 1 || ids.length > 20 || new Set(ids).size !== ids.length ||
+      ids.some((id) => !/^[0-9]{15,25}$/.test(id))) {
+    throw new Error('请填写 1–20 个不同的纯数字抖音视频 ID，以逗号或换行分隔。')
+  }
+  return ids
 }
 
 export default function ResearchBriefs({
@@ -113,6 +130,8 @@ export default function ResearchBriefs({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editingId, setEditingId] = useState('')
+  const [projectSubjects, setProjectSubjects] = useState<ProjectSubject[]>([])
+  const [selectedSubjectId, setSelectedSubjectId] = useState('')
   const requestVersion = useRef(0)
   const sourceType = Form.useWatch('source_type', form) || 'keyword'
   const depth = Form.useWatch('depth', form) || 'comments'
@@ -142,6 +161,8 @@ export default function ResearchBriefs({
     setBriefs([])
     setRuns([])
     setEditingId('')
+    setProjectSubjects([])
+    setSelectedSubjectId('')
     form.resetFields()
     if (projectId) form.setFieldValue('depth', 'metadata')
     void load()
@@ -157,6 +178,7 @@ export default function ResearchBriefs({
   }, [runs])
 
   const mutate = async (action: string, briefId = '', values?: FormValues) => {
+    const ids = values?.source_type === 'video_ids' ? exactIds(values.target || '') : []
     return backend.mutate_research_brief({
       action,
       idempotency_key: crypto.randomUUID(),
@@ -164,18 +186,29 @@ export default function ResearchBriefs({
       name: values?.name || '',
       platform: 'douyin',
       source_type: values?.source_type || 'low_fan',
-      target: values?.source_type === 'low_fan' ? '' : (values?.target || ''),
-      time_window_hours: values?.time_window_hours || 24,
-      max_items: values?.max_items || 5,
+      target: values?.source_type === 'low_fan' ? '' : ids.length ? ids.join(',') : (values?.target || ''),
+      time_window_hours: ids.length ? 0 : (values?.time_window_hours ?? 24),
+      max_items: ids.length || values?.max_items || 5,
       depth: values?.depth || 'metadata',
-      cadence_hours: values?.cadence_hours || null,
+      cadence_hours: ids.length ? null : (values?.cadence_hours || null),
+      ...(projectId ? { subject_id: values?.subject_id || '' } : {}),
       ...(projectId ? { project_id: projectId } : {}),
     })
   }
 
   const save = async (values: FormValues) => {
+    if (values.source_type === 'video_ids') {
+      try { exactIds(values.target || '') } catch (e) {
+        toast.error(e instanceof Error ? e.message : '视频 ID 无效')
+        return
+      }
+    }
     if (projectId && values.depth !== 'metadata') {
       toast.error('项目任务目前只支持元数据采集。')
+      return
+    }
+    if (projectId && !values.subject_id) {
+      toast.error('请先创建或选择研究主体。')
       return
     }
     setSaving(true)
@@ -209,7 +242,7 @@ export default function ResearchBriefs({
         <div className="activation-copy">
           <p>激活后会按任务范围调用 TikHub 并写入研究库；首次任务将尽快执行。</p>
           <p><strong>{discoveryEstimate(brief.source_type)}</strong>，缓存命中或没有新候选时实际费用可能更低。</p>
-          <p>音频转写和 L3 分析不会自动提交，仍须在内容页单独人工审核。</p>
+          <p>本任务只采公开元数据，不直接入库媒体或提交 ASR/L3。若项目已有持续 ASR 授权，后续已接受视频的音频成功入库后，计划任务可能自动提交云端转写；L3 正文仍须单独审核。</p>
         </div>
       ),
       okText: '确认激活',
@@ -231,6 +264,7 @@ export default function ResearchBriefs({
 
   const edit = (brief: ResearchBrief) => {
     setEditingId(brief.id)
+    if (brief.subject_id) setSelectedSubjectId(brief.subject_id)
     form.setFieldsValue({
       name: brief.name,
       source_type: brief.source_type,
@@ -239,6 +273,7 @@ export default function ResearchBriefs({
       max_items: brief.max_items,
       depth: brief.depth,
       cadence_hours: brief.cadence_hours || 0,
+      subject_id: brief.subject_id || '',
     })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -259,10 +294,29 @@ export default function ResearchBriefs({
         showIcon
         message={projectId ? '当前项目任务只采公开元数据' : '任务负责确定研究范围，不替你作结论'}
         description={projectId
-          ? '采集会纳入当前项目；项目任务暂不采新评论或媒体。已保存的公开视频评论可在视频库查看；ASR 和 L3 尚未建立项目归属与审核边界。'
+          ? '采集会生成当前项目的候选视频，不等于已确认为可比的研究依据；项目任务暂不采新评论或媒体。视频须核对内容并接受后才能入库媒体；已有持续 ASR 授权的项目可能自动转写，未授权项目须逐条审核。L3 正文始终单独审核。'
           : '系统按来源、时间窗和深度采集并合并到现有视频、账号、热点资产；ASR 与 L3 始终保留独立人工审核。'}
       />
       {error && <Alert type="error" showIcon message="研究任务加载失败" description={error} />}
+
+      {projectId ? <SubjectRelevancePanel
+        projectId={projectId}
+        selectedSubjectId={selectedSubjectId}
+        onSelectSubject={(id) => {
+          setSelectedSubjectId(id)
+          if (!editingId) form.setFieldValue('subject_id', id)
+        }}
+        onSubjectsChange={setProjectSubjects}
+        onOpenVideoLibrary={() => onNavigate('videos')}
+      /> : null}
+
+      {projectId && selectedSubjectId ? <SubjectProfilePanel
+        key={`${projectId}:${selectedSubjectId}`}
+        projectId={projectId}
+        subjectId={selectedSubjectId}
+        subjectName={projectSubjects.find((subject) => subject.id === selectedSubjectId)?.name}
+        subjectType={projectSubjects.find((subject) => subject.id === selectedSubjectId)?.subject_type}
+      /> : null}
 
       <div className="brief-layout">
         <Card className="brief-editor" title={editingId ? '编辑研究任务' : '新建研究任务'}>
@@ -275,13 +329,22 @@ export default function ResearchBriefs({
             <Form.Item name="name" label="任务名称" rules={[{ required: true, max: 80 }]}>
               <Input placeholder="例如：神话文旅内容机会" />
             </Form.Item>
+            {projectId ? <Form.Item name="subject_id" label="研究主体" rules={[{ required: true, message: '请选择研究主体' }]} extra="只让“相关”候选进入本项目本主体的 L1 排序与决策队列；待判定、排除项保留在审核区。L1 不是经营效果预测。">
+              <Select placeholder="先在上方创建或选择主体" options={projectSubjects.map((subject) => ({ value: subject.id, label: `${subject.name} · ${subject.subject_type}` }))} />
+            </Form.Item> : null}
             <div className="brief-form-grid">
               <Form.Item name="source_type" label="从哪里找" rules={[{ required: true }]}>
                 <Select
-                  options={Object.entries(sourceNames).map(([value, label]) => ({ value, label }))}
+                  options={Object.entries(sourceNames)
+                    .filter(([value]) => projectId || value !== 'video_ids')
+                    .map(([value, label]) => ({ value, label }))}
                   onChange={(value) => {
                     if (value === 'low_fan') {
                       form.setFieldsValue({ max_items: 5, time_window_hours: 72, target: '' })
+                    } else if (value === 'video_ids') {
+                      form.setFieldsValue({ max_items: 1, time_window_hours: 0, depth: 'metadata', cadence_hours: 0, target: '' })
+                    } else if (form.getFieldValue('time_window_hours') === 0) {
+                      form.setFieldsValue({ time_window_hours: 72, target: '' })
                     }
                   }}
                 />
@@ -289,13 +352,15 @@ export default function ResearchBriefs({
               {sourceType !== 'low_fan' && (
                 <Form.Item
                   name="target"
-                  label={sourceType === 'keyword' ? '关键词' : '账号 sec_user_id'}
-                  rules={[{ required: true, max: 120 }]}
+                  label={sourceType === 'keyword' ? '关键词' : sourceType === 'video_ids' ? '抖音视频 ID' : '账号 sec_user_id'}
+                  rules={[{ required: true, max: sourceType === 'video_ids' ? 519 : 120 }]}
                 >
-                  <Input placeholder={sourceType === 'keyword' ? '输入主题、事件或产品词' : '输入公开账号 sec_user_id'} />
+                  {sourceType === 'video_ids'
+                    ? <Input.TextArea rows={3} placeholder="每行一个视频 ID，或用逗号分隔；最多 20 条，不按发布日期过滤" />
+                    : <Input placeholder={sourceType === 'keyword' ? '输入主题、事件或产品词' : '输入公开账号 sec_user_id'} />}
                 </Form.Item>
               )}
-              <Form.Item name="time_window_hours" label="研究时间范围">
+              {sourceType !== 'video_ids' && <Form.Item name="time_window_hours" label="研究时间范围">
                 <Select
                   options={[
                     { value: 24, label: '近24小时' },
@@ -304,10 +369,10 @@ export default function ResearchBriefs({
                     { value: 720, label: '近30天', disabled: sourceType === 'low_fan' },
                   ]}
                 />
-              </Form.Item>
-              <Form.Item name="max_items" label="每次最多候选">
+              </Form.Item>}
+              {sourceType !== 'video_ids' && <Form.Item name="max_items" label="每次最多候选">
                 <InputNumber min={1} max={maxItemsLimit} precision={0} />
-              </Form.Item>
+              </Form.Item>}
               <Form.Item name="depth" label="采集深度">
                 <Select
                   options={Object.entries(depthNames)
@@ -321,7 +386,7 @@ export default function ResearchBriefs({
                   }}
                 />
               </Form.Item>
-              <Form.Item name="cadence_hours" label="执行频率">
+              {sourceType !== 'video_ids' && <Form.Item name="cadence_hours" label="执行频率">
                 <Select
                   options={[
                     { value: 0, label: '只执行一次' },
@@ -330,7 +395,7 @@ export default function ResearchBriefs({
                     { value: 24, label: '每天' },
                   ]}
                 />
-              </Form.Item>
+              </Form.Item>}
             </div>
             <div className="brief-cost-note">
               <strong>{discoveryEstimate(sourceType)}</strong>
@@ -352,7 +417,7 @@ export default function ResearchBriefs({
             <li><b>发现</b><span>按指定来源抓取有限候选并补齐详情。</span></li>
             <li><b>合并</b><span>同一视频和账号进入统一资产，不制造重复记录。</span></li>
             <li><b>加深</b><span>{projectId ? '项目任务暂不采新评论或私有媒体；已保存的公开评论仅作阅读依据。' : '按深度采评论或私有媒体；无需的步骤直接停止。'}</span></li>
-            <li><b>人工判断</b><span>{projectId ? '项目级转写与大模型分析仍待归属和审核链路。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
+            <li><b>人工判断</b><span>{projectId ? '先判断候选与项目目标是否可比；确认纳入后再决定是否入库音频。已有持续 ASR 授权的项目可自动转写；待发送 L3 正文仍须在视频库单独核对。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
           </ol>
         </Card>
       </div>
@@ -372,7 +437,8 @@ export default function ResearchBriefs({
                   <div className="brief-scope">
                     <strong>{row.name}</strong>
                     <span>{sourceNames[row.source_type]}{row.target ? ` · ${row.target}` : ''}</span>
-                    <small>近{row.time_window_hours}小时 · 最多{row.max_items}条 · {depthNames[row.depth]}</small>
+                    <small>{row.source_type === 'video_ids' ? '不限发布日期' : `近${row.time_window_hours}小时`} · 最多{row.max_items}条 · {depthNames[row.depth]}</small>
+                    {projectId && row.subject_gate_status === 'subject_required' ? <Tag color="warning">需绑定主体后才能激活</Tag> : null}
                   </div>
                 ),
               },

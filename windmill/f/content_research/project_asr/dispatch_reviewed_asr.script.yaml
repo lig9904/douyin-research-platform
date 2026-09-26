@@ -1,0 +1,21 @@
+summary: Submit one reviewed project ASR task
+description: Background-only endpoint. Uses fixed server-side Volcengine,
+  storage and reviewer configuration; callers cannot select provider, media URL,
+  credential or actor. A review recheck and object-integrity check occur before
+  HTTP.
+lock: '!inline f/content_research/project_asr/dispatch_reviewed_asr.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    media_review_id:
+      type: string
+    project_id:
+      type: string
+    video_id:
+      type: string
+  required:
+    - project_id
+    - video_id
+    - media_review_id
+timeout: 300

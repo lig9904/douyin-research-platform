@@ -1,0 +1,16 @@
+summary: Revoke project ASR media approval
+description: Owner/admin or server-configured global reviewer only. Revocation
+  prevents new dispatches.
+lock: '!inline f/content_research/project_asr/revoke_media_review.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    media_review_id:
+      type: string
+    project_id:
+      type: string
+  required:
+    - project_id
+    - media_review_id
+timeout: 30

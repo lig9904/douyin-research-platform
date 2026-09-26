@@ -2,9 +2,11 @@ import React from 'react'
 import { Tag } from 'antd'
 
 export type ASRTranscript = {
+  transcript_id?: string | null
   text: string
   truncated: boolean
   quality_status: string
+  authorization_kind?: 'listened' | 'standing_grant' | null
   provider: string
   model_id?: string | null
   model_revision?: string | null
@@ -36,6 +38,7 @@ export default function ASRTranscriptPanel({ transcript }: { transcript?: ASRTra
   return <section className="detail-section" aria-label="已完成音频转写">
     <div className="detail-section-head"><h4>音频转写结果</h4>
       {transcript && <Tag>{qualityLabels[transcript.quality_status] || '状态未知'}</Tag>}
+      {transcript?.authorization_kind === 'standing_grant' && <Tag color="orange">项目持续授权 · 原音频未经人工核听</Tag>}
     </div>
     {!transcript ? <p className="muted">尚无已完成的转写。音频审核通过不代表转写已经完成。</p> : <>
       <div className="l3-version-grid">

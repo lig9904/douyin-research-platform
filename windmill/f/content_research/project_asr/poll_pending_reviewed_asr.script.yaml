@@ -1,0 +1,7 @@
+summary: Recover pending reviewed project ASR tasks
+description: Fixed schedule-only batch. Selects at most 12 already-submitted
+  tasks under a 12-poll and 24-hour recovery policy; reports limited or failed
+  tasks as operator attention and never submits new media.
+lock: '!inline f/content_research/project_asr/poll_pending_reviewed_asr.script.lock'
+concurrent_limit: 1
+timeout: 1200

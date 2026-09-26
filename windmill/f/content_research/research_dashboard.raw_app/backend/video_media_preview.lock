@@ -1,10 +1,9 @@
-# workspace-dependencies-mode: manual
 # py: 3.14
 annotated-doc==0.0.5
 annotated-types==0.8.0
 anyio==4.15.1
-boto3==1.43.98
-botocore==1.43.98
+boto3==1.43.101
+botocore==1.43.101
 certifi==2026.7.22
 douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@92153f603368a3ab2cb7810924d6d3948857987a
 h11==0.16.0
