@@ -47,7 +47,7 @@ def test_only_video_identity_is_a_public_argument():
     with pytest.raises(TypeError):
         module.main(video_id=str(uuid4()), db={"host": "attacker.test"})
     assert "WM_END_USER_EMAIL" not in SCRIPT.read_text()
-    assert "fd2694729c784a0f2e34b2c0a4d6746da57813fe" in SCRIPT.read_text()
+    assert "9d638f625846766361bb2106b709e5db17f9b9eb" in SCRIPT.read_text()
 
 
 def test_invalid_video_is_rejected_before_loading_secrets(monkeypatch):
