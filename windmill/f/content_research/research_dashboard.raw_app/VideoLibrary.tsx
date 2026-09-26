@@ -171,6 +171,12 @@ function formatCount(v?: number | null) {
   return Number(v).toLocaleString('zh-CN')
 }
 
+function formatFollowerCount(v?: number | null) {
+  return v === 0 ? '0 · 待核' : formatCount(v)
+}
+
+const zeroFollowerExplanation = '上游接口返回账号粉丝 0，尚不能据此认定真实为零；请核对账号主页或独立账号接口，以及采集时间。'
+
 function hasContradictoryZeroPlay(item: VideoItem) {
   return item.play_count === 0 && [
     item.like_count, item.comment_count, item.share_count, item.collect_count,
@@ -773,7 +779,9 @@ export default function VideoLibrary({
                               <span className="avatar">{(item.account_name || '?').slice(0, 1)}</span>
                               <div>
                                 <strong>{item.account_name || '未知账号'}</strong>
-                                <small>{formatCount(item.author_follower_count)}</small>
+                                <small>{item.author_follower_count === 0
+                                  ? <Tooltip title={zeroFollowerExplanation}>{formatFollowerCount(item.author_follower_count)}</Tooltip>
+                                  : formatFollowerCount(item.author_follower_count)}</small>
                               </div>
                             </div>
                           </td>
@@ -796,7 +804,9 @@ export default function VideoLibrary({
                           <td>{formatCount(item.like_count)}</td>
                           <td>{formatCount(item.comment_count)}</td>
                           <td>{formatCount(item.share_count)}</td>
-                          <td>{formatCount(item.author_follower_count)}</td>
+                          <td>{item.author_follower_count === 0
+                            ? <Tooltip title={zeroFollowerExplanation}>{formatFollowerCount(item.author_follower_count)}</Tooltip>
+                            : formatFollowerCount(item.author_follower_count)}</td>
                           <td>{formatPlayInteractionRate(item)}</td>
                           {!isProject && <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
@@ -878,7 +888,7 @@ export default function VideoLibrary({
                         <span className="avatar large">{(detail.account_name || '?').slice(0, 1)}</span>
                         <div>
                           <strong>{detail.account_name || '未知账号'}</strong>
-                          <small>{formatCount(detail.author_follower_count)} 粉丝</small>
+                          <small>{formatFollowerCount(detail.author_follower_count)} 粉丝</small>
                         </div>
                       </div>
                       {!isProject && <Button
@@ -918,11 +928,11 @@ export default function VideoLibrary({
                         <h4>数据表现</h4>
                         <span>合并数据 · 最近字段更新 {formatFullDate(detail.metric_captured_at)}</span>
                       </div>
-                      {hasContradictoryZeroPlay(detail) && <Alert
+                      {(hasContradictoryZeroPlay(detail) || detail.author_follower_count === 0) && <Alert
                         type="warning"
                         showIcon
-                        message="播放量为 0 与正向互动冲突，指标待核"
-                        description="保留上游原值供复核；当前不能用播放量计算互动率，也不能据此比较传播效果。账号粉丝等字段同样应核对来源与时间。"
+                        message="播放量或账号粉丝的零值待核"
+                        description="保留上游原值和来源供复核。播放量为 0 却有正向互动时，不能计算互动率或比较传播效果；账号粉丝为 0 时，须核对账号主页或独立账号接口后再用于筛选。"
                       />}
                       <div className="detail-metrics">
                         {[
@@ -930,7 +940,7 @@ export default function VideoLibrary({
                           [formatCount(detail.like_count), '点赞'],
                           [formatCount(detail.comment_count), '评论'],
                           [formatCount(detail.share_count), '分享'],
-                          [formatCount(detail.author_follower_count), '账号粉丝'],
+                          [formatFollowerCount(detail.author_follower_count), '账号粉丝'],
                           [formatPlayInteractionRate(detail), '互动/播放（合并估算）'],
                           ...(!isProject ? [
                             [priorityText(Number(detail.priority || 0)), '优先级'],
