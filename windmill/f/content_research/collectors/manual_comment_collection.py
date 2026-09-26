@@ -1,6 +1,6 @@
 # py: ==3.14.*
 #requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@f97b81cbb49bfca6e2e476627021d1a21208347e
+#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@94b8eac0107608e48485ae7dbb8f881229e150a1
 #wmill>=1.815.0
 
 """Manual, bounded Windmill entry point for paid TikHub comment collection."""
