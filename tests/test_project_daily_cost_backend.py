@@ -30,7 +30,7 @@ def _load():
 def test_project_daily_cost_contract_is_project_scoped_and_keeps_unknown_amounts_unknown() -> None:
     source = BACKEND.read_text(encoding="utf-8")
     assert "project_research_task_cost" in source
-    assert "run.run_type='l0l1_discovery'" in source
+    assert "run.run_type in ('l0l1_discovery','comment_collection')" in source
     assert "project_actor_can_read" in source
     assert "with authorized_project as materialized" in source
     assert "cost.project_id" in source
@@ -110,11 +110,13 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
                     '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
                    ('l0l1_discovery',%s,'success',0.001,'USD',
                     '{"api_cost_basis":"unknown","unknown_cost_calls":1}'::jsonb),
+                   ('comment_collection',%s,'success',0.002,'USD',
+                    '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
                    ('media_ingestion',%s,'success',100,'USD',
                     '{"api_cost_basis":"estimated"}'::jsonb),
                    ('l0l1_discovery',%s,'success',99,'USD',
                     '{"api_cost_basis":"actual","unknown_cost_calls":0}'::jsonb)""",
-                (project_a, project_a, project_a, project_b),
+                (project_a, project_a, project_a, project_a, project_b),
             )
             # Real failed runs retain the pipeline_run default CNY, which must
             # not be presented as a known CNY charge for a USD provider.
@@ -163,13 +165,14 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert day == {
                 **day,
                 "cost_currency": "USD",
-                "task_count": 8,
+                "task_count": 9,
                 "asr_task_count": 4,
                 "l3_task_count": 2,
                 "discovery_run_count": 2,
-                "known_amount": 2.502,
+                "comment_run_count": 1,
+                "known_amount": 2.504,
                 "actual_amount": 1.0,
-                "estimated_amount": 1.002,
+                "estimated_amount": 1.004,
                 "mixed_amount": 0.5,
                 "unknown_task_count": 4,
                 "unbilled_job_count": 1,
@@ -180,6 +183,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             cny = next(record for record in result["records"] if record["cost_currency"] == "CNY")
             assert cny["task_count"] == 1
             assert cny["discovery_run_count"] == 0
+            assert cny["comment_run_count"] == 0
             assert cny["known_amount"] == 0.3
             assert cny["actual_amount"] == 0.3
             assert cny["estimated_amount"] is None
@@ -190,6 +194,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             unpriced = next(record for record in result["records"] if record["cost_currency"] == "UNKNOWN")
             assert unpriced["task_count"] == 1
             assert unpriced["discovery_run_count"] == 1
+            assert unpriced["comment_run_count"] == 0
             assert unpriced["known_amount"] is None
             assert unpriced["unknown_task_count"] == 1
             assert unpriced["unbilled_job_count"] == 1
