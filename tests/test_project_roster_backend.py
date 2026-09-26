@@ -37,6 +37,11 @@ def test_project_roster_backends_are_inline_and_bind_only_research_db() -> None:
             "    value: $res:f/content_research/research_db\n"
         )
 
+    roster_source = (BACKEND / "get_my_projects.py").read_text(encoding="utf-8")
+    roster_lock = (BACKEND / "get_my_projects.lock").read_text(encoding="utf-8")
+    assert "#wmill==1.815.0" in roster_source
+    assert "wmill==1.815.0\n" in roster_lock
+
 
 def test_project_l3_capability_bit_fails_closed_without_exposing_roster(monkeypatch) -> None:
     roster = _load("get_my_projects")
