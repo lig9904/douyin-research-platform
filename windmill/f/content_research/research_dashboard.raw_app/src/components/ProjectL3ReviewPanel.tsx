@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Alert, Button, Checkbox, Tag } from 'antd'
+import { Alert, Button, Checkbox, Modal, Tag } from 'antd'
 import { backend } from '../../backend'
 
 type Candidate = {
@@ -30,6 +30,7 @@ export default function ProjectL3ReviewPanel({ projectId, videoId, transcriptId 
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [reviewOpen, setReviewOpen] = useState(false)
 
   const prepare = async () => {
     setBusy(true); setError(''); setNotice(''); setConfirmed(false); setCandidate(null)
@@ -42,6 +43,7 @@ export default function ProjectL3ReviewPanel({ projectId, videoId, transcriptId 
         throw new Error('scope mismatch')
       }
       setCandidate(result)
+      setReviewOpen(true)
     } catch {
       setError('项目 L3 待审内容不可用。请确认转写、评论统计和审核权限仍有效。')
     } finally { setBusy(false) }
@@ -74,7 +76,7 @@ export default function ProjectL3ReviewPanel({ projectId, videoId, transcriptId 
         transcript_id: transcriptId, review_version: candidate.review_version,
         evidence_fingerprint: candidate.evidence_fingerprint, review_id: reviewId,
       })
-      setReviewId(''); setConfirmed(false); setCandidate(null)
+      setReviewId(''); setConfirmed(false); setCandidate(null); setReviewOpen(false)
       setNotice('L3 审核已撤销；原审核不能再触发新模型调用。')
     } catch {
       setError('撤销未完成，请核对运行状态。')
@@ -86,8 +88,26 @@ export default function ProjectL3ReviewPanel({ projectId, videoId, transcriptId 
   const comments = candidate?.evidence_bundle.comment_features
   return <section className="detail-section" aria-label="项目 L3 正文审核">
     <div className="detail-section-head"><h4>本项目 L3 内容审核</h4>
-      <Button loading={busy} onClick={prepare}>生成待审正文</Button></div>
+      <Button loading={busy} disabled={Boolean(reviewId)} onClick={prepare}>生成待审正文</Button></div>
     <p className="muted">此处只核对将发送给模型的准确内容并保存审核，不直接发起付费调用。</p>
+    {error && <Alert type="error" showIcon message={error} />}
+    {notice && <Alert type="success" showIcon message={notice} />}
+    {candidate && <p className="project-l3-review-summary">
+      待审正文已生成，指纹 <code>{candidate.evidence_fingerprint.slice(0, 12)}…</code>。
+      <Button type="link" onClick={() => setReviewOpen(true)}>打开完整正文核对</Button>
+    </p>}
+    <Modal
+      title="本项目 L3 完整正文审核"
+      open={reviewOpen && Boolean(candidate)}
+      width={960}
+      style={{ maxWidth: 'calc(100vw - 24px)' }}
+      className="project-l3-review-dialog"
+      footer={null}
+      closable={!busy}
+      maskClosable={!busy}
+      keyboard={!busy}
+      onCancel={() => { if (!busy) setReviewOpen(false) }}
+    >
     {error && <Alert type="error" showIcon message={error} />}
     {notice && <Alert type="success" showIcon message={notice} />}
     {candidate && <div className="project-l3-review-body">
@@ -100,16 +120,20 @@ export default function ProjectL3ReviewPanel({ projectId, videoId, transcriptId 
         {JSON.stringify(comments || {}, null, 2)}
       </pre>
       <h5>完整转写正文</h5>
-      <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', maxHeight: 360, overflowY: 'auto' }}>
+      <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
         {transcript?.text || '无转写'}
       </div>
+      <h5>精确发送内容（完整证据包）</h5>
+      <p className="muted">上面的分组便于阅读；下面是本次审核指纹对应的全部字段，包含时间、时长、转写来源、项目绑定和审核版本。请以此核对实际发送范围。</p>
+      <pre className="project-l3-review-exact-bundle">{JSON.stringify(candidate.evidence_bundle, null, 2)}</pre>
       <p className="muted">请核对个人信息与业务适用性；评论只发送统计特征，转写原文可能包含姓名。</p>
       {!reviewId ? <>
         <Checkbox checked={confirmed} disabled={busy} onChange={event => setConfirmed(event.target.checked)}>
-          我已核对上述完整正文，同意在本项目内交由云端模型分析
+          我已核对上方完整证据包，同意在本项目内交由云端模型分析
         </Checkbox>{' '}
         <Button type="primary" disabled={!confirmed || busy} onClick={approve}>保存 L3 审核</Button>
       </> : <Button danger disabled={busy} onClick={revoke}>撤销本次审核</Button>}
     </div>}
+    </Modal>
   </section>
 }

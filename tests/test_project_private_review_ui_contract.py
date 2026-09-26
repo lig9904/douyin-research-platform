@@ -40,3 +40,18 @@ def test_project_review_panels_are_not_global_fallbacks() -> None:
     assert "backend.project_approve_l3_review" in (
         APP / "src/components/ProjectL3ReviewPanel.tsx"
     ).read_text(encoding="utf-8")
+
+
+def test_project_l3_full_body_opens_in_readable_dialog() -> None:
+    panel = (APP / "src/components/ProjectL3ReviewPanel.tsx").read_text(encoding="utf-8")
+    css = (APP / "video-library.css").read_text(encoding="utf-8")
+    assert 'setReviewOpen(true)' in panel
+    assert 'open={reviewOpen && Boolean(candidate)}' in panel
+    assert 'width={960}' in panel
+    assert 'maxWidth: \'calc(100vw - 24px)\'' in panel
+    assert 'className="project-l3-review-dialog"' in panel
+    assert 'transcript?.text || \'无转写\'' in panel
+    assert 'JSON.stringify(candidate.evidence_bundle, null, 2)' in panel
+    assert '我已核对上方完整证据包' in panel
+    assert 'max-height: min(76vh, 820px)' in css
+    assert 'maxHeight: 360' not in panel

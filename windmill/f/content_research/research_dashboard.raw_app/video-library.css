@@ -1,4 +1,10 @@
 .video-library-main { padding-bottom: 18px; }
+.project-l3-review-summary { overflow-wrap: anywhere; }
+.project-l3-review-dialog .ant-modal-body { max-height: min(76vh, 820px); overflow-y: auto; }
+.project-l3-review-dialog .project-l3-review-body { line-height: 1.65; overflow-wrap: anywhere; }
+.project-l3-review-dialog .project-l3-review-body pre { padding: 12px; background: #f5f8fc; border-radius: 8px; }
+.project-l3-review-dialog .project-l3-review-exact-bundle { white-space: pre-wrap; overflow-wrap: anywhere; }
+.project-l3-review-dialog .project-l3-review-body code { overflow-wrap: anywhere; }
 .video-library-topbar { margin-bottom: 16px; }
 .video-library-shell .nav-item:disabled { opacity: 1; cursor: default; }
 
