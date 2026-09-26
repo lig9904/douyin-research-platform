@@ -1026,7 +1026,7 @@ export default function VideoLibrary({
                       >
                         刷新公开账号资料
                       </Button>}
-                      {isProject && canReviewProject && detail.project_inclusion_status === 'accepted' && detail.platform === 'douyin' && <Button
+                      {isProject && canReviewProject && ['candidate', 'shortlisted', 'accepted'].includes(detail.project_inclusion_status || '') && detail.platform === 'douyin' && <Button
                         loading={writeBusy}
                         onClick={() => void refreshProjectVideoStatistics(detail.platform_video_id)}
                       >

@@ -16,7 +16,7 @@ from uuid import UUID
 from psycopg.conninfo import make_conninfo
 
 from douyin_research.l0l1.video_statistics import (
-    _accepted_videos,
+    _eligible_videos,
     refresh_project_video_statistics,
 )
 
@@ -73,13 +73,13 @@ def main(
         import psycopg
 
         with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            _accepted_videos(cur, project, tuple(video_platform_ids), actor)
+            _eligible_videos(cur, project, tuple(video_platform_ids), actor)
         if action == "preview":
             return {
                 "eligible": True, "external_calls": 0,
                 "maximum_new_calls": 1, "estimated_base_price_usd": 0.001,
                 "actual_charge_known": False,
-                "message": "仅核验这些已接受视频的公开播放统计；缓存命中时不新发请求。",
+                "message": "仅核验本项目候选、待选或已接受视频的公开播放统计；不会改变项目纳入状态，缓存命中时不新发请求。",
             }
         if confirmation != _CONFIRMATION:
             raise ValueError("explicit paid statistics refresh confirmation is required")

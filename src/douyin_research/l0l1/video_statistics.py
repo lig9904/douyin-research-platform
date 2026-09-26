@@ -1,4 +1,4 @@
-"""Audited play-count verification for accepted project videos.
+"""Audited play-count verification for project research videos.
 
 The statistics route is deliberately separate from video discovery: it cannot
 create a video, change its author, or silently replace the original detail row.
@@ -42,7 +42,7 @@ class VideoStatisticsResult:
     estimated_api_cost_usd: float | None
 
 
-def _accepted_videos(
+def _eligible_videos(
     cur: psycopg.Cursor[Any], project_id: UUID, ids: tuple[str, ...],
     actor: str, *, lock: bool = False,
 ) -> dict[str, UUID]:
@@ -57,7 +57,8 @@ def _accepted_videos(
             and member.effective_from <= now()
             and (member.effective_until is null or member.effective_until > now())
            join project_video_inclusion inclusion
-             on inclusion.project_id=project.id and inclusion.status='accepted'
+             on inclusion.project_id=project.id
+            and inclusion.status in ('candidate','shortlisted','accepted')
            join source_video video on video.id=inclusion.video_id
            where project.id=%s and project.status='active'
              and organization.status='active' and video.platform='douyin'
@@ -80,7 +81,7 @@ def _accepted_videos(
     )
     found = dict(cur.fetchall())
     if set(found) != set(ids):
-        raise PermissionError("accepted project videos and manager role are required")
+        raise PermissionError("active project research videos and manager role are required")
     return found
 
 
@@ -89,7 +90,7 @@ def _paid_video_guard(
     dsn: str, project_id: UUID, ids: tuple[str, ...], actor: str,
 ) -> Iterator[None]:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        _accepted_videos(cur, project_id, ids, actor, lock=True)
+        _eligible_videos(cur, project_id, ids, actor, lock=True)
         yield
 
 
@@ -113,7 +114,7 @@ def _insert_snapshots(
     if not raw_id.isdecimal() or len(raw_id) > 20:
         raise ValueError("invalid statistics raw reference")
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        videos = _accepted_videos(cur, project_id, ids, actor, lock=True)
+        videos = _eligible_videos(cur, project_id, ids, actor, lock=True)
         cur.execute(
             """select response_body, requested_at from external_api_response
                where id=%s and provider='tikhub' and platform='douyin'
@@ -167,7 +168,7 @@ def refresh_project_video_statistics(
     *, dsn: str, project_id: UUID, video_platform_ids: Iterable[str],
     actor: str, api_key: str, transport: ProviderTransport | None = None,
 ) -> VideoStatisticsResult:
-    """Refresh one or two accepted exact IDs in a single priced supplier call."""
+    """Refresh one or two linked research IDs in a single priced supplier call."""
     ids = tuple(video_platform_ids)
     if not 1 <= len(ids) <= 2 or len(set(ids)) != len(ids) or any(
         not isinstance(value, str) or _VIDEO_ID.fullmatch(value) is None
@@ -183,7 +184,7 @@ def refresh_project_video_statistics(
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("TikHub secret is required")
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        _accepted_videos(cur, project_id, ids, actor)
+        _eligible_videos(cur, project_id, ids, actor)
         cur.execute(
             """insert into daily_budget(
                  budget_date,provider,budget_key,max_requests,max_cost,cost_currency)

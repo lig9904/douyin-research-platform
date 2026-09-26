@@ -169,6 +169,53 @@ def test_denied_project_does_not_call_provider_or_create_run():
         assert transport.calls == 0
 
 
+@pytest.mark.parametrize("status", ["candidate", "shortlisted"])
+def test_research_statistics_do_not_promote_project_inclusion(status):
+    assert DSN
+    for scoped_dsn, project_id in _fixture(DSN):
+        with psycopg.connect(scoped_dsn) as conn:
+            conn.execute(
+                """update project_video_inclusion set status=%s
+                   where project_id=%s and video_id=(
+                     select id from source_video where platform_video_id=%s)""",
+                (status, project_id, IDS[1]),
+            )
+        transport = StatisticsTransport()
+        result = refresh_project_video_statistics(
+            dsn=scoped_dsn, project_id=project_id, video_platform_ids=IDS,
+            actor=ACTOR, api_key="fixture-key", transport=transport,
+        )
+        assert result.play_counts[IDS[1]] == 1001
+        assert result.snapshots_inserted == 2 and transport.calls == 1
+        with psycopg.connect(scoped_dsn) as conn:
+            stored_status = conn.execute(
+                """select inclusion.status from project_video_inclusion inclusion
+                   join source_video video on video.id=inclusion.video_id
+                   where inclusion.project_id=%s and video.platform_video_id=%s""",
+                (project_id, IDS[1]),
+            ).fetchone()[0]
+            assert stored_status == status
+
+
+def test_rejected_candidate_does_not_call_provider():
+    assert DSN
+    for scoped_dsn, project_id in _fixture(DSN):
+        with psycopg.connect(scoped_dsn) as conn:
+            conn.execute(
+                """update project_video_inclusion set status='rejected'
+                   where project_id=%s and video_id=(
+                     select id from source_video where platform_video_id=%s)""",
+                (project_id, IDS[1]),
+            )
+        transport = StatisticsTransport()
+        with pytest.raises(PermissionError):
+            refresh_project_video_statistics(
+                dsn=scoped_dsn, project_id=project_id, video_platform_ids=IDS,
+                actor=ACTOR, api_key="fixture-key", transport=transport,
+            )
+        assert transport.calls == 0
+
+
 def test_paid_guard_blocks_a_newer_member_version_until_http_finishes():
     assert DSN
     for scoped_dsn, project_id in _fixture(DSN):
@@ -181,4 +228,26 @@ def test_paid_guard_blocks_a_newer_member_version_until_http_finishes():
                              project_id,actor_id,role,status,effective_from)
                            values (%s,%s,'viewer','active',now()+interval '1 second')""",
                         (project_id, ACTOR),
+                    )
+
+
+def test_paid_guard_blocks_candidate_revocation_until_http_finishes():
+    assert DSN
+    for scoped_dsn, project_id in _fixture(DSN):
+        with psycopg.connect(scoped_dsn) as conn:
+            conn.execute(
+                """update project_video_inclusion set status='candidate'
+                   where project_id=%s and video_id=(
+                     select id from source_video where platform_video_id=%s)""",
+                (project_id, IDS[1]),
+            )
+        with _paid_video_guard(scoped_dsn, project_id, IDS, ACTOR):
+            with psycopg.connect(scoped_dsn) as competing:
+                competing.execute("set lock_timeout='100ms'")
+                with pytest.raises(psycopg.errors.LockNotAvailable):
+                    competing.execute(
+                        """update project_video_inclusion set status='rejected'
+                           where project_id=%s and video_id=(
+                             select id from source_video where platform_video_id=%s)""",
+                        (project_id, IDS[1]),
                     )

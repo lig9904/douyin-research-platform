@@ -41,7 +41,7 @@ def test_preview_is_database_only_and_execute_needs_confirmation(monkeypatch):
     checks = []
     monkeypatch.setenv("WM_END_USER_EMAIL", "owner@example.com")
     monkeypatch.setattr(__import__("psycopg"), "connect", lambda *_args: _Connection())
-    monkeypatch.setattr(app, "_accepted_videos", lambda *args: checks.append(args))
+    monkeypatch.setattr(app, "_eligible_videos", lambda *args: checks.append(args))
     preview = app.main(DB, project_id, [VIDEO_ID])
     assert preview["eligible"] is True and preview["external_calls"] == 0
     assert preview["maximum_new_calls"] == 1
@@ -63,8 +63,8 @@ def test_denied_project_does_not_read_secret(monkeypatch):
     monkeypatch.setenv("WM_END_USER_EMAIL", "owner@example.com")
     monkeypatch.setattr(__import__("psycopg"), "connect", lambda *_args: _Connection())
     monkeypatch.setattr(
-        app, "_accepted_videos",
-        lambda *_args: (_ for _ in ()).throw(PermissionError("not accepted")),
+        app, "_eligible_videos",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("not eligible")),
     )
     monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
         get_variable=lambda *_args: pytest.fail("secret read"),
@@ -79,7 +79,7 @@ def test_denied_project_does_not_read_secret(monkeypatch):
 def test_execute_returns_only_bound_metrics_and_cost(monkeypatch):
     monkeypatch.setenv("WM_END_USER_EMAIL", "owner@example.com")
     monkeypatch.setattr(__import__("psycopg"), "connect", lambda *_args: _Connection())
-    monkeypatch.setattr(app, "_accepted_videos", lambda *_args: None)
+    monkeypatch.setattr(app, "_eligible_videos", lambda *_args: None)
     calls = []
     monkeypatch.setitem(sys.modules, "wmill", SimpleNamespace(
         get_variable=lambda key: calls.append(key) or "fixture-key",
