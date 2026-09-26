@@ -62,7 +62,7 @@ def _accepted_account_cursor(
     *, lock: bool = False,
 ) -> str:
     cur.execute(
-            """select account.platform_account_id, video.id
+            """select account.platform_account_id
                from research_project project
                join research_organization organization
                  on organization.id=project.organization_id
@@ -83,18 +83,20 @@ def _accepted_account_cursor(
     row = cur.fetchone()
     if row is None or not isinstance(row[0], str) or not row[0].strip():
         raise PermissionError("accepted project video with stable account is required")
-    stable_id, video_id = row
+    stable_id = row[0]
     cur.execute(
-        """select response.response_body,response.endpoint_key,response.requested_at
-           from discovery_event discovery
-           join external_api_response response
-             on response.provider=discovery.provider
-            and response.request_fingerprint=discovery.metadata->>'request_fingerprint'
-           where discovery.video_id=%s and discovery.provider='tikhub'
-             and response.platform='douyin' and response.response_code='200'
-             and response.http_status=200
-           order by response.requested_at desc limit 30""",
-        (video_id,),
+        """select response_body,endpoint_key,requested_at
+           from external_api_response
+           where provider='tikhub' and platform='douyin'
+             and response_code='200' and http_status=200
+             and endpoint_key in (
+               'douyin.app.one_video','douyin.app.multi_video',
+               'douyin.app.multi_video_v2','douyin.billboard.low_fan',
+               'douyin.search.video_v2','douyin.creator.material',
+               'douyin.app.user_posts')
+             and response_body::text like '%%' || %s || '%%'
+           order by requested_at desc limit 30""",
+        (video_platform_id,),
     )
     for payload, endpoint_key, observed_at in cur.fetchall():
         try:
