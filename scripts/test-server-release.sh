@@ -631,6 +631,21 @@ verify_project_decision_evidence_contract() {
   [[ -z "$failed" ]] || { printf 'ERROR: project decision evidence migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
+verify_project_exact_video_brief_contract() {
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with checks(name, ok) as (values
+      ('036.source', exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_source_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%video_ids%')),
+      ('036.target', exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_target_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%video_ids%' and pg_get_constraintdef(oid) like '%519%' and pg_get_constraintdef(oid) like '%[0-9]{15,25}%')),
+      ('036.window', exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_window_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%video_ids%' and pg_get_constraintdef(oid) like '%time_window_hours = 0%')),
+      ('036.items', exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_item_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%string_to_array%' and pg_get_constraintdef(oid) like '%metadata%')),
+      ('036.cadence', exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_cadence_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%video_ids%' and pg_get_constraintdef(oid) like '%cadence_hours IS NULL%')),
+      ('036.project', exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_exact_project_check' and contype='c' and convalidated and pg_get_constraintdef(oid) like '%project_id IS NOT NULL%' and pg_get_constraintdef(oid) like '%subject_id IS NOT NULL%'))
+    ) select coalesce(string_agg(name, ',' order by name), '') from checks where ok is distinct from true
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: exact video brief migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
 archive_profile_count() {
   # Count only the profile COPY body while discarding every row.  The restore
   # drill compares counts without logging source content or references.
@@ -707,10 +722,11 @@ cmd_migrate() {
   verify_project_experiment_contract
   verify_project_experiment_timeline_contract
   verify_project_decision_evidence_contract
+  verify_project_exact_video_brief_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, and decision evidence contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; verify_project_exact_video_brief_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, decision evidence, and exact video brief contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -726,6 +742,7 @@ cmd_restore_drill() (
   local experiment_contract=legacy_absent experiment_state
   local timeline_contract=legacy_absent timeline_state
   local evidence_contract=legacy_absent evidence_state evidence_source_counts evidence_restored_counts
+  local exact_video_contract=legacy_absent exact_video_state
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
@@ -935,6 +952,12 @@ cmd_restore_drill() (
       ;;
     *) echo 'ERROR: restored decision evidence schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
+  exact_video_state="$(research_query "$RESTORE_DATABASE" "select exists(select 1 from schema_migrations where filename='036_project_exact_video_brief.sql')::int || '|' || exists(select 1 from pg_constraint where conrelid=to_regclass('public.research_brief') and conname='research_brief_exact_project_check')::int")"
+  case "$exact_video_state" in
+    '0|0') exact_video_contract=legacy_absent ;;
+    '1|1') verify_project_exact_video_brief_contract "$RESTORE_DATABASE"; exact_video_contract=present ;;
+    *) echo 'ERROR: restored exact video brief schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
   local business_sql business_result business_summary
@@ -960,6 +983,7 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   duration_seconds="$(( $(date +%s) - start_epoch ))"
   printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s experiment_contract=%s timeline_contract=%s evidence_contract=%s\n' \
     "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$decision_binding_contract" "$private_analysis_contract" "$experiment_contract" "$timeline_contract" "$evidence_contract"
+  printf 'EXACT_VIDEO_RESTORE_CONTRACT=%s\n' "$exact_video_contract"
 )
 
 case "$command_name" in
