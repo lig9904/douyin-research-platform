@@ -313,6 +313,19 @@ def test_video_library_query_and_pagination_empty_state() -> None:
     assert result["detail"] == {}
 
 
+def test_video_library_can_find_exact_platform_video_id() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    module = load_backend()
+
+    result = module.main(
+        resource_from_dsn(DSN), platform="douyin", query="video-lib-1",
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == video_id
+
+
 def test_video_library_all_platform_mode() -> None:
     assert DSN
     clear_and_seed()

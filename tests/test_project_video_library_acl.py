@@ -167,6 +167,11 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
             monkeypatch.setattr(module, "_get_legacy_allowlist", lambda: "viewer@example.com")
             scoped = module.main(params, project_id=str(project_a), selected_video_id=str(video_a))
             assert [item["id"] for item in scoped["items"]] == [str(video_a)]
+            by_platform_id = module.main(params, project_id=str(project_a), query="library-a")
+            assert [item["id"] for item in by_platform_id["items"]] == [str(video_a)]
+            private_platform_id = module.main(params, project_id=str(project_a), query="library-b")
+            assert private_platform_id["total"] == 0
+            assert private_platform_id["items"] == []
             assert scoped["source_options"] == [{"value": "manual"}]
             item = scoped["items"][0]
             assert item["sources"] == ["manual"]

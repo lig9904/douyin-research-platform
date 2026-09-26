@@ -653,10 +653,10 @@ export default function VideoLibrary({
                 />
               </label>}
               <label className="keyword-filter">
-                <span>关键词搜索</span>
+                <span>关键词或视频 ID</span>
                 <Input
                   value={draft.query}
-                  placeholder="搜索视频标题、账号名称..."
+                  placeholder="搜索标题、账号或精确视频 ID..."
                   onChange={(e) => setDraft({ ...draft, query: e.target.value })}
                   onPressEnter={applyFilters}
                 />

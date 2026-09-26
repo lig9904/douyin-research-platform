@@ -261,6 +261,7 @@ def main(
         or coalesce(v.title,'') ilike '%%' || %s || '%%'
         or coalesce(v.description,'') ilike '%%' || %s || '%%'
         or coalesce(a.nickname,'') ilike '%%' || %s || '%%'
+        or v.platform_video_id=%s
       )
       and (
         %s='all'
@@ -280,7 +281,7 @@ def main(
         follower_min, follower_min,
         follower_max, follower_max,
         collected, collected, collected,
-        query, query, query, query,
+        query, query, query, query, query,
         source_type, source_type,
     )
 
@@ -296,6 +297,7 @@ def main(
         or coalesce(v.title,'') ilike '%%' || %s || '%%'
         or coalesce(v.description,'') ilike '%%' || %s || '%%'
         or coalesce(a.nickname,'') ilike '%%' || %s || '%%'
+        or v.platform_video_id=%s
       )
       and (%s='all' or inclusion_row.source_type=%s)
     """
@@ -305,7 +307,7 @@ def main(
         play_max, play_max,
         follower_min, follower_min,
         follower_max, follower_max,
-        query, query, query, query,
+        query, query, query, query, query,
         source_type, source_type,
     )
 
