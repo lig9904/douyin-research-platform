@@ -45,7 +45,7 @@ class L0L1Store:
 
     def ingest_verified_account_profile(
         self, account: AccountRef, *, endpoint_key: str,
-        project_id: UUID, video_platform_id: str,
+        project_id: UUID, video_platform_id: str, actor: str,
     ) -> tuple[UUID, bool]:
         """Record a bound public profile only for an already-known stable account.
 
@@ -76,16 +76,27 @@ class L0L1Store:
                    from research_project project
                    join research_organization organization
                      on organization.id=project.organization_id
+                   join research_project_member member
+                     on member.project_id=project.id and member.actor_id=%s
+                    and member.role in ('owner','admin') and member.status='active'
+                    and member.effective_from <= now()
+                    and (member.effective_until is null or member.effective_until > now())
                    join project_video_inclusion inclusion
                      on inclusion.project_id=project.id and inclusion.status='accepted'
                    join source_video video on video.id=inclusion.video_id
                    join source_account account on account.id=video.account_id
                    where project.id=%s and project.status='active'
                      and organization.status='active'
+                     and not exists (
+                       select 1 from research_project_member newer
+                       where newer.project_id=member.project_id
+                         and newer.actor_id=member.actor_id
+                         and newer.effective_from <= now()
+                         and newer.effective_from > member.effective_from)
                      and video.platform='douyin' and account.platform='douyin'
                      and video.platform_video_id=%s
-                   for share of project, organization, inclusion, video, account""",
-                (project_id, video_platform_id),
+                   for share of project, organization, member, inclusion, video, account""",
+                (actor, project_id, video_platform_id),
             )
             scope_row = cur.fetchone()
             if scope_row is None or scope_row[0] != account.platform_account_id:

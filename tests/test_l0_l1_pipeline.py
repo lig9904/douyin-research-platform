@@ -215,6 +215,10 @@ def test_verified_profile_snapshot_is_raw_bound_and_idempotent() -> None:
             (organization_id,),
         )
         project_id = cur.fetchone()[0]
+        cur.execute(
+            """insert into research_project_member(project_id,actor_id,role)
+               values (%s,'profile-owner@example.com','owner')""", (project_id,),
+        )
         video_platform_id = "7658347686323555610"
         cur.execute(
             """insert into source_video(platform,platform_video_id,account_id)
@@ -245,10 +249,12 @@ def test_verified_profile_snapshot_is_raw_bound_and_idempotent() -> None:
     assert store.ingest_verified_account_profile(
         account, endpoint_key="douyin.app.user_profile",
         project_id=project_id, video_platform_id=video_platform_id,
+        actor="profile-owner@example.com",
     ) == (account_id, True)
     assert store.ingest_verified_account_profile(
         account, endpoint_key="douyin.app.user_profile",
         project_id=project_id, video_platform_id=video_platform_id,
+        actor="profile-owner@example.com",
     ) == (account_id, False)
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute(
@@ -266,5 +272,6 @@ def test_verified_profile_snapshot_is_raw_bound_and_idempotent() -> None:
                 raw_ref=f"external_api_response:{raw_id}",
             ), endpoint_key="douyin.app.user_profile",
             project_id=project_id, video_platform_id=video_platform_id,
+            actor="profile-owner@example.com",
         )
     clear_db()

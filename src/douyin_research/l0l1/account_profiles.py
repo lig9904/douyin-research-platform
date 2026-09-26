@@ -27,6 +27,7 @@ from .ingest import L0L1Store
 
 
 _VIDEO_ID = re.compile(r"[0-9]{15,25}\Z")
+_ACTOR = re.compile(r"[^\s@]{1,128}@[^\s@]{1,120}\Z")
 _BUDGET_KEY = "account_profile_refresh"
 
 
@@ -58,7 +59,7 @@ class _RecordingStore(PostgresProviderStore):
 
 
 def _accepted_account_cursor(
-    cur: psycopg.Cursor[Any], project_id: UUID, video_platform_id: str,
+    cur: psycopg.Cursor[Any], project_id: UUID, video_platform_id: str, actor: str,
     *, lock: bool = False,
 ) -> str:
     cur.execute(
@@ -66,19 +67,30 @@ def _accepted_account_cursor(
                from research_project project
                join research_organization organization
                  on organization.id=project.organization_id
+               join research_project_member member
+                 on member.project_id=project.id and member.actor_id=%s
+                and member.role in ('owner','admin') and member.status='active'
+                and member.effective_from <= now()
+                and (member.effective_until is null or member.effective_until > now())
                join project_video_inclusion inclusion
                  on inclusion.project_id=project.id and inclusion.status='accepted'
                join source_video video on video.id=inclusion.video_id
                join source_account account on account.id=video.account_id
                where project.id=%s and project.status='active'
                  and organization.status='active'
+                 and not exists (
+                   select 1 from research_project_member newer
+                   where newer.project_id=member.project_id
+                     and newer.actor_id=member.actor_id
+                     and newer.effective_from <= now()
+                     and newer.effective_from > member.effective_from)
                  and video.platform='douyin' and account.platform='douyin'
                  and video.platform_video_id=%s
                """ + (
-                " for share of project, organization, inclusion, video, account"
+                " for share of project, organization, member, inclusion, video, account"
                 if lock else ""
             ),
-            (project_id, video_platform_id),
+            (actor, project_id, video_platform_id),
         )
     row = cur.fetchone()
     if row is None or not isinstance(row[0], str) or not row[0].strip():
@@ -115,17 +127,22 @@ def _accepted_account_cursor(
     raise PermissionError("accepted video lacks verified sec_user_id evidence")
 
 
-def _accepted_account(dsn: str, project_id: UUID, video_platform_id: str) -> str:
+def _accepted_account(
+    dsn: str, project_id: UUID, video_platform_id: str, actor: str,
+) -> str:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        return _accepted_account_cursor(cur, project_id, video_platform_id)
+        return _accepted_account_cursor(cur, project_id, video_platform_id, actor)
 
 
 @contextmanager
 def _paid_account_guard(
     dsn: str, project_id: UUID, video_platform_id: str, stable_id: str,
+    actor: str,
 ) -> Iterator[None]:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        if _accepted_account_cursor(cur, project_id, video_platform_id, lock=True) != stable_id:
+        if _accepted_account_cursor(
+            cur, project_id, video_platform_id, actor, lock=True,
+        ) != stable_id:
             raise PermissionError("project account identity changed")
         yield
 
@@ -165,7 +182,7 @@ def _cost_summary(calls: list[ProviderCallMeta]) -> tuple[float | None, str, int
 
 def refresh_project_account_profiles(
     *, dsn: str, project_id: UUID, video_platform_ids: Iterable[str],
-    api_key: str, transport: ProviderTransport | None = None,
+    actor: str, api_key: str, transport: ProviderTransport | None = None,
 ) -> AccountProfileRefreshResult:
     """Refresh at most ten exact accepted-video accounts, once per stable ID.
 
@@ -179,18 +196,22 @@ def refresh_project_account_profiles(
         raise ValueError("one to ten distinct exact video IDs are required")
     if not isinstance(project_id, UUID):
         raise ValueError("project_id must be a UUID")
+    if not isinstance(actor, str) or actor != actor.strip().lower() or (
+        _ACTOR.fullmatch(actor) is None or len(actor) > 254
+    ):
+        raise PermissionError("authenticated project manager is required")
     if not isinstance(api_key, str) or not api_key.strip():
         raise ValueError("TikHub secret is required")
 
     accounts: dict[str, str] = {}
     for video_id in ids:
-        accounts[video_id] = _accepted_account(dsn, project_id, video_id)
+        accounts[video_id] = _accepted_account(dsn, project_id, video_id, actor)
     account_to_video = {stable_id: video_id for video_id, stable_id in accounts.items()}
     _ensure_accounting_row(dsn)
 
     run_store = L0L1Store(dsn)
     run_id = run_store.create_run(
-        "account_profile_refresh", "v1", triggered_by="privileged_operator",
+        "account_profile_refresh", "v1", triggered_by=actor,
         platform="douyin", project_id=project_id,
     )
     owned_transport = transport is None
@@ -211,16 +232,16 @@ def refresh_project_account_profiles(
                 transport=active_transport, store=provider_store,
                 before_external_call=reserve,
                 uncached_transport_guard=lambda _spec, _ids: _paid_account_guard(
-                    dsn, project_id, video_id, stable_id,
+                    dsn, project_id, video_id, stable_id, actor,
                 ),
             )
             with _account_cache_lock(dsn, stable_id):
                 page = provider.fetch_account_profile(stable_id)
-            if _accepted_account(dsn, project_id, video_id) != stable_id:
+            if _accepted_account(dsn, project_id, video_id, actor) != stable_id:
                 raise PermissionError("project account identity changed")
             _, was_inserted = run_store.ingest_verified_account_profile(
                 page.items[0], endpoint_key=page.endpoint_key,
-                project_id=project_id, video_platform_id=video_id,
+                project_id=project_id, video_platform_id=video_id, actor=actor,
             )
             inserted += int(was_inserted)
             cached += int(page.cached)

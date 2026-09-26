@@ -21,6 +21,7 @@ from douyin_research.providers.transport import TransportResult
 DSN = os.getenv("TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL is required")
 SCHEMA = Path(__file__).resolve().parents[1] / "db/schema.sql"
+ACTOR = "profile-owner@example.com"
 
 
 class ProfileTransport:
@@ -64,6 +65,10 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
                        values (%s,'profile-project','资料项目','active') returning id""",
                     (organization_id,),
                 ).fetchone()[0]
+                conn.execute(
+                    """insert into research_project_member(project_id,actor_id,role)
+                       values (%s,%s,'owner')""", (project_id, ACTOR),
+                )
                 account_id = conn.execute(
                     """insert into source_account(platform,platform_account_id,nickname)
                        values ('douyin','sec-profile-test','公开账号') returning id"""
@@ -106,12 +111,12 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
             transport = ProfileTransport()
             first = refresh_project_account_profiles(
                 dsn=scoped_dsn, project_id=project_id,
-                video_platform_ids=video_ids, api_key="fixture-key",
+                video_platform_ids=video_ids, actor=ACTOR, api_key="fixture-key",
                 transport=transport,
             )
             second = refresh_project_account_profiles(
                 dsn=scoped_dsn, project_id=project_id,
-                video_platform_ids=video_ids, api_key="fixture-key",
+                video_platform_ids=video_ids, actor=ACTOR, api_key="fixture-key",
                 transport=transport,
             )
             assert first.requested_video_count == 2
@@ -124,7 +129,7 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
             assert second.estimated_api_cost_usd == 0
             assert transport.calls == ["sec-profile-test"]
             with _paid_account_guard(
-                scoped_dsn, project_id, video_ids[0], "sec-profile-test",
+                scoped_dsn, project_id, video_ids[0], "sec-profile-test", ACTOR,
             ):
                 with psycopg.connect(scoped_dsn) as competing:
                     competing.execute("set lock_timeout='100ms'")
@@ -151,7 +156,7 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
             with pytest.raises(PermissionError, match="accepted project video"):
                 refresh_project_account_profiles(
                     dsn=scoped_dsn, project_id=project_id,
-                    video_platform_ids=video_ids, api_key="fixture-key",
+                    video_platform_ids=video_ids, actor=ACTOR, api_key="fixture-key",
                     transport=transport,
                 )
             assert transport.calls == ["sec-profile-test"]
@@ -185,6 +190,21 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
                 conn.execute(
                     """update project_video_inclusion set status='accepted'
                        where project_id=%s""", (project_id,),
+                )
+                conn.execute(
+                    """update research_project_member set status='suspended'
+                       where project_id=%s and actor_id=%s""", (project_id, ACTOR),
+                )
+            with pytest.raises(PermissionError, match="accepted project video"):
+                refresh_project_account_profiles(
+                    dsn=scoped_dsn, project_id=project_id,
+                    video_platform_ids=[video_ids[0]], actor=ACTOR,
+                    api_key="fixture-key", transport=transport,
+                )
+            with psycopg.connect(scoped_dsn) as conn:
+                conn.execute(
+                    """update research_project_member set status='active'
+                       where project_id=%s and actor_id=%s""", (project_id, ACTOR),
                 )
                 conn.execute(
                     """update external_api_response set expires_at=now()-interval '1 second'
@@ -234,14 +254,14 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
                 refresh_project_account_profiles(
                     dsn=scoped_dsn, project_id=project_id,
                     video_platform_ids=["7683330565018794225"],
-                    api_key="fixture-key", transport=transport,
+                    actor=ACTOR, api_key="fixture-key", transport=transport,
                 )
             mismatch_transport = MismatchedSecondTransport()
             with pytest.raises(RuntimeError, match="account profile refresh failed"):
                 refresh_project_account_profiles(
                     dsn=scoped_dsn, project_id=project_id,
                     video_platform_ids=[video_ids[0], "7685956081940290981"],
-                    api_key="fixture-key", transport=mismatch_transport,
+                    actor=ACTOR, api_key="fixture-key", transport=mismatch_transport,
                 )
             assert mismatch_transport.calls == [
                 "sec-profile-test", "sec-profile-second",
