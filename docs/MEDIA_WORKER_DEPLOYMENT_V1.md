@@ -2,13 +2,21 @@
 
 ## 实现与部署状态
 
-入口为 `f/content_research/collectors/ingest_video_media`，当前待发布的依赖固定到包含单视频详情来源兼容性的提交 `9d638f625846766361bb2106b709e5db17f9b9eb`。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
+入口为 `f/content_research/collectors/ingest_video_media`，依赖固定到包含单视频详情来源兼容性的提交 `9d638f625846766361bb2106b709e5db17f9b9eb`。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
 
 2026-09-21 已通过浏览器 JumpServer 在测试服务器构建并部署媒体镜像 `douyin-research-media-worker:87eeac7`，两个普通 Worker 均已确认 ffmpeg/ffprobe、Python 3.13.5 及可写临时目录；server/native/postgres 未替换。镜像 ID 为 `sha256:08e0267834a4f76ef1eb33f0fe6a790fe5eddd7dff926e5b0f0712974d549da5`。无网络临时容器实际转换合成音频并验证 pcm_s16le、16000 Hz、单声道通过，不是真实视频链路验收。
 
 主机临时目录 `/srv/douyin-research-test/media-tmp` 绑定到容器 `/srv/research-media-tmp`，findmnt 确认位于 `/dev/sdb1` 的 500G 数据盘。迁移账本已验证至017；迁移前备份 `/srv/douyin-research-test/backups/20260920T190539Z`。备份校验不等于恢复演练通过。
 
-上述是 2026-09-21 的历史部署状态。2026-09-26 在测试服只读回查，媒体脚本已有 5 个版本且最新版本带非空锁，但仍固定旧服务提交 `fd2694729c784a0f2e34b2c0a4d6746da57813fe`；`media_storage_config`（Secret）与 `automation_worker_identity` 均已存在，未读取其值。普通 Worker 的系统 `python3` 为 3.13.5；脚本内联依赖声明 `requires-python ==3.14.*`，这两项不能混为同一执行解释器，实际 Windmill 作业的 Python 版本仍须运行回读。九九项目的两条 HandsMini 视频均无 `media_asset`，因此尚未完成这两条的媒体或 ASR/L3 验收。
+上述是 2026-09-21 的历史部署状态。2026-09-26 测试服回查时，媒体脚本仍固定旧服务提交 `fd2694729c784a0f2e34b2c0a4d6746da57813fe`；随后只更新这一脚本的固定提交并发布，实测结果见下。`media_storage_config`（Secret）与 `automation_worker_identity` 已存在，部署及核验过程未读取其值。普通 Worker 的系统 `python3` 为 3.13.5；实际 Windmill 作业日志显示 Python 3.14 执行，不能将系统默认解释器与脚本运行解释器混为一谈。
+
+### 2026-09-26 测试服实测
+
+- 单脚本发布版本 `83e07844f3d7170a`；Windmill 发布页展示非空锁，首行 `# py: 3.14`，含 `psycopg==3.3.6`、`psycopg-binary==3.3.6` 与上述核心提交。未同步整个工作区，未新建 CLI 令牌。
+- 对九九项目已接受的 HandsMini《师兄去哪了》执行内部视频 UUID `67beaca8-7b5a-41dd-ac9b-5bbe83692176`：Windmill 作业 [`01a0dd80-5b60-8992-a237-1a3f584171a6`](https://dy.yudao.cc:6443/run/01a0dd80-5b60-8992-a237-1a3f584171a6?workspace=test-research) 成功，约 8.9 秒；结果 `reused=false`、`external_paid_calls=0`、流水线 `fec656f3-19ca-4440-95c4-6872d107f7ea` 为 `success`。实际作业日志显示 `Python (3.14)`。
+- 测试库形成且仅形成两条 `media_asset`：MP4 `a866c64d-7f55-44c9-86de-405594208736`（4,844,398 字节，SHA-256 前缀 `3eddeb...`）和 WAV `8e52cd4c-b382-4be5-9906-01eed0e90390`（641,366 字节，SHA-256 前缀 `6ca0b1...`）；后者指向前者作为父资产。两条都有缓存详情来源。研究台该项目视频库可加载“待审核 WAV · 626.3 KB”，这是页面级读取入口的验证，尚不等于用户已完整试听或对象丢失恢复演练。
+- 原参数再次运行，Windmill 作业 [`01a0dd82-01f9-1b80-3b11-d119be5c8861`](https://dy.yudao.cc:6443/run/01a0dd82-01f9-1b80-3b11-d119be5c8861?workspace=test-research) 成功，约 0.8 秒；返回 `reused=true`、相同两个 asset_id、`external_paid_calls=0`。流水线 `9edb3cda-22fb-428c-8326-231f5c5b83e2` 为 `success`，测试库仍只有两条资产记录。重复作业日志未显示重新下载，但尚未通过 CDN 出站观测独立证明零网络传输。
+- 未做这条新音频的人工核听、云端 ASR 或 L3；这些仍需逐条审核后验收。两条新 AI 角色候选也仍仅有公开元数据，不应据此宣称九九业务指导意见已成立。
 
 ## 服务端配置
 
