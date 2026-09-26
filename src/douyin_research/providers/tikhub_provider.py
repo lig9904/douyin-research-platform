@@ -15,6 +15,7 @@ from .normalizer import (
     extract_pagination,
     normalize_comment_samples,
     normalize_account_profile,
+    normalize_exact_video_statistics,
     normalize_video_observations,
     validate_tikhub_envelope,
 )
@@ -23,7 +24,7 @@ from .transport import ProviderTransport, TikHubTransport
 from .types import AccountRef, CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
 from .video_fetch_plan import plan_exact_video_brief, plan_video_fetches
 from .cost_accounting import quote_call
-from .errors import ProviderSchemaError, attach_provider_diagnostic, provider_failure_summary
+from .errors import attach_provider_diagnostic, provider_failure_summary
 
 
 class TikHubDouyinProvider:
@@ -263,29 +264,19 @@ class TikHubDouyinProvider:
             raise ValueError("unexpected statistics request plan")
         spec = get_endpoint(request[0].endpoint_key)
 
-        def validate_exact(payload: dict[str, Any]) -> None:
-            observations = normalize_video_observations(
-                payload, endpoint_key=spec.key, raw_ref=None, observed_at=utcnow(),
-            )
-            if {item.video.platform_video_id for item in observations} != set(ids) or (
-                len(observations) != len(ids)
-            ) or any(
-                item.metrics is None or item.metrics.play_count is None
-                or item.metrics.play_count < 0
-                for item in observations
-            ):
-                raise ProviderSchemaError("exact statistics IDs or play counts are missing")
-
-        page = self._video_page(
+        # Persist a successfully returned supplier envelope before the
+        # endpoint-specific business validation. A paid 200 with malformed
+        # statistics must remain auditable, including its estimated cost.
+        payload, fingerprint, cached, raw_ref, observed_at = self._call(
             spec, request[0].kwargs(), request_video_ids=ids,
-            validate_payload=validate_exact, force_refresh=force_refresh,
+            force_refresh=force_refresh,
         )
-        indexed = {item.video.platform_video_id: item for item in page.items}
+        items = normalize_exact_video_statistics(
+            payload, video_ids=ids, raw_ref=raw_ref, observed_at=observed_at,
+        )
         return ProviderPage(
-            items=[indexed[video_id] for video_id in ids],
-            endpoint_key=page.endpoint_key,
-            request_fingerprint=page.request_fingerprint,
-            cached=page.cached, raw_ref=page.raw_ref,
+            items=items, endpoint_key=spec.key,
+            request_fingerprint=fingerprint, cached=cached, raw_ref=raw_ref,
         )
 
     def _fetch_video_plan(self, requests, *, force_refresh: bool):

@@ -9,7 +9,10 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
-from douyin_research.l0l1.video_statistics import refresh_project_video_statistics
+from douyin_research.l0l1.video_statistics import (
+    _paid_video_guard,
+    refresh_project_video_statistics,
+)
 from douyin_research.providers.transport import TransportResult
 
 
@@ -21,10 +24,12 @@ IDS = ("7658347686323555610", "7681244536475077934")
 
 
 class StatisticsTransport:
-    def __init__(self, *, missing: bool = False, no_play: bool = False) -> None:
+    def __init__(self, *, missing: bool = False, no_play: bool = False,
+                 echo_missing: bool = False) -> None:
         self.calls = 0
         self.missing = missing
         self.no_play = no_play
+        self.echo_missing = echo_missing
 
     def call(self, spec, kwargs):
         assert spec.key == "douyin.app.video_statistics"
@@ -37,8 +42,11 @@ class StatisticsTransport:
         ]
         if self.missing:
             rows.pop()
+        data = {"statistics_list": rows}
+        if self.echo_missing:
+            data["request_echo"] = {"aweme_id": IDS[1], "play_count": 9999}
         return TransportResult(
-            payload={"code": 200, "data": {"statistics_list": rows}},
+            payload={"code": 200, "data": data},
             http_status=200, provider_request_id="statistics-fixture", mode="fake",
         )
 
@@ -108,11 +116,14 @@ def test_exact_statistics_refresh_records_raw_snapshot_cost_and_cache():
             assert conn.execute("select count(*) from source_video").fetchone()[0] == 2
 
 
-@pytest.mark.parametrize("variant", ["missing", "no_play"])
+@pytest.mark.parametrize("variant", ["missing", "no_play", "echo_missing"])
 def test_partial_statistics_are_not_promoted_but_failed_cost_is_recorded(variant):
     assert DSN
     for scoped_dsn, project_id in _fixture(DSN):
-        transport = StatisticsTransport(missing=variant == "missing", no_play=variant == "no_play")
+        transport = StatisticsTransport(
+            missing=variant in {"missing", "echo_missing"},
+            no_play=variant == "no_play", echo_missing=variant == "echo_missing",
+        )
         with pytest.raises(RuntimeError, match="statistics refresh failed"):
             refresh_project_video_statistics(
                 dsn=scoped_dsn, project_id=project_id, video_platform_ids=IDS,
@@ -126,6 +137,17 @@ def test_partial_statistics_are_not_promoted_but_failed_cost_is_recorded(variant
                    where run_type='video_statistics_refresh'"""
             ).fetchone()
             assert row == ("failed", "ProviderSchemaError")
+            raw_count = conn.execute(
+                """select count(*) from external_api_response
+                   where endpoint_key='douyin.app.video_statistics'"""
+            ).fetchone()[0]
+            assert raw_count == 1
+            run = conn.execute(
+                """select summary->>'api_cost_basis',
+                          (summary->>'known_estimated_cost_usd')::numeric
+                   from pipeline_run where run_type='video_statistics_refresh'"""
+            ).fetchone()
+            assert run[0] == "estimated" and float(run[1]) == pytest.approx(0.001)
 
 
 def test_denied_project_does_not_call_provider_or_create_run():
@@ -145,3 +167,18 @@ def test_denied_project_does_not_call_provider_or_create_run():
                 actor=ACTOR, api_key="fixture-key", transport=transport,
             )
         assert transport.calls == 0
+
+
+def test_paid_guard_blocks_a_newer_member_version_until_http_finishes():
+    assert DSN
+    for scoped_dsn, project_id in _fixture(DSN):
+        with _paid_video_guard(scoped_dsn, project_id, IDS, ACTOR):
+            with psycopg.connect(scoped_dsn) as competing:
+                competing.execute("set lock_timeout='100ms'")
+                with pytest.raises(psycopg.errors.LockNotAvailable):
+                    competing.execute(
+                        """insert into research_project_member(
+                             project_id,actor_id,role,status,effective_from)
+                           values (%s,%s,'viewer','active',now()+interval '1 second')""",
+                        (project_id, ACTOR),
+                    )

@@ -110,6 +110,36 @@ def normalize_video_observations(
     return observations
 
 
+def normalize_exact_video_statistics(
+    payload: dict[str, Any], *, video_ids: tuple[str, ...],
+    raw_ref: str | None, observed_at: datetime,
+) -> list[VideoObservation]:
+    """Bind the dedicated statistics list, not arbitrary echoed request IDs."""
+    data = validate_tikhub_envelope(payload).get("data")
+    rows = data.get("statistics_list") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or len(rows) != len(video_ids) or not all(
+        isinstance(row, dict) for row in rows
+    ):
+        raise ProviderSchemaError("exact statistics list is missing or incomplete")
+    raw_ids = [_as_str(row.get("aweme_id")) for row in rows]
+    if len(set(raw_ids)) != len(video_ids) or set(raw_ids) != set(video_ids):
+        raise ProviderSchemaError("exact statistics IDs do not match the request")
+    observations = normalize_video_observations(
+        {"code": 200, "data": rows},
+        endpoint_key="douyin.app.video_statistics", raw_ref=raw_ref,
+        observed_at=observed_at,
+    )
+    if len(observations) != len(video_ids) or {
+        item.video.platform_video_id for item in observations
+    } != set(video_ids) or any(
+        item.metrics is None or item.metrics.play_count is None
+        or item.metrics.play_count < 0 for item in observations
+    ):
+        raise ProviderSchemaError("exact statistics play counts are missing")
+    indexed = {item.video.platform_video_id: item for item in observations}
+    return [indexed[video_id] for video_id in video_ids]
+
+
 def extract_batch_detail_ids(payload: dict[str, Any]) -> list[str]:
     """Read batch detail IDs before observation deduplication.
 

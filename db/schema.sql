@@ -1024,12 +1024,18 @@ create table if not exists asr_media_review (
 create or replace view merged_video_metric as
 with candidates as (
   select m.video_id, m.id, m.captured_at, f.field, f.value,
-    case when m.source_endpoint='douyin.billboard.low_fan' then 'billboard'
+    case when m.source_endpoint in ('douyin.app.video_statistics','douyin.app.multi_video_statistics')
+      then 'statistics'
+      when m.source_endpoint='douyin.billboard.low_fan' then 'billboard'
       when m.source_endpoint in ('douyin.app.multi_video_v2','douyin.app.multi_video',
-        'douyin.app.one_video','douyin.app.video_statistics','douyin.app.multi_video_statistics') then 'detail'
+        'douyin.app.one_video') then 'detail'
       else 'other' end as source_kind,
-    case when f.field in ('play_count','author_follower_count')
-      and m.source_endpoint='douyin.billboard.low_fan' then 0 else 1 end as source_priority
+    case when f.field='play_count'
+      and m.source_endpoint in ('douyin.app.video_statistics','douyin.app.multi_video_statistics')
+      then 0
+      when f.field in ('play_count','author_follower_count')
+        and m.source_endpoint='douyin.billboard.low_fan' then 1
+      else 2 end as source_priority
   from metric_snapshot m
   cross join lateral (values
     ('play_count',m.play_count), ('like_count',m.like_count),

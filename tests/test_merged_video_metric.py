@@ -38,5 +38,10 @@ def test_merged_fields_keep_zero_null_precedence_and_provenance():
             assert row['play_count'] == 0
             assert row['metric_provenance']['like_count']['source_kind'] == 'other'
             assert 'unrecognized-private-endpoint' not in str(row)
+            add('douyin.app.video_statistics', 120, 5, None, 0)
+            row = read()
+            assert row['play_count'] == 120  # verified statistics outrank older billboard zero
+            assert row['author_follower_count'] == 0  # other fields retain their precedence
+            assert row['metric_provenance']['play_count']['source_kind'] == 'statistics'
         finally:
             conn.rollback()

@@ -17,7 +17,7 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
-from douyin_research.providers.normalizer import normalize_video_observations
+from douyin_research.providers.normalizer import normalize_exact_video_statistics
 from douyin_research.providers.tikhub_provider import TikHubDouyinProvider
 from douyin_research.providers.transport import ProviderTransport, TikHubTransport
 
@@ -69,7 +69,11 @@ def _accepted_videos(
                  and newer.effective_from <= now()
                  and newer.effective_from > member.effective_from)
         """ + (
-            " for share of project, organization, member, inclusion, video"
+            # A new membership row obtains KEY SHARE on its project FK. UPDATE
+            # blocks that insertion until this paid-call transaction finishes;
+            # merely sharing the existing member row would not block it.
+            " for update of project"
+            " for share of organization, member, inclusion, video"
             if lock else ""
         ),
         (actor, project_id, list(ids)),
@@ -119,18 +123,9 @@ def _insert_snapshots(
         raw = cur.fetchone()
         if raw is None:
             raise ValueError("statistics raw response is unavailable")
-        verified = normalize_video_observations(
-            raw[0], endpoint_key=_ENDPOINT, raw_ref=raw_ref,
-            observed_at=raw[1],
+        verified = normalize_exact_video_statistics(
+            raw[0], video_ids=ids, raw_ref=raw_ref, observed_at=raw[1],
         )
-        if set(item.video.platform_video_id for item in verified) != set(ids) or (
-            len(verified) != len(ids)
-        ) or any(
-            item.metrics is None or item.metrics.play_count is None
-            or item.metrics.play_count < 0
-            for item in verified
-        ):
-            raise ValueError("statistics raw response is incomplete")
         expected = {
             item.video.platform_video_id: item.metrics.play_count
             for item in observations if item.metrics is not None

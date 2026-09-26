@@ -138,6 +138,14 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
                        "known_estimated_cost_usd":0.001}'::jsonb)""",
                 (project_a,),
             )
+            conn.execute(
+                """insert into pipeline_run(
+                     run_type,project_id,status,cost_currency,summary)
+                   values ('video_statistics_refresh',%s,'failed','USD',
+                     '{"api_cost_basis":"estimated","unknown_cost_calls":0,
+                       "known_estimated_cost_usd":0.001}'::jsonb)""",
+                (project_a,),
+            )
             asset = conn.execute("""insert into media_asset(video_id,kind,storage_location,bucket,
                 object_key,content_sha256,size_bytes,content_type)
                 values(%s,'audio','s3','test',%s,%s,64,'audio/wav') returning id""",
@@ -178,19 +186,19 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert day == {
                 **day,
                 "cost_currency": "USD",
-                "task_count": 12,
+                "task_count": 13,
                 "asr_task_count": 4,
                 "l3_task_count": 2,
                 "discovery_run_count": 2,
                 "comment_run_count": 1,
                 "profile_run_count": 2,
-                "statistics_run_count": 1,
-                "known_amount": 2.507,
+                "statistics_run_count": 2,
+                "known_amount": 2.508,
                 "actual_amount": 1.0,
-                "estimated_amount": 1.007,
+                "estimated_amount": 1.008,
                 "mixed_amount": 0.5,
-                "unknown_task_count": 5,
-                "unbilled_job_count": 2,
+                "unknown_task_count": 6,
+                "unbilled_job_count": 3,
                 "cost_status": "partial",
             }
             assert "unknown_amount" not in day
