@@ -19,7 +19,7 @@ certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
-douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@586f9db5c49510c7f2be98c2bff22eaa9e96874b
+douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@9906c2091b53dbbb664ad5fd5cc888e4ab1057b6
 h11==0.16.0
     # via httpcore
 httpcore==1.0.9

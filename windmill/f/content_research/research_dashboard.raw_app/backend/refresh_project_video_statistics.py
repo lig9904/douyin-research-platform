@@ -1,6 +1,6 @@
 # py: ==3.14.*
 #requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@586f9db5c49510c7f2be98c2bff22eaa9e96874b
+#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@9906c2091b53dbbb664ad5fd5cc888e4ab1057b6
 #psycopg[binary]==3.3.6
 #wmill==1.815.0
 

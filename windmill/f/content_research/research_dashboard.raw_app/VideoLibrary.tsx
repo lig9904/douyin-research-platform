@@ -60,7 +60,7 @@ type VideoItem = {
   collect_count?: number | null
   author_follower_count?: number | null
   metric_captured_at?: string | null
-  metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'other' | null
+  metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'statistics' | 'other' | null
   metric_provenance?: Record<string, { source_kind: string; captured_at: string }>
   priority: number | null
   sources: string[]
@@ -1093,7 +1093,7 @@ export default function VideoLibrary({
                       {Object.entries(detail.metric_provenance || {}).map(([field, evidence]) => (
                         <p key={field} className="muted">
                           {({play_count:'播放量', like_count:'点赞', comment_count:'评论', share_count:'分享', collect_count:'收藏', author_follower_count:'账号粉丝'} as Record<string,string>)[field] || field}
-                          ：{evidence.source_kind === 'verified_account_profile' ? '账号详情（身份已核验）' : evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '视频详情' : '其他'} · {formatFullDate(evidence.captured_at)}
+                          ：{evidence.source_kind === 'verified_account_profile' ? '账号详情（身份已核验）' : evidence.source_kind === 'statistics' ? '独立视频统计' : evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '视频详情' : '其他'} · {formatFullDate(evidence.captured_at)}
                         </p>
                       ))}
                       <MetricTimeline videoId={detail.id} projectId={projectId} />

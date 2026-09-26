@@ -4,7 +4,7 @@ import { backend } from '../../backend'
 
 type Metric = {
   captured_at: string
-  source_kind?: 'billboard' | 'detail' | 'other'
+  source_kind?: 'billboard' | 'detail' | 'statistics' | 'other'
   play_count?: number | null
   like_count?: number | null
   comment_count?: number | null
@@ -89,7 +89,7 @@ export default function MetricTimeline({
               <tbody>
                 {(data?.items || []).map((item, index) => (
                   <tr key={`${item.captured_at}-${index}`}>
-                    <td>{time(item.captured_at)}</td><td>{item.source_kind === 'billboard' ? '榜单' : item.source_kind === 'detail' ? '详情' : '其他 / 未标注'}</td><td>{count(item.play_count)}</td><td>{count(item.like_count)}</td>
+                    <td>{time(item.captured_at)}</td><td>{item.source_kind === 'statistics' ? '独立统计' : item.source_kind === 'billboard' ? '榜单' : item.source_kind === 'detail' ? '详情' : '其他 / 未标注'}</td><td>{count(item.play_count)}</td><td>{count(item.like_count)}</td>
                     <td>{count(item.comment_count)}</td><td>{count(item.share_count)}</td><td>{count(item.collect_count)}</td>
                     <td>{count(item.author_follower_count)}</td>
                   </tr>
