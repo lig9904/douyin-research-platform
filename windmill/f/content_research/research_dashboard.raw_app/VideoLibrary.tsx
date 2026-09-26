@@ -1072,7 +1072,7 @@ export default function VideoLibrary({
                             [detail.comment_features.duplicate_text_count ?? '—', '重复文本'],
                           ].map(([value, label]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}
                         </div>
-                        <p className="muted">这是已采集评论的非随机样本，不代表全部评论或目标客群；问句、重复文本等是规则计数，不是情感或购买意向。下方仅展示最多 5 条高赞样本，不能据此推断整体偏好。</p>
+                        <p className="muted">这是已采集评论的非随机样本，不代表全部评论或目标客群；问号、重复文本等是规则计数，不是情感或购买意向。下方仅展示最多 5 条高赞样本，不能据此推断整体偏好。</p>
                       </> : <p className="muted">尚无评论特征；下方若有评论，也不能把少量高赞样本当作整体结论。</p>}
                     </section>
 
