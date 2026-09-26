@@ -104,13 +104,23 @@ def main(db: postgresql, project_id: str):
                           c.review_evidence, c.next_action, c.reviewed_by, c.reviewed_at, c.created_by,
                           c.review_observation_id, c.review_observation_version, c.review_metric_snapshot,
                           (i.project_id is null or i.status <> 'accepted' or v.availability_status <> 'available') as source_reference_withdrawn,
+                          source_case_review.status as source_case_review_status,
+                          (source_case_review.id = c.source_case_review_id
+                           and source_case_review.status = 'complete') as source_case_review_is_current,
+                          bound_source_review.version_no as source_case_review_version_at_binding,
+                          bound_source_review.source_reference as source_case_review_reference_at_binding,
+                          bound_source_review.verified_facts as source_case_review_facts_at_binding,
+                          bound_source_review.evidence_gaps as source_case_review_gaps_at_binding,
+                          bound_source_review.counterevidence as source_case_review_counterevidence_at_binding,
+                          bound_source_review.comparability_note as source_case_review_comparability_at_binding,
                           c.created_at, c.updated_at,
                           case when binding.decision_card_id is null then null else jsonb_build_object(
                             'profile_id', binding.profile_id,
                             'profile_kind', binding.profile_kind,
                             'profile_version_no', binding.profile_version_no,
                             'rights_status_at_binding', binding.rights_status_at_binding,
-                            'profile_current_status', bound_profile.status
+                            'profile_current_status', bound_profile.status,
+                            'profile_current_rights_status', bound_profile.rights_status
                           ) end as profile_binding,
                           coalesce(evidence_ref_rows.refs, '[]'::jsonb) as evidence_refs
                    from project_decision_card c
@@ -120,6 +130,15 @@ def main(db: postgresql, project_id: str):
                      on bound_profile.id=binding.profile_id and bound_profile.project_id=c.project_id
                    left join project_video_inclusion i
                      on i.project_id=c.project_id and i.video_id=c.source_video_id
+                   left join lateral (
+                     select review.id, review.status from project_video_case_review review
+                     where review.project_id=c.project_id and review.video_id=c.source_video_id
+                     order by review.version_no desc limit 1
+                   ) source_case_review on true
+                   left join project_video_case_review bound_source_review
+                     on bound_source_review.id=c.source_case_review_id
+                    and bound_source_review.project_id=c.project_id
+                    and bound_source_review.video_id=c.source_video_id
                    join source_video v on v.id=c.source_video_id
                    left join source_account a on a.id=v.account_id
                    left join research_subject subject_row
@@ -129,6 +148,14 @@ def main(db: postgresql, project_id: str):
                        'id', ref.id, 'video_id', ref.video_id, 'role', ref.role,
                        'reason', ref.reason, 'video_title', ref.video_title_at_binding,
                        'account_name', ref.account_name_at_binding,
+                       'case_review_status', ref_case_review.status,
+                       'case_review_is_current',
+                         (ref_case_review.id = ref.case_review_id_at_binding
+                          and ref_case_review.status = 'complete'),
+                       'case_review_version_at_binding', bound_ref_review.version_no,
+                       'case_review_facts_at_binding', bound_ref_review.verified_facts,
+                       'case_review_gaps_at_binding', bound_ref_review.evidence_gaps,
+                       'case_review_comparability_at_binding', bound_ref_review.comparability_note,
                        'reference_withdrawn',
                          (ref_inclusion.project_id is null or ref_inclusion.status <> 'accepted'
                           or ref_video.availability_status <> 'available')
@@ -137,6 +164,15 @@ def main(db: postgresql, project_id: str):
                      join source_video ref_video on ref_video.id=ref.video_id
                      left join project_video_inclusion ref_inclusion
                        on ref_inclusion.project_id=ref.project_id and ref_inclusion.video_id=ref.video_id
+                     left join lateral (
+                       select review.id, review.status from project_video_case_review review
+                       where review.project_id=ref.project_id and review.video_id=ref.video_id
+                       order by review.version_no desc limit 1
+                     ) ref_case_review on true
+                     left join project_video_case_review bound_ref_review
+                       on bound_ref_review.id=ref.case_review_id_at_binding
+                      and bound_ref_review.project_id=ref.project_id
+                      and bound_ref_review.video_id=ref.video_id
                      where ref.project_id=c.project_id and ref.decision_card_id=c.id
                    ) evidence_ref_rows on true
                    where c.project_id=%s
@@ -164,6 +200,11 @@ def main(db: postgresql, project_id: str):
                    from project_video_inclusion i
                    join source_video v on v.id=i.video_id and v.availability_status='available'
                    left join source_account a on a.id=v.account_id
+                   join lateral (
+                     select review.status from project_video_case_review review
+                     where review.project_id=i.project_id and review.video_id=i.video_id
+                     order by review.version_no desc limit 1
+                   ) case_review on case_review.status='complete'
                    where i.project_id=%s and i.status='accepted'
                    order by i.updated_at desc, v.id
                    limit 200""",
@@ -215,7 +256,7 @@ def main(db: postgresql, project_id: str):
             "cards": cards, "events": events, "eligible_videos": eligible_videos, "subjects": subjects,
             "approved_profiles": approved_profiles, "publications": publications,
             "boundaries": {
-                "card_source": "仅本项目已接受的公开视频；项目间共享依据不可建行动卡。",
+                "card_source": "仅本项目已纳入且最新案例核看完整的公开视频可新建行动卡；项目间共享依据不可建卡。历史卡保留，但须标明当前核看状态。",
                 "outcomes": "仅按日非个人汇总指标；不保存观众、评论原文或账号凭据。",
             },
         }

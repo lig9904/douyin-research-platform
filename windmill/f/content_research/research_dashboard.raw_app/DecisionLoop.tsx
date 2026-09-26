@@ -6,13 +6,14 @@ import type { ProjectScope } from './src/projectScope'
 import './decision-loop.css'
 
 type Video = { id: string; title?: string | null; account_name?: string | null; platform_video_id: string }
-type EvidenceRef = { video_id: string; role: 'comparable' | 'counterexample'; reason: string; video_title?: string | null; account_name?: string | null; reference_withdrawn?: boolean }
+type EvidenceRef = { video_id: string; role: 'comparable' | 'counterexample'; reason: string; video_title?: string | null; account_name?: string | null; reference_withdrawn?: boolean; case_review_status?: string | null; case_review_is_current?: boolean | null; case_review_version_at_binding?: number | null; case_review_facts_at_binding?: string | null; case_review_gaps_at_binding?: string | null; case_review_comparability_at_binding?: string | null }
 type Card = {
   id: string; source_video_id: string; subject_id?: string | null; subject_name?: string | null; source_video_title?: string | null; source_account_name?: string | null
   hypothesis: string; reference_point: string; adaptation_difference: string; owner_actor: string
   evaluation_metric?: string | null; success_rule?: string | null; observation_window_days?: number | null; comparison_basis?: string | null; confounder_plan?: string | null
-  decision: 'adopt' | 'observe' | 'exclude'; status: string; source_reference_withdrawn?: boolean; review_verdict?: 'supported' | 'not_supported' | 'inconclusive' | null; review_conclusion?: string | null; review_evidence?: string | null; next_action?: string | null; updated_at: string
-  profile_binding?: { profile_id: string; profile_kind: string; profile_version_no: number; rights_status_at_binding: string; profile_current_status: string } | null
+  decision: 'adopt' | 'observe' | 'exclude'; status: string; source_reference_withdrawn?: boolean; source_case_review_status?: string | null; source_case_review_is_current?: boolean | null; source_case_review_version_at_binding?: number | null; review_verdict?: 'supported' | 'not_supported' | 'inconclusive' | null; review_conclusion?: string | null; review_evidence?: string | null; next_action?: string | null; updated_at: string
+  source_case_review_reference_at_binding?: string | null; source_case_review_facts_at_binding?: string | null; source_case_review_gaps_at_binding?: string | null; source_case_review_counterevidence_at_binding?: string | null; source_case_review_comparability_at_binding?: string | null
+  profile_binding?: { profile_id: string; profile_kind: string; profile_version_no: number; rights_status_at_binding: string; profile_current_status: string; profile_current_rights_status: string } | null
   evidence_refs?: EvidenceRef[]
 }
 type ApprovedProfile = { id: string; subject_id: string; profile_kind: string; version_no: number; rights_status: string; summary: Record<string, unknown> }
@@ -24,6 +25,10 @@ type Publication = {
 }
 type Loop = { project_name: string; role: string; cards: Card[]; events: Event[]; eligible_videos: Video[]; subjects: { id: string; name: string; subject_type: string }[]; approved_profiles: ApprovedProfile[]; publications: Publication[]; boundaries: { card_source: string; outcomes: string } }
 type Review = { card_id: string; observation_id: string; verdict: string; conclusion: string; evidence: string; next_action: string }
+
+const actionEvidenceCurrent = (card: Card) => !card.source_reference_withdrawn && card.source_case_review_is_current === true
+  && (card.decision !== 'adopt' || (card.profile_binding?.profile_current_status === 'approved' && card.profile_binding?.profile_current_rights_status === 'cleared'))
+  && (card.evidence_refs || []).every(ref => !ref.reference_withdrawn && ref.case_review_is_current === true)
 
 const decisions = [
   { value: 'adopt', label: '采用' }, { value: 'observe', label: '观察' }, { value: 'exclude', label: '排除' },
@@ -105,13 +110,13 @@ export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScop
         <section className="card decision-loop-boundary"><strong>边界</strong><span>{data.boundaries.card_source}</span><span>{data.boundaries.outcomes}</span></section>
         {!canWrite ? <section className="card decision-loop-readonly"><h2>当前为只读成员</h2><p>你可以查看本项目行动与复盘结果；创建、修改和状态推进仅对负责人、管理员和研究员开放。</p></section> : null}
         {canWrite ? <section className="card decision-loop-form-card">
-          <div className="decision-loop-heading"><div><span>01 · 参考转行动</span><h2>新建行动卡</h2></div><Tag color="blue">仅本项目已接受视频</Tag></div>
+          <div className="decision-loop-heading"><div><span>01 · 参考转行动</span><h2>新建行动卡</h2></div><Tag color="blue">仅本项目完整核看案例</Tag></div>
           {data.eligible_videos.length >= 200 ? <Alert type="warning" showIcon message="候选列表最多显示最近 200 条本项目视频；更早的有效来源暂无法在此选择。" /> : null}
-          {!data.eligible_videos.length ? <p className="decision-loop-empty">没有可用参考视频。请先在“视频库”将公开视频明确纳入本项目；跨项目共享视频仅供阅读，不能在此建卡。</p> : <div className="decision-loop-form">
-            <label>主要参考视频<Select aria-label="参考视频" value={cardForm.source_video_id || undefined} placeholder="选择已接受的公开视频" options={data.eligible_videos.map(video => ({ value: video.id, label: `${video.title || '未命名视频'} · ${video.account_name || '未知账号'}` }))} onChange={value => setCardForm({ ...cardForm, source_video_id: value, evidence_refs: cardForm.evidence_refs.filter(ref => ref.video_id !== value) })} /></label>
+          {!data.eligible_videos.length ? <p className="decision-loop-empty">没有可用参考视频。请先在“视频库”将公开视频纳入本项目，并保存完整的画面、声音和可比性核看；跨项目共享视频仅供阅读，不能在此建卡。</p> : <div className="decision-loop-form">
+            <label>主要参考视频<Select aria-label="参考视频" value={cardForm.source_video_id || undefined} placeholder="选择已完整核看的公开视频" options={data.eligible_videos.map(video => ({ value: video.id, label: `${video.title || '未命名视频'} · ${video.account_name || '未知账号'}` }))} onChange={value => setCardForm({ ...cardForm, source_video_id: value, evidence_refs: cardForm.evidence_refs.filter(ref => ref.video_id !== value) })} /></label>
             <div className="decision-loop-evidence-editor">
               <strong>可比案例与反例（可选）</strong>
-              <p>一张行动卡可以并列记录多条本项目已接受的视频。请写明每条为何可比或为何构成反例；案例数量本身不代表方法有效。</p>
+              <p>一张行动卡可以并列记录多条本项目已完整核看的视频。请写明每条为何可比或为何构成反例；案例数量本身不代表方法有效。</p>
               {cardForm.evidence_refs.map((ref, index) => <div className="decision-loop-evidence-row" key={index}>
                 <Select aria-label={`补充案例 ${index + 1}`} value={ref.video_id || undefined} placeholder="选择本项目视频" options={data.eligible_videos.filter(video => video.id !== cardForm.source_video_id && !cardForm.evidence_refs.some((other, otherIndex) => otherIndex !== index && other.video_id === video.id)).map(video => ({ value: video.id, label: `${video.title || '未命名视频'} · ${video.account_name || '未知账号'}` }))} onChange={value => setCardForm({ ...cardForm, evidence_refs: cardForm.evidence_refs.map((item, itemIndex) => itemIndex === index ? { ...item, video_id: value } : item) })} />
                 <Select aria-label={`案例类型 ${index + 1}`} value={ref.role} options={[{ value: 'comparable', label: '可比案例' }, { value: 'counterexample', label: '反例' }]} onChange={value => setCardForm({ ...cardForm, evidence_refs: cardForm.evidence_refs.map((item, itemIndex) => itemIndex === index ? { ...item, role: value } : item) })} />
@@ -139,24 +144,26 @@ export default function DecisionLoop({ scope, onNavigate }: { scope: ProjectScop
         </section> : null}
         <section className="decision-loop-card-grid" aria-label="行动卡列表">
           {data.cards.map(card => <article className="card decision-card" key={card.id}>
-            <div className="decision-card-head"><div><small>{card.source_account_name || '未知账号'} · {card.source_video_title || '未命名参考视频'}</small><h2>{card.hypothesis}</h2></div><Tag color={statusColors[card.status]}>{statusNames[card.status] || card.status}</Tag></div>
+            <div className="decision-card-head"><div><small>{card.source_account_name || '未知账号'} · {card.source_video_title || '未命名参考视频'} · {card.source_case_review_version_at_binding ? `建卡时核看 v${card.source_case_review_version_at_binding}` : '历史卡未绑定核看版本'}</small><h2>{card.hypothesis}</h2></div><Tag color={statusColors[card.status]}>{statusNames[card.status] || card.status}</Tag></div>
+            {card.source_case_review_version_at_binding ? <details className="decision-card-case-review"><summary>查看建卡时锁定的案例核看</summary><p>核实事实：{card.source_case_review_facts_at_binding}</p><p>证据缺口：{card.source_case_review_gaps_at_binding || '无记录'}</p><p>反证：{card.source_case_review_counterevidence_at_binding || '无记录'}</p><p>适用边界：{card.source_case_review_comparability_at_binding}</p>{card.source_case_review_reference_at_binding ? <a href={card.source_case_review_reference_at_binding} target="_blank" rel="noopener noreferrer">打开原帖 ↗</a> : null}</details> : null}
             <dl><div><dt>可借鉴点</dt><dd>{card.reference_point}</dd></div><div><dt>我方差异</dt><dd>{card.adaptation_difference}</dd></div></dl>
-            {card.evidence_refs?.length ? <div className="decision-card-evidence"><strong>并列依据</strong>{card.evidence_refs.map(ref => <div key={ref.video_id}><Tag color={ref.role === 'counterexample' ? 'volcano' : 'cyan'}>{ref.role === 'counterexample' ? '反例' : '可比案例'}</Tag><span>{ref.account_name || '未知账号'} · {ref.video_title || '未命名视频'}：{ref.reason}</span>{ref.reference_withdrawn ? <small>该来源现已撤回或不可用，仅留历史依据</small> : null}</div>)}</div> : null}
+            {card.evidence_refs?.length ? <div className="decision-card-evidence"><strong>并列依据</strong>{card.evidence_refs.map(ref => <div key={ref.video_id}><Tag color={ref.role === 'counterexample' ? 'volcano' : 'cyan'}>{ref.role === 'counterexample' ? '反例' : '可比案例'}</Tag><span>{ref.account_name || '未知账号'} · {ref.video_title || '未命名视频'}：{ref.reason} · {ref.case_review_version_at_binding ? `绑定核看 v${ref.case_review_version_at_binding}` : '历史依据未绑定核看版本'}</span>{ref.reference_withdrawn ? <small>该来源现已撤回或不可用，仅留历史依据</small> : null}{ref.case_review_status !== 'complete' ? <small>当前不是完整核看案例，仅保留历史依据</small> : null}</div>)}</div> : null}
             {card.evaluation_metric ? <dl><div><dt>预设主指标与规则</dt><dd>{card.evaluation_metric} · {card.success_rule}</dd></div><div><dt>观察窗与对照</dt><dd>{card.observation_window_days} 天 · {card.comparison_basis}</dd></div><div><dt>可能干扰</dt><dd>{card.confounder_plan}</dd></div></dl> : <p className="decision-card-withdrawn">历史行动卡未预设评估口径，不能据此声称已验证运营方法。</p>}
             {card.subject_name ? <p className="decision-card-subject">关联主体：{card.subject_name}</p> : null}
             {card.profile_binding ? <p className="decision-card-subject">采用依据：{profileKindNames[card.profile_binding.profile_kind] || card.profile_binding.profile_kind} v{card.profile_binding.profile_version_no} · {card.profile_binding.profile_current_status === 'approved' ? '当前有效' : card.profile_binding.profile_current_status === 'revoked' ? '档案已撤销，仅留历史' : '档案已替换，仅留历史'}</p> : card.decision === 'adopt' ? <p className="decision-card-withdrawn">旧行动卡未绑定主体档案版本，仅作为历史记录，不代表当前可继续采用。</p> : null}
             {card.source_reference_withdrawn ? <p className="decision-card-withdrawn">参考已从当前项目接受列表撤回或公开源已不可用；保留此卡仅用于历史复盘，不会作为新建卡来源。</p> : null}
+            {!actionEvidenceCurrent(card) ? <p className="decision-card-withdrawn">案例依据已撤回、降级、更新，或采用档案已失效；此卡保留历史及已登记结果，暂停新增发布和采用推进。请归档后以当前有效依据建立新卡。</p> : null}
             {card.status === 'reviewed' ? <div className="decision-card-review"><strong>复盘结论{card.review_verdict ? ` · ${{ supported: '支持原假设', not_supported: '不支持原假设', inconclusive: '证据不足' }[card.review_verdict]}` : ' · 历史记录未判定'}</strong><p>{card.review_conclusion}</p><small>依据：{card.review_evidence}</small><small>下一动作：{card.next_action}</small></div> : null}
-            <div className="decision-card-foot"><span>负责人：{card.owner_actor}</span><Tag color={card.decision === 'adopt' ? 'green' : card.decision === 'exclude' ? 'red' : 'gold'}>{decisions.find(item => item.value === card.decision)?.label}</Tag>{canWrite && statusTransitions[card.status]?.length ? <Select size="small" placeholder="推进状态" options={statusTransitions[card.status].map(value => ({ value, label: statusNames[value] }))} onChange={status => void mutate('set_card_status', { card_id: card.id, status }, () => undefined)} /> : null}</div>
+            <div className="decision-card-foot"><span>负责人：{card.owner_actor}</span><Tag color={card.decision === 'adopt' ? 'green' : card.decision === 'exclude' ? 'red' : 'gold'}>{decisions.find(item => item.value === card.decision)?.label}</Tag>{canWrite && statusTransitions[card.status]?.length ? <Select size="small" placeholder="推进状态" options={statusTransitions[card.status].filter(value => value === 'archived' || actionEvidenceCurrent(card)).map(value => ({ value, label: statusNames[value] }))} onChange={status => void mutate('set_card_status', { card_id: card.id, status }, () => undefined)} /> : null}</div>
             {latestEvent.get(card.id) ? <p className="decision-card-audit">最近审计：{latestEvent.get(card.id)?.actor_id} · {latestEvent.get(card.id)?.action === 'status_changed' ? `${statusNames[latestEvent.get(card.id)?.from_status || '']} → ${statusNames[latestEvent.get(card.id)?.to_status || '']}` : latestEvent.get(card.id)?.action} · {dateTime(latestEvent.get(card.id)?.created_at || '')}</p> : null}
           </article>)}
-          {!data.cards.length ? <div className="card decision-loop-empty">尚未建立行动卡。先在视频库接受公开视频，再把可借鉴之处和我方差异写清。</div> : null}
+          {!data.cards.length ? <div className="card decision-loop-empty">尚未建立行动卡。先在视频库纳入并完整核看公开视频，再把可借鉴之处和我方差异写清。</div> : null}
         </section>
         {canWrite ? <section className="card decision-loop-form-card">
           <div className="decision-loop-heading"><div><span>02 · 我方实践</span><h2>登记发布与按日结果</h2></div><Tag color="green">非个人汇总</Tag></div>
           <p className="decision-loop-review-help">发布信息由项目成员人工登记，未核验平台真实性；请填写实际发布时间与作品 ID。</p>
           {!data.cards.length ? <p className="decision-loop-empty">需先建立行动卡，才可登记与该行动关联的我方内容。</p> : <div className="decision-loop-form decision-loop-publication-form">
-            <label>关联行动<Select aria-label="关联行动" value={publication.decision_card_id || undefined} placeholder="选择执行中、已采用或观察中的预登记行动" options={data.cards.filter(card => !!card.evaluation_metric && ((card.decision === 'adopt' && ['active', 'adopted'].includes(card.status)) || (card.decision === 'observe' && card.status === 'observing'))).map(card => ({ value: card.id, label: card.hypothesis }))} onChange={value => setPublication({ ...publication, decision_card_id: value })} /></label>
+            <label>关联行动<Select aria-label="关联行动" value={publication.decision_card_id || undefined} placeholder="选择依据仍为当前核看版本的预登记行动" options={data.cards.filter(card => actionEvidenceCurrent(card) && !!card.evaluation_metric && ((card.decision === 'adopt' && ['active', 'adopted'].includes(card.status)) || (card.decision === 'observe' && card.status === 'observing'))).map(card => ({ value: card.id, label: card.hypothesis }))} onChange={value => setPublication({ ...publication, decision_card_id: value })} /></label>
             <label>发布日期<Input aria-label="发布日期" type="date" value={publication.publication_date} onChange={e => setPublication({ ...publication, publication_date: e.target.value })} /></label>
             <label>实际发布时间（含时区）<Input aria-label="实际发布时间（含时区）" placeholder="2026-09-25T12:30:00+08:00" value={publication.published_at} onChange={e => setPublication({ ...publication, published_at: e.target.value })} /></label>
             <label>内容名称<Input aria-label="内容名称" value={publication.title} onChange={e => setPublication({ ...publication, title: e.target.value })} /></label>

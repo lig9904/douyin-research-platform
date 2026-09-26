@@ -202,6 +202,12 @@ def _card(cur, project: UUID, card_id: object) -> dict[str, Any]:
     return dict(row)
 
 
+def _card_sources_current(cur, project: UUID, card_id: UUID) -> bool:
+    """A continuing action must still have precisely its reviewed evidence."""
+    cur.execute("select project_action_evidence_is_current(%s,%s) as evidence_current", (project, card_id))
+    return bool(cur.fetchone()["evidence_current"])
+
+
 def _record_event(cur, project: UUID, card: UUID, actor: str, action: str,
                   changed: list[str], before: str | None = None, after: str | None = None) -> None:
     cur.execute(
@@ -273,6 +279,27 @@ def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, A
     }
     if not _active_member(cur, project, values["owner_actor"]):
         raise ValueError("owner_actor must be an active project member")
+    cur.execute(
+        """select candidate.video_id
+           from unnest(%s::uuid[]) as candidate(video_id)
+           where not exists (
+             select 1 from project_video_inclusion inclusion_row
+             join source_video source on source.id=inclusion_row.video_id
+             join lateral (
+               select review.status from project_video_case_review review
+               where review.project_id=inclusion_row.project_id
+                 and review.video_id=inclusion_row.video_id
+               order by review.version_no desc limit 1
+             ) latest_review on latest_review.status='complete'
+             where inclusion_row.project_id=%s
+               and inclusion_row.video_id=candidate.video_id
+               and inclusion_row.status='accepted'
+               and source.availability_status='available'
+           ) limit 1""",
+        (list(seen_videos), project),
+    )
+    if cur.fetchone() is not None:
+        raise ValueError("new cards require locally accepted, available videos with current complete case reviews")
     cur.execute(
         """insert into project_decision_card
            (project_id,source_video_id,subject_id,hypothesis,reference_point,adaptation_difference,
@@ -350,6 +377,8 @@ def _set_card_status(cur, project: UUID, actor: str, payload: dict[str, Any]) ->
         raise ValueError("a reviewed or archived card is immutable; create a follow-up card for a new cycle")
     if next_status not in _NEXT_CARD_STATUS.get(card["status"], frozenset()):
         raise ValueError("card status transition is invalid; create a follow-up card for a new cycle")
+    if next_status != "archived" and not _card_sources_current(cur, project, card["id"]):
+        raise ValueError("action evidence changed; archive and create a new reviewed action card")
     if next_status == card["status"]:
         return {"changed": False, "card_id": str(card["id"]), "status": next_status}
     cur.execute("update project_decision_card set status=%s, updated_at=now() where id=%s", (next_status, card["id"]))
@@ -432,6 +461,8 @@ def _create_publication(cur, project: UUID, actor: str, payload: dict[str, Any])
         raise ValueError("publication requires an active adopted or observing action")
     if card["evaluation_metric"] is None:
         raise ValueError("publication requires a preregistered experiment contract")
+    if not _card_sources_current(cur, project, card["id"]):
+        raise ValueError("action evidence changed; archive and create a new reviewed action card")
     platform = payload["platform"]
     if platform not in {"douyin", "xiaohongshu", "kuaishou", "bilibili", "other"}:
         raise ValueError("platform is invalid")

@@ -23,6 +23,7 @@ import MetricTimeline from './src/components/MetricTimeline'
 import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
 import ProjectVideoEvidence from './ProjectVideoEvidence'
+import ProjectCaseReviewPanel from './ProjectCaseReviewPanel'
 import { useProjectScope, type ProjectScope } from './src/projectScope'
 import { formatPlayInteractionRate } from './src/playInteractionRate'
 import {
@@ -948,6 +949,17 @@ export default function VideoLibrary({
                     </details>
 
                     <RawRecordPanel videoId={detail.id} projectId={projectId} />
+
+                    {projectId && <ProjectCaseReviewPanel
+                      key={`${projectId}-${detail.id}`}
+                      projectId={projectId}
+                      videoId={detail.id}
+                      platform={detail.platform}
+                      platformVideoId={detail.platform_video_id}
+                      sourceUrl={detail.source_url}
+                      canWrite={projectRole === 'owner' || projectRole === 'admin' || projectRole === 'researcher'}
+                      isAccepted={detail.project_inclusion_status === 'accepted'}
+                    />}
 
                     <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">

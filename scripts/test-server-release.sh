@@ -622,7 +622,7 @@ verify_project_decision_evidence_contract() {
       ('035.reason_check', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_evidence_ref') and contype='c' and convalidated and pg_get_constraintdef(oid) like '%reason%' and pg_get_constraintdef(oid) like '%500%')),
       ('035.ref_index', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_decision_card_evidence_ref_project_card') and indisvalid and indisready)),
       ('035.guard', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card_evidence_ref') and tgname='trg_project_decision_card_evidence_ref' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.enforce_project_decision_card_evidence_ref()'))),
-      ('035.guard_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_evidence_ref()') and md5(prosrc)='0488770c97c9d2a44f12b8334ec70ffb')),
+      ('035.guard_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_evidence_ref()') and md5(prosrc) in ('0488770c97c9d2a44f12b8334ec70ffb','4351b8174a71cc725ee379880b11cef3'))),
       ('035.owner', exists(select 1 from pg_tables where schemaname='public' and tablename='project_decision_card_evidence_ref' and tableowner=current_user)),
       ('035.owner_grants', coalesce(has_table_privilege(current_user,to_regclass('public.project_decision_card_evidence_ref'),'SELECT,INSERT'),false)),
       ('035.no_nonowner_grants', not exists(select 1 from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace cross join lateral aclexplode(coalesce(relation_row.relacl,acldefault('r',relation_row.relowner))) grant_row where namespace_row.nspname='public' and relation_row.relname='project_decision_card_evidence_ref' and grant_row.grantee<>relation_row.relowner))
@@ -644,6 +644,29 @@ verify_project_exact_video_brief_contract() {
     ) select coalesce(string_agg(name, ',' order by name), '') from checks where ok is distinct from true
   ")"
   [[ -z "$failed" ]] || { printf 'ERROR: exact video brief migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
+verify_project_case_review_contract() {
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with checks(name, ok) as (values
+      ('037.table', to_regclass('public.project_video_case_review') is not null),
+      ('037.latest_index', exists(select 1 from pg_index where indexrelid=to_regclass('public.idx_project_video_case_review_latest') and indisvalid and indisready)),
+      ('037.append_only', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_video_case_review') and tgname='trg_project_video_case_review_append_only' and not tgisinternal and tgenabled in ('O','A'))),
+      ('037.card_binding', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_decision_card') and attname='source_case_review_id' and not attisdropped)),
+      ('037.ref_binding', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_decision_card_evidence_ref') and attname='case_review_id_at_binding' and not attisdropped)),
+      ('037.binding_guard', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card') and tgname='trg_project_decision_card_case_binding_immutable' and not tgisinternal and tgenabled in ('O','A'))),
+      ('037.card_gate', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_accepted_source()') and md5(prosrc)='47d7ce557e25bb3109f793b6e86acb67')),
+      ('037.ref_gate', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_evidence_ref()') and md5(prosrc)='4351b8174a71cc725ee379880b11cef3')),
+      ('037.continuation_rule', exists(select 1 from pg_proc where oid=to_regprocedure('public.project_action_evidence_is_current(uuid,uuid)') and md5(prosrc)='9dd80130bdf0d9a1b8a7b6e7ef81cc4e')),
+      ('037.continuation_guard', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_action_current_evidence()') and md5(prosrc)='01eba246c142564047cbb32c0ea9f2c6')),
+      ('037.publication_gate', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_publication_record') and tgname='trg_project_publication_current_evidence' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.enforce_project_action_current_evidence()'))),
+      ('037.status_gate', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card') and tgname='trg_project_decision_card_current_evidence' and not tgisinternal and tgenabled in ('O','A') and tgfoid=to_regprocedure('public.enforce_project_action_current_evidence()'))),
+      ('037.owner', exists(select 1 from pg_tables where schemaname='public' and tablename='project_video_case_review' and tableowner=current_user)),
+      ('037.no_nonowner_grants', not exists(select 1 from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace cross join lateral aclexplode(coalesce(relation_row.relacl,acldefault('r',relation_row.relowner))) grant_row where namespace_row.nspname='public' and relation_row.relname='project_video_case_review' and grant_row.grantee<>relation_row.relowner))
+    ) select coalesce(string_agg(name, ',' order by name), '') from checks where ok is distinct from true
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: project case review migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
 archive_profile_count() {
@@ -723,10 +746,11 @@ cmd_migrate() {
   verify_project_experiment_timeline_contract
   verify_project_decision_evidence_contract
   verify_project_exact_video_brief_contract
+  verify_project_case_review_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; verify_project_exact_video_brief_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, decision evidence, and exact video brief contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; verify_project_exact_video_brief_contract; verify_project_case_review_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, decision evidence, exact video brief, and case review contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -957,6 +981,18 @@ cmd_restore_drill() (
     '0|0') exact_video_contract=legacy_absent ;;
     '1|1') verify_project_exact_video_brief_contract "$RESTORE_DATABASE"; exact_video_contract=present ;;
     *) echo 'ERROR: restored exact video brief schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
+  case_review_state="$(research_query "$RESTORE_DATABASE" "select exists(select 1 from schema_migrations where filename='037_project_case_review.sql')::int || '|' || (to_regclass('public.project_video_case_review') is not null)::int")"
+  case "$case_review_state" in
+    '0|0') case_review_contract=legacy_absent ;;
+    '1|1')
+      verify_project_case_review_contract "$RESTORE_DATABASE"
+      case_review_source_counts="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project_case_review_037)"
+      case_review_restored_counts="$(research_query "$RESTORE_DATABASE" "select count(*) from project_video_case_review")"
+      [[ "$case_review_source_counts" == "$case_review_restored_counts" ]] || { echo 'ERROR: project case review restore counts do not match the backup archive.' >&2; exit 1; }
+      case_review_contract=present
+      ;;
+    *) echo 'ERROR: restored project case review schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
