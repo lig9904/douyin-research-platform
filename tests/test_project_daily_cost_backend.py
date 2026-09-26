@@ -100,6 +100,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             add_cost(project_a, video_a, "estimated", "l3_structured_research", "estimated", "1", "0", "0")
             add_cost(project_a, video_a, "mixed", "l3_structured_research", "mixed", "0.5", "0", "0")
             add_cost(project_a, video_a, "unknown", "asr_transcription", "unknown", None, None, None)
+            add_cost(project_a, video_a, "unknown-number", "asr_transcription", "unknown", "9", "0", "0")
             add_cost(project_a, video_a, "cny", "asr_transcription", "actual", "0.3", "0", "0", "CNY")
             add_cost(project_b, video_b, "other-project", "l3_structured_research", "actual", "99", "0", "0")
             conn.execute(
@@ -107,14 +108,20 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
                    values
                    ('l0l1_discovery',%s,'success',0.002,'USD',
                     '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
-                   ('l0l1_discovery',%s,'failed',0,'USD','{}'::jsonb),
                    ('l0l1_discovery',%s,'success',0.001,'USD',
                     '{"api_cost_basis":"unknown","unknown_cost_calls":1}'::jsonb),
                    ('media_ingestion',%s,'success',100,'USD',
                     '{"api_cost_basis":"estimated"}'::jsonb),
                    ('l0l1_discovery',%s,'success',99,'USD',
                     '{"api_cost_basis":"actual","unknown_cost_calls":0}'::jsonb)""",
-                (project_a, project_a, project_a, project_a, project_b),
+                (project_a, project_a, project_a, project_b),
+            )
+            # Real failed runs retain the pipeline_run default CNY, which must
+            # not be presented as a known CNY charge for a USD provider.
+            conn.execute(
+                """insert into pipeline_run(run_type,project_id,status,api_cost,summary)
+                   values ('l0l1_discovery',%s,'failed',0,'{}'::jsonb)""",
+                (project_a,),
             )
             asset = conn.execute("""insert into media_asset(video_id,kind,storage_location,bucket,
                 object_key,content_sha256,size_bytes,content_type)
@@ -151,21 +158,21 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert result["role"] == "viewer"
             assert result["report_timezone"] == "Asia/Shanghai"
             assert result["days"] == 1
-            assert len(result["records"]) == 2
+            assert len(result["records"]) == 3
             day = next(record for record in result["records"] if record["cost_currency"] == "USD")
             assert day == {
                 **day,
                 "cost_currency": "USD",
                 "task_count": 8,
-                "asr_task_count": 3,
+                "asr_task_count": 4,
                 "l3_task_count": 2,
-                "discovery_run_count": 3,
+                "discovery_run_count": 2,
                 "known_amount": 2.502,
                 "actual_amount": 1.0,
                 "estimated_amount": 1.002,
                 "mixed_amount": 0.5,
                 "unknown_task_count": 4,
-                "unbilled_job_count": 2,
+                "unbilled_job_count": 1,
                 "cost_status": "partial",
             }
             assert "unknown_amount" not in day
@@ -180,6 +187,13 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert cny["unknown_task_count"] == 0
             assert cny["unbilled_job_count"] == 0
             assert cny["cost_status"] == "complete"
+            unpriced = next(record for record in result["records"] if record["cost_currency"] == "UNKNOWN")
+            assert unpriced["task_count"] == 1
+            assert unpriced["discovery_run_count"] == 1
+            assert unpriced["known_amount"] is None
+            assert unpriced["unknown_task_count"] == 1
+            assert unpriced["unbilled_job_count"] == 1
+            assert unpriced["cost_status"] == "partial"
 
             monkeypatch.setenv("WM_END_USER_EMAIL", "reader-b@example.com")
             with pytest.raises(PermissionError, match="RESEARCH_PROJECT_ACCESS_DENIED"):

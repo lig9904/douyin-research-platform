@@ -154,7 +154,10 @@ def main(db: postgresql, project_id: str, days: int = 30):
                         and not exists (select 1 from project_research_task_cost cost
                                         where cost.task_key=job.task_key)
                      union all
-                     select run.started_at,run.cost_currency,'l0l1_discovery',
+                     select run.started_at,
+                            case when run.status='success' then run.cost_currency
+                                 else 'UNKNOWN' end,
+                            'l0l1_discovery',
                             case when run.status='success'
                                       and run.summary->>'api_cost_basis' in ('actual','estimated','mixed')
                                       and run.summary->>'unknown_cost_calls'='0'
@@ -175,7 +178,9 @@ def main(db: postgresql, project_id: str, days: int = 30):
                             count(*) filter (where cost.task_type='asr_transcription')::integer as asr_task_count,
                             count(*) filter (where cost.task_type='l3_structured_research')::integer as l3_task_count,
                             count(*) filter (where cost.task_type='l0l1_discovery')::integer as discovery_run_count,
-                            sum(cost.total_cost) filter (where cost.total_cost is not null) as known_amount,
+                            sum(cost.total_cost) filter (
+                              where cost.cost_basis in ('actual','estimated','mixed')
+                                and cost.total_cost is not null) as known_amount,
                             sum(cost.total_cost) filter (
                               where cost.cost_basis='actual' and cost.total_cost is not null) as actual_amount,
                             sum(cost.total_cost) filter (

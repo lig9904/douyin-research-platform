@@ -243,7 +243,8 @@ def main(
 
     where_sql = """
       (%s='all' or v.platform=%s)
-      and v.last_seen_at >= now() - (%s || ' days')::interval
+      and (v.last_seen_at >= now() - (%s || ' days')::interval
+           or v.platform_video_id=%s)
       and (%s < 0 or v.research_level=%s)
       and (%s < 0 or coalesce(s.score, v.monitoring_priority, 0) >= %s)
       and (%s='all' or v.monitoring_status=%s)
@@ -272,7 +273,7 @@ def main(
       )
     """
     args = (
-        platform, platform, days,
+        platform, platform, days, query,
         research_level, research_level,
         priority_min, priority_min,
         status, status,
@@ -287,7 +288,8 @@ def main(
 
     scoped_where_sql = """
       (%s='all' or v.platform=%s)
-      and inclusion_row.last_seen_at >= now() - (%s || ' days')::interval
+      and (inclusion_row.last_seen_at >= now() - (%s || ' days')::interval
+           or v.platform_video_id=%s)
       and (%s < 0 or (m.play_count is not null and m.play_count >= %s))
       and (%s < 0 or (m.play_count is not null and m.play_count <= %s))
       and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count >= %s))
@@ -302,7 +304,7 @@ def main(
       and (%s='all' or inclusion_row.source_type=%s)
     """
     scoped_args = (
-        platform, platform, days,
+        platform, platform, days, query,
         play_min, play_min,
         play_max, play_max,
         follower_min, follower_min,

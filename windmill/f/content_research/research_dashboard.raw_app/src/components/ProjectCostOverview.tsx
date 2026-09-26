@@ -54,7 +54,7 @@ export default function ProjectCostOverview({ projectId }: { projectId: string }
   const unknown = report?.records.reduce((total, row) => total + row.unknown_task_count, 0) || 0
 
   return <div className="operations-page">
-    <Alert type="info" showIcon message="项目执行账本" description="按项目、上海自然日和币种展示项目发现、ASR 与 L3 流水；发现费用未与供应商分笔实扣对齐时仍是估算，不等于供应商账户实际日扣费。币种不折算，未知费用不计为零。" />
+    <Alert type="info" showIcon message="项目执行账本" description="按项目、上海自然日和币种展示项目发现、ASR 与 L3 任务流水；发现费用按任务启动日归属，跨午夜时可能不同于供应商实扣日。发现费用未与供应商分笔实扣对齐时仍是估算，币种不折算，未知费用不计为零。失败运行的币种未确定时单列为 UNKNOWN。" />
     <div className="operations-filters card">
       <Select value={days} onChange={(next) => { setDays(next); void load(next) }} options={[
         { value: 1, label: '今天' }, { value: 7, label: '近 7 天' },

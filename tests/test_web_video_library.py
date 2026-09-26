@@ -318,12 +318,22 @@ def test_video_library_can_find_exact_platform_video_id() -> None:
     video_id = clear_and_seed()
     module = load_backend()
 
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """update source_video
+               set first_seen_at=now()-interval '40 days',
+                   last_seen_at=now()-interval '40 days'
+               where id=%s""",
+            (video_id,),
+        )
+
     result = module.main(
         resource_from_dsn(DSN), platform="douyin", query="video-lib-1",
     )
 
     assert result["total"] == 1
     assert result["items"][0]["id"] == video_id
+    assert module.main(resource_from_dsn(DSN), platform="douyin", query="龙王祭坛")["total"] == 0
 
 
 def test_video_library_all_platform_mode() -> None:
