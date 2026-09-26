@@ -23,7 +23,7 @@ from .transport import ProviderTransport, TikHubTransport
 from .types import AccountRef, CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
 from .video_fetch_plan import plan_exact_video_brief, plan_video_fetches
 from .cost_accounting import quote_call
-from .errors import attach_provider_diagnostic, provider_failure_summary
+from .errors import ProviderSchemaError, attach_provider_diagnostic, provider_failure_summary
 
 
 class TikHubDouyinProvider:
@@ -244,6 +244,48 @@ class TikHubDouyinProvider:
         """Explicit metrics-only route; never silently substitutes for details."""
         return self._fetch_video_plan(
             plan_video_fetches(video_ids, purpose="statistics"), force_refresh=force_refresh,
+        )
+
+    def fetch_exact_video_statistics(
+        self, video_ids: Iterable[str], *, force_refresh: bool = False,
+    ) -> ProviderPage[VideoObservation]:
+        """Read one or two exact IDs, requiring a reported play count for each.
+
+        This stricter project-review path does not accept partial or unrelated
+        supplier rows as evidence. It retains the original response and call
+        accounting through the ordinary provider store.
+        """
+        ids = tuple(video_ids)
+        if not 1 <= len(ids) <= 2 or len(set(ids)) != len(ids):
+            raise ValueError("statistics refresh requires one or two distinct IDs")
+        request = plan_video_fetches(ids, purpose="statistics")
+        if len(request) != 1 or request[0].endpoint_key != "douyin.app.video_statistics":
+            raise ValueError("unexpected statistics request plan")
+        spec = get_endpoint(request[0].endpoint_key)
+
+        def validate_exact(payload: dict[str, Any]) -> None:
+            observations = normalize_video_observations(
+                payload, endpoint_key=spec.key, raw_ref=None, observed_at=utcnow(),
+            )
+            if {item.video.platform_video_id for item in observations} != set(ids) or (
+                len(observations) != len(ids)
+            ) or any(
+                item.metrics is None or item.metrics.play_count is None
+                or item.metrics.play_count < 0
+                for item in observations
+            ):
+                raise ProviderSchemaError("exact statistics IDs or play counts are missing")
+
+        page = self._video_page(
+            spec, request[0].kwargs(), request_video_ids=ids,
+            validate_payload=validate_exact, force_refresh=force_refresh,
+        )
+        indexed = {item.video.platform_video_id: item for item in page.items}
+        return ProviderPage(
+            items=[indexed[video_id] for video_id in ids],
+            endpoint_key=page.endpoint_key,
+            request_fingerprint=page.request_fingerprint,
+            cached=page.cached, raw_ref=page.raw_ref,
         )
 
     def _fetch_video_plan(self, requests, *, force_refresh: bool):
