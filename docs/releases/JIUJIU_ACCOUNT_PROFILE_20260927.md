@@ -11,7 +11,9 @@
 
 ## 接口、协作与验收
 
-受控入口是 `refresh_project_account_profiles` 服务函数，要求服务器数据库连接与 TikHub Secret；**尚无 Windmill 页面按钮、定时调度或测试服发布**。本轮不凭用户可打开的研究台旧页面宣称新数据已生效。调用方上线前必须确认项目 Owner/服务身份边界，并在测试服用已接受的视频做一次真实运行、独立回读原始响应、快照、调用账本、项目费用和页面显示。
+受控入口是 `refresh_project_account_profiles` 服务函数与研究台视频详情中的“刷新公开账号资料”按钮；后端只信任 Windmill 的 `WM_END_USER_EMAIL`，在预览和执行时核验当前项目 Owner/Admin、已接受的视频与原始 `sec_uid` 证据。预览不读 TikHub Secret、也不发外部请求；点击付费确认后再次检查身份和项目状态，单次最多一个新请求。按钮仅出现在已接受的抖音项目视频详情，不放入通用配置页。页面回报新请求数、缓存命中数与快照数，并将价格明确标为基础估算、实扣待日账核对。**当前仍未发布测试服**；不能凭旧研究台页面宣称新数据已生效。上线验收须在测试服实际运行，并独立回读原始响应、快照、调用账本、项目费用和页面显示。
+
+新 App runnable 的依赖锁由 `uv pip compile` 对固定 Git 提交和 Python 3.14 解析生成，再由官方 Windmill `generate-metadata rehash` 离线刷新应用哈希。测试工作区的仅 App 写入令牌无法执行 Windmill 在线依赖解析（需要额外 `jobs:run`）；失败生成的多余 YAML 已撤回，没有为了锁解析扩大该令牌权限。正式发布前仍需在测试服核对锁安装和运行结果。
 
 测试服只读预检：两条已接受对照视频 `7658347686323555610`、`7681244536475077934` 各有 TikHub `douyin.app.one_video` 原始响应；原始 `data.aweme_detail.aweme_id` 与视频 ID 精确一致、`data.aweme_detail.author.sec_uid` 与规范账号 ID 精确一致，分别查到 2 条与 1 条匹配响应。原先试图连接 `discovery_event.metadata.request_fingerprint` 与 Provider 响应指纹，两视频均为 0；两者并非同一指纹，因此已改用候选原始响应再规范化逐项验证。上述只是数据库只读证据，未发付费请求。
 

@@ -307,6 +307,9 @@ export default function VideoLibrary({
   const [writeBusy, setWriteBusy] = useState(false)
   const [writeNotice, setWriteNotice] = useState('')
   const [writeError, setWriteError] = useState('')
+  const activeProjectIdRef = useRef(projectId)
+  const activeVideoPlatformIdRef = useRef('')
+  activeProjectIdRef.current = projectId
   const [userState, setUserState] = useState<ResearchUserState | null>(null)
   const [collectionModalOpen, setCollectionModalOpen] = useState(false)
   const [collectionName, setCollectionName] = useState('')
@@ -351,6 +354,9 @@ export default function VideoLibrary({
     setSelectedRows(new Set())
     setData(null)
     setError('')
+    setWriteBusy(false)
+    setWriteNotice('')
+    setWriteError('')
   }, [projectId])
 
   const loadUserState = async () => {
@@ -372,6 +378,7 @@ export default function VideoLibrary({
   ]
 
   const detail = data?.detail && 'id' in data.detail ? (data.detail as VideoItem) : null
+  activeVideoPlatformIdRef.current = detail?.platform_video_id || ''
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((data?.total || 0) / Math.max(1, filters.page_size))),
@@ -434,6 +441,57 @@ export default function VideoLibrary({
       setWriteError(e instanceof Error ? e.message : String(e))
     } finally {
       setWriteBusy(false)
+    }
+  }
+
+  const refreshProjectAccountProfile = async (videoPlatformId: string) => {
+    if (!projectId || !canReviewProject || !/^\d{15,25}$/.test(videoPlatformId)) return
+    const targetProjectId = projectId
+    let confirmationOpened = false
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      const preview = await backend.refresh_project_account_profile({
+        project_id: targetProjectId,
+        video_platform_id: videoPlatformId,
+        action: 'preview',
+      }) as { eligible?: boolean; maximum_new_calls?: number; estimated_base_price_usd?: number }
+      if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId || preview.eligible !== true) return
+      confirmationOpened = true
+      Modal.confirm({
+        title: '刷新本项目的公开账号资料？',
+        content: `仅核验当前已接受视频的账号；缓存未命中时最多发起 ${preview.maximum_new_calls ?? 1} 次 TikHub 请求。基础价估算 USD ${Number(preview.estimated_base_price_usd ?? 0.001).toFixed(3)}，实际费用以供应商日账为准。不会发送评论、音频或转写。`,
+        okText: '确认付费刷新',
+        cancelText: '取消',
+        onCancel: () => setWriteBusy(false),
+        onOk: async () => {
+          if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId) {
+            setWriteBusy(false)
+            return
+          }
+          setWriteBusy(true)
+          try {
+            const result = await backend.refresh_project_account_profile({
+              project_id: targetProjectId,
+              video_platform_id: videoPlatformId,
+              action: 'execute',
+              confirmation: 'REFRESH_PUBLIC_ACCOUNT_PROFILE_PAID',
+            }) as { external_calls?: number; cached_calls?: number; snapshots_inserted?: number }
+            if (activeProjectIdRef.current !== targetProjectId) return
+            setWriteNotice(`账号资料已刷新：新增请求 ${result.external_calls ?? 0} 次，缓存命中 ${result.cached_calls ?? 0} 次，保存快照 ${result.snapshots_inserted ?? 0} 条；实扣待日账核对。`)
+            await load(filters, selectedVideoId)
+          } catch (e) {
+            if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+          } finally {
+            if (activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
+          }
+        },
+      })
+    } catch (e) {
+      if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (!confirmationOpened && activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
     }
   }
 
@@ -531,10 +589,10 @@ export default function VideoLibrary({
       }
     >
           {projectId ? <ProjectVideoEvidence key={projectId} projectId={projectId} onAccepted={showAcceptedVideo} /> : null}
-          {!isProject && writeNotice && (
+          {writeNotice && (
             <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
           )}
-          {!isProject && writeError && (
+          {writeError && (
             <Alert type="error" showIcon message="写操作失败" description={writeError} closable onClose={() => setWriteError('')} />
           )}
           <section className="platform-strip card">
@@ -910,6 +968,12 @@ export default function VideoLibrary({
                         )}
                       >
                         加入监测
+                      </Button>}
+                      {isProject && canReviewProject && detail.project_inclusion_status === 'accepted' && detail.platform === 'douyin' && <Button
+                        loading={writeBusy}
+                        onClick={() => void refreshProjectAccountProfile(detail.platform_video_id)}
+                      >
+                        刷新公开账号资料
                       </Button>}
                     </div>
 
