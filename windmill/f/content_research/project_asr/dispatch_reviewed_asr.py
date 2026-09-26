@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.14.*"
-# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@0d087ee3d82e627f73a97607c7d2f8a010931ae0", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5c72d8cd048fd266e1cc592a07964b5d018925a5", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
 # ///
 """Trusted one-submit ASR worker for a human-approved project asset.
 

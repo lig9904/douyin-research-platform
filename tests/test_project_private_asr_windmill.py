@@ -22,7 +22,7 @@ def test_scheduled_asr_worker_identity_wins_over_injected_end_user(monkeypatch) 
 
 def test_scheduled_asr_workers_pin_the_fixed_library_in_source_and_lock() -> None:
     commits = set()
-    for name in ("dispatch_reviewed_asr", "poll_reviewed_asr"):
+    for name in ("dispatch_pending_reviewed_asr", "dispatch_reviewed_asr", "poll_reviewed_asr"):
         source = (ROOT / f"{name}.py").read_text()
         lock = (ROOT / f"{name}.script.lock").read_text()
         source_commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", source)
@@ -30,7 +30,12 @@ def test_scheduled_asr_workers_pin_the_fixed_library_in_source_and_lock() -> Non
         assert source_commit and lock_commit
         assert source_commit.group(1) == lock_commit.group(1)
         commits.add(source_commit.group(1))
-    assert commits == {"0d087ee3d82e627f73a97607c7d2f8a010931ae0"}
+    app_backend = ROOT.parent / "research_dashboard.raw_app/backend/project_asr_media_review"
+    app_source = app_backend.with_suffix(".py").read_text()
+    app_lock = app_backend.with_suffix(".lock").read_text()
+    assert all("douyin-research-platform@5c72d8cd048fd266e1cc592a07964b5d018925a5" in text
+               for text in (app_source, app_lock))
+    assert commits == {"5c72d8cd048fd266e1cc592a07964b5d018925a5"}
 
 def test_project_asr_review_scripts_keep_identity_resources_and_secrets_server_side() -> None:
     preview = (ROOT / "media_review_preview.py").read_text()

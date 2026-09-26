@@ -1,6 +1,6 @@
 # /// script
 # requires-python = "==3.14.*"
-# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@34ce0706b2b937c04bac732413d5809ac271ed9c", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
+# dependencies = ["douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5c72d8cd048fd266e1cc592a07964b5d018925a5", "psycopg[binary]==3.3.6", "wmill==1.815.0"]
 # ///
 """Dispatch listened approvals and grant-bound, explicitly unlistened audio."""
 from __future__ import annotations
