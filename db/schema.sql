@@ -920,23 +920,33 @@ create table if not exists research_brief (
   constraint research_brief_owner_check check (char_length(owner_actor) between 3 and 254),
   constraint research_brief_name_check check (char_length(name) between 1 and 80),
   constraint research_brief_platform_check check (platform = 'douyin'),
-  constraint research_brief_source_check check (source_type in ('low_fan', 'keyword', 'account')),
+  constraint research_brief_source_check check (source_type in ('low_fan', 'keyword', 'account', 'video_ids')),
   constraint research_brief_target_check check (
     (source_type = 'low_fan' and target is null) or
     (source_type in ('keyword', 'account') and target is not null and
-     char_length(target) between 1 and 120)
+     char_length(target) between 1 and 120) or
+    (source_type = 'video_ids' and target is not null and
+    char_length(target) between 15 and 519 and
+     target ~ '^[0-9]{15,25}(,[0-9]{15,25})*$')
   ),
   constraint research_brief_window_check check (
-    time_window_hours in (24,72,168,720) and
+    (time_window_hours in (24,72,168,720) or
+     (source_type = 'video_ids' and time_window_hours = 0)) and
+    (source_type <> 'video_ids' or time_window_hours = 0) and
     (source_type <> 'low_fan' or time_window_hours in (24,72,168))
   ),
   constraint research_brief_item_check check (
     max_items between 1 and 20 and
     (source_type <> 'low_fan' or max_items <= 5) and
-    (depth not in ('media','review_ready') or max_items <= 5)
+    (depth not in ('media','review_ready') or max_items <= 5) and
+    (source_type <> 'video_ids' or
+     (max_items = array_length(string_to_array(target, ','), 1) and depth = 'metadata'))
   ),
   constraint research_brief_depth_check check (depth in ('metadata','comments','media','review_ready')),
-  constraint research_brief_cadence_check check (cadence_hours is null or cadence_hours in (6,12,24)),
+  constraint research_brief_cadence_check check (
+    (cadence_hours is null or cadence_hours in (6,12,24)) and
+    (source_type <> 'video_ids' or cadence_hours is null)
+  ),
   constraint research_brief_status_check check (status in ('draft','active','paused','archived')),
   constraint research_brief_version_check check (config_version >= 1),
   constraint research_brief_due_check check ((status='active' and next_due_at is not null) or status <> 'active')
@@ -1606,6 +1616,9 @@ alter table research_brief
 alter table research_brief
   add constraint research_brief_subject_gate_status_check
   check (subject_gate_status in ('not_applicable', 'ready', 'subject_required'));
+alter table research_brief
+  add constraint research_brief_exact_project_check
+  check (source_type <> 'video_ids' or (project_id is not null and subject_id is not null));
 create index if not exists idx_research_brief_project_subject_due
   on research_brief(project_id, subject_id, next_due_at, id)
   where project_id is not null and subject_id is not null and status='active';

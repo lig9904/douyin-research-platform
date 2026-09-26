@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any, Callable, ContextManager, Iterable
@@ -18,7 +19,7 @@ from .normalizer import (
 from .store import ProviderStore, utcnow
 from .transport import ProviderTransport, TikHubTransport
 from .types import CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
-from .video_fetch_plan import plan_video_fetches
+from .video_fetch_plan import plan_exact_video_brief, plan_video_fetches
 from .cost_accounting import quote_call
 from .errors import attach_provider_diagnostic, provider_failure_summary
 
@@ -139,6 +140,57 @@ class TikHubDouyinProvider:
     ) -> list[VideoObservation]:
         return self._fetch_video_plan(
             self.plan_videos(video_ids), force_refresh=force_refresh,
+        )
+
+    def fetch_exact_video_ids(
+        self, video_ids: Iterable[str], *, force_refresh: bool = False,
+    ) -> ProviderPage[VideoObservation]:
+        """Fetch a bounded, exact-ID discovery page without a keyword/date filter.
+
+        Every returned video must be one of the requested IDs, and every ID
+        must be present.  Callers can then ingest it through the ordinary
+        discovery path rather than bypassing project candidate review.
+        """
+        ids = tuple(video_ids)
+        if not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids):
+            raise ValueError("exact video IDs must be 1-20 distinct values")
+        requests = plan_exact_video_brief(ids)
+        items: list[VideoObservation] = []
+        fingerprints: list[str] = []
+        cached = True
+        for request in requests:
+            spec = get_endpoint(request.endpoint_key)
+            kwargs = request.kwargs()
+            def validate_exact_payload(payload: dict[str, Any]) -> None:
+                observations = normalize_video_observations(
+                    payload, endpoint_key=spec.key, raw_ref=None, observed_at=utcnow(),
+                )
+                returned_ids = [item.video.platform_video_id for item in observations]
+                if (len(returned_ids) != len(set(returned_ids))
+                        or set(returned_ids) != set(request.video_ids)):
+                    raise ValueError("exact video response IDs do not match the request")
+            page = self._video_page(
+                spec, kwargs,
+                fingerprint_body=kwargs.get("body"),
+                request_video_ids=request.video_ids,
+                validate_payload=validate_exact_payload,
+                force_refresh=force_refresh,
+            )
+            batch_ids = [item.video.platform_video_id for item in page.items]
+            if len(batch_ids) != len(set(batch_ids)) or set(batch_ids) != set(request.video_ids):
+                raise ValueError("exact video response IDs do not match the request")
+            items.extend(page.items)
+            fingerprints.append(page.request_fingerprint)
+            cached = cached and page.cached
+        ordered = {item.video.platform_video_id: item for item in items}
+        fingerprint = hashlib.sha256(
+            ("exact-video-ids-v1:" + ":".join(fingerprints)).encode("ascii")
+        ).hexdigest()
+        return ProviderPage(
+            items=[ordered[video_id] for video_id in ids],
+            endpoint_key="douyin.app.exact_video_ids",
+            request_fingerprint=fingerprint,
+            cached=cached,
         )
 
     def plan_videos(self, video_ids: Iterable[str]):
@@ -355,6 +407,7 @@ class TikHubDouyinProvider:
         *,
         fingerprint_body: Any = None,
         request_video_ids: tuple[str, ...] | None = None,
+        validate_payload: Callable[[dict[str, Any]], None] | None = None,
         force_refresh: bool = False,
     ) -> ProviderPage[VideoObservation]:
         payload, fp, cached, raw_ref, observed_at = self._call(
@@ -362,6 +415,7 @@ class TikHubDouyinProvider:
             kwargs,
             fingerprint_body=fingerprint_body,
             request_video_ids=request_video_ids,
+            validate_payload=validate_payload,
             force_refresh=force_refresh,
         )
         items = normalize_video_observations(
@@ -386,6 +440,7 @@ class TikHubDouyinProvider:
         *,
         fingerprint_body: Any = None,
         request_video_ids: tuple[str, ...] | None = None,
+        validate_payload: Callable[[dict[str, Any]], None] | None = None,
         force_refresh: bool = False,
     ) -> tuple[dict[str, Any], str, bool, str | None, datetime]:
         started = utcnow()
@@ -406,6 +461,14 @@ class TikHubDouyinProvider:
             cached = self.store.get_cached(self.provider_name, self.platform_name, spec.key, fp, started)
             if cached is not None:
                 validate_tikhub_envelope(cached.payload)
+                if validate_payload is not None:
+                    try:
+                        validate_payload(cached.payload)
+                    except (TypeError, ValueError):
+                        # Old or foreign malformed cache entries remain as raw
+                        # evidence, but cannot block a corrected live response.
+                        cached = None
+            if cached is not None:
                 finished = utcnow()
                 estimate, actual, cost_meta = quote_call(spec, cached=True)
                 self.store.record_call(
@@ -455,6 +518,8 @@ class TikHubDouyinProvider:
                 call_attempted = True
                 result = self.transport.call(spec, kwargs)
             payload = validate_tikhub_envelope(result.payload)
+            if validate_payload is not None:
+                validate_payload(payload)
             requested_at = utcnow()
             expires_at = requested_at + timedelta(seconds=spec.cache_ttl_seconds)
             raw_ref = self.store.save_response(

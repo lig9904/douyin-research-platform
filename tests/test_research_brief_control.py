@@ -82,6 +82,19 @@ def test_brief_configuration_is_strict_and_normalized() -> None:
         project_scoped=True, subject_id="00000000-0000-4000-8000-000000000001",
     )
     assert subject_config["subject_id"] == "00000000-0000-4000-8000-000000000001"
+    exact = mutate._config(
+        name="历史对标", platform="douyin", source_type="video_ids",
+        target="7521318904971578681\n7653684558261710777",
+        time_window_hours=0, max_items=2, depth="metadata", cadence_hours=None,
+        project_scoped=True, subject_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert exact["target"] == "7521318904971578681,7653684558261710777"
+    with pytest.raises(mutate.ResearchBriefError, match="one-time project"):
+        mutate._config(
+            name="越界", platform="douyin", source_type="video_ids",
+            target="7521318904971578681", time_window_hours=0, max_items=1,
+            depth="metadata", cadence_hours=None,
+        )
 
 
 def test_schema_records_control_plane_and_keeps_analysis_gate_separate() -> None:

@@ -298,6 +298,11 @@ class L0L1Runner:
             raise
 
     def _fetch(self, source: DiscoverySource) -> ProviderPage[VideoObservation]:
+        if source.kind == "exact_video_ids":
+            video_ids = source.kwargs.get("video_ids")
+            if not isinstance(video_ids, tuple) or not video_ids:
+                raise ValueError("exact video source requires video_ids")
+            return self.provider.fetch_exact_video_ids(video_ids)
         if source.kind == "search":
             query = source.kwargs.get("query")
             if not query:

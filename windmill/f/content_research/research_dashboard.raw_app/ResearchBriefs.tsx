@@ -28,9 +28,9 @@ type ResearchBrief = {
   id: string
   name: string
   platform: 'douyin'
-  source_type: 'low_fan' | 'keyword' | 'account'
+  source_type: 'low_fan' | 'keyword' | 'account' | 'video_ids'
   target?: string | null
-  time_window_hours: 24 | 72 | 168 | 720
+  time_window_hours: 0 | 24 | 72 | 168 | 720
   max_items: number
   depth: 'metadata' | 'comments' | 'media' | 'review_ready'
   cadence_hours?: 6 | 12 | 24 | null
@@ -68,6 +68,7 @@ const sourceNames = {
   low_fan: '低粉高热榜',
   keyword: '关键词检索',
   account: '指定账号作品',
+  video_ids: '指定视频 ID',
 }
 
 const depthNames = {
@@ -99,8 +100,18 @@ function dateTime(value?: string | null) {
 }
 
 function discoveryEstimate(source: FormValues['source_type']) {
+  if (source === 'video_ids') return '按实际 ID 路由，最多 2 次详情请求；基础报价约 $0.001–$0.020 / 次'
   if (source === 'keyword') return '发现阶段最多约 $0.060 / 次'
   return '发现阶段最多约 $0.051 / 次'
+}
+
+function exactIds(value: string): string[] {
+  const ids = value.trim().split(/[,\s]+/)
+  if (ids.length < 1 || ids.length > 20 || new Set(ids).size !== ids.length ||
+      ids.some((id) => !/^[0-9]{15,25}$/.test(id))) {
+    throw new Error('请填写 1–20 个不同的纯数字抖音视频 ID，以逗号或换行分隔。')
+  }
+  return ids
 }
 
 export default function ResearchBriefs({
@@ -167,6 +178,7 @@ export default function ResearchBriefs({
   }, [runs])
 
   const mutate = async (action: string, briefId = '', values?: FormValues) => {
+    const ids = values?.source_type === 'video_ids' ? exactIds(values.target || '') : []
     return backend.mutate_research_brief({
       action,
       idempotency_key: crypto.randomUUID(),
@@ -174,17 +186,23 @@ export default function ResearchBriefs({
       name: values?.name || '',
       platform: 'douyin',
       source_type: values?.source_type || 'low_fan',
-      target: values?.source_type === 'low_fan' ? '' : (values?.target || ''),
-      time_window_hours: values?.time_window_hours || 24,
-      max_items: values?.max_items || 5,
+      target: values?.source_type === 'low_fan' ? '' : ids.length ? ids.join(',') : (values?.target || ''),
+      time_window_hours: ids.length ? 0 : (values?.time_window_hours ?? 24),
+      max_items: ids.length || values?.max_items || 5,
       depth: values?.depth || 'metadata',
-      cadence_hours: values?.cadence_hours || null,
+      cadence_hours: ids.length ? null : (values?.cadence_hours || null),
       ...(projectId ? { subject_id: values?.subject_id || '' } : {}),
       ...(projectId ? { project_id: projectId } : {}),
     })
   }
 
   const save = async (values: FormValues) => {
+    if (values.source_type === 'video_ids') {
+      try { exactIds(values.target || '') } catch (e) {
+        toast.error(e instanceof Error ? e.message : '视频 ID 无效')
+        return
+      }
+    }
     if (projectId && values.depth !== 'metadata') {
       toast.error('项目任务目前只支持元数据采集。')
       return
@@ -317,10 +335,16 @@ export default function ResearchBriefs({
             <div className="brief-form-grid">
               <Form.Item name="source_type" label="从哪里找" rules={[{ required: true }]}>
                 <Select
-                  options={Object.entries(sourceNames).map(([value, label]) => ({ value, label }))}
+                  options={Object.entries(sourceNames)
+                    .filter(([value]) => projectId || value !== 'video_ids')
+                    .map(([value, label]) => ({ value, label }))}
                   onChange={(value) => {
                     if (value === 'low_fan') {
                       form.setFieldsValue({ max_items: 5, time_window_hours: 72, target: '' })
+                    } else if (value === 'video_ids') {
+                      form.setFieldsValue({ max_items: 1, time_window_hours: 0, depth: 'metadata', cadence_hours: 0, target: '' })
+                    } else if (form.getFieldValue('time_window_hours') === 0) {
+                      form.setFieldsValue({ time_window_hours: 72, target: '' })
                     }
                   }}
                 />
@@ -328,13 +352,15 @@ export default function ResearchBriefs({
               {sourceType !== 'low_fan' && (
                 <Form.Item
                   name="target"
-                  label={sourceType === 'keyword' ? '关键词' : '账号 sec_user_id'}
-                  rules={[{ required: true, max: 120 }]}
+                  label={sourceType === 'keyword' ? '关键词' : sourceType === 'video_ids' ? '抖音视频 ID' : '账号 sec_user_id'}
+                  rules={[{ required: true, max: sourceType === 'video_ids' ? 519 : 120 }]}
                 >
-                  <Input placeholder={sourceType === 'keyword' ? '输入主题、事件或产品词' : '输入公开账号 sec_user_id'} />
+                  {sourceType === 'video_ids'
+                    ? <Input.TextArea rows={3} placeholder="每行一个视频 ID，或用逗号分隔；最多 20 条，不按发布日期过滤" />
+                    : <Input placeholder={sourceType === 'keyword' ? '输入主题、事件或产品词' : '输入公开账号 sec_user_id'} />}
                 </Form.Item>
               )}
-              <Form.Item name="time_window_hours" label="研究时间范围">
+              {sourceType !== 'video_ids' && <Form.Item name="time_window_hours" label="研究时间范围">
                 <Select
                   options={[
                     { value: 24, label: '近24小时' },
@@ -343,10 +369,10 @@ export default function ResearchBriefs({
                     { value: 720, label: '近30天', disabled: sourceType === 'low_fan' },
                   ]}
                 />
-              </Form.Item>
-              <Form.Item name="max_items" label="每次最多候选">
+              </Form.Item>}
+              {sourceType !== 'video_ids' && <Form.Item name="max_items" label="每次最多候选">
                 <InputNumber min={1} max={maxItemsLimit} precision={0} />
-              </Form.Item>
+              </Form.Item>}
               <Form.Item name="depth" label="采集深度">
                 <Select
                   options={Object.entries(depthNames)
@@ -360,7 +386,7 @@ export default function ResearchBriefs({
                   }}
                 />
               </Form.Item>
-              <Form.Item name="cadence_hours" label="执行频率">
+              {sourceType !== 'video_ids' && <Form.Item name="cadence_hours" label="执行频率">
                 <Select
                   options={[
                     { value: 0, label: '只执行一次' },
@@ -369,7 +395,7 @@ export default function ResearchBriefs({
                     { value: 24, label: '每天' },
                   ]}
                 />
-              </Form.Item>
+              </Form.Item>}
             </div>
             <div className="brief-cost-note">
               <strong>{discoveryEstimate(sourceType)}</strong>
@@ -411,7 +437,7 @@ export default function ResearchBriefs({
                   <div className="brief-scope">
                     <strong>{row.name}</strong>
                     <span>{sourceNames[row.source_type]}{row.target ? ` · ${row.target}` : ''}</span>
-                    <small>近{row.time_window_hours}小时 · 最多{row.max_items}条 · {depthNames[row.depth]}</small>
+                    <small>{row.source_type === 'video_ids' ? '不限发布日期' : `近${row.time_window_hours}小时`} · 最多{row.max_items}条 · {depthNames[row.depth]}</small>
                     {projectId && row.subject_gate_status === 'subject_required' ? <Tag color="warning">需绑定主体后才能激活</Tag> : null}
                   </div>
                 ),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from decimal import Decimal
+import json
 
 import httpx
 import pytest
@@ -11,7 +12,7 @@ from douyin_research.providers.endpoints import get_endpoint
 from douyin_research.providers.store import MemoryProviderStore
 from douyin_research.providers.tikhub_provider import TikHubProvider
 from douyin_research.providers.transport import TikHubTransport
-from douyin_research.providers.video_fetch_plan import plan_video_fetches
+from douyin_research.providers.video_fetch_plan import plan_exact_video_brief, plan_video_fetches
 from douyin_research.l0l1.real_data import make_plan
 
 
@@ -36,6 +37,83 @@ def test_plans_price_real_request_units(n, detail, stats):
 def test_invalid_ids_fail_during_pure_plan(ids):
     with pytest.raises(ValueError):
         plan_video_fetches(ids)
+
+
+@pytest.mark.parametrize("count,expected_calls,expected_cost", [
+    (1, 1, ".001"), (2, 2, ".002"), (3, 1, ".010"),
+    (10, 1, ".010"), (11, 2, ".011"), (12, 2, ".020"), (20, 2, ".020"),
+])
+def test_exact_video_brief_routes_within_two_paid_calls(count, expected_calls, expected_cost):
+    ids = [str(7500000000000000000 + value) for value in range(count)]
+    plan = plan_exact_video_brief(ids)
+    assert len(plan) == expected_calls
+    assert [value for request in plan for value in request.video_ids] == ids
+    assert sum((request.estimated_cost_usd for request in plan), Decimal(0)) == Decimal(expected_cost)
+
+
+def test_exact_video_page_rejects_provider_extra_or_missing_ids_before_ingest():
+    requested = "7521318904971578681"
+    wrong = "7653684558261710777"
+
+    def response(request):
+        assert request.url.path.endswith("/fetch_one_video")
+        assert request.url.params["aweme_id"] == requested
+        return httpx.Response(200, json={"code": 200, "data": {"aweme_detail": {
+            "aweme_id": wrong, "desc": "not requested",
+        }}})
+
+    provider, store = _provider(response)
+    with pytest.raises(ValueError, match="do not match"):
+        provider.fetch_exact_video_ids([requested])
+    assert len(store.calls) == 1
+    assert store.calls[0].status == "error"
+    assert store.cache == {}
+    assert store.calls[0].estimated_cost == pytest.approx(.001)
+
+
+def test_exact_video_page_recovers_after_mismatched_live_response():
+    requested = "7521318904971578681"
+    wrong = "7653684558261710777"
+    attempts = []
+
+    def response(request):
+        attempts.append(request)
+        video_id = wrong if len(attempts) == 1 else requested
+        return httpx.Response(200, json={"code": 200, "data": {"aweme_detail": {
+            "aweme_id": video_id, "desc": "detail",
+        }}})
+
+    provider, store = _provider(response)
+    with pytest.raises(ValueError, match="do not match"):
+        provider.fetch_exact_video_ids([requested])
+    page = provider.fetch_exact_video_ids([requested])
+    assert [item.video.platform_video_id for item in page.items] == [requested]
+    assert page.cached is False
+    assert len(attempts) == 2
+    assert [call.status for call in store.calls] == ["error", "success"]
+
+
+def test_exact_video_page_ingests_only_requested_ids_and_keeps_cache_evidence():
+    ids = [str(7500000000000000000 + value) for value in range(3)]
+    requests = []
+
+    def response(request):
+        requests.append(request)
+        assert request.url.path.endswith("/fetch_multi_video")
+        batch = json.loads(request.content)
+        assert batch == ids
+        return httpx.Response(200, json={"code": 200, "data": {"aweme_details": [
+            {"aweme_id": video_id, "desc": "exact detail"} for video_id in batch
+        ]}})
+
+    provider, store = _provider(response)
+    first = provider.fetch_exact_video_ids(ids)
+    second = provider.fetch_exact_video_ids(ids)
+    assert [item.video.platform_video_id for item in first.items] == ids
+    assert first.cached is False and second.cached is True
+    assert len(requests) == 1
+    assert [call.cached for call in store.calls] == [False, True]
+    assert store.calls[0].estimated_cost == pytest.approx(.010)
 
 
 def _provider(handler, *, retries=0):

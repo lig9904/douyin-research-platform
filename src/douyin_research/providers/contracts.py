@@ -38,6 +38,12 @@ class PlatformResearchProvider(Protocol):
         **kwargs: Any,
     ) -> list[VideoObservation]: ...
 
+    def fetch_exact_video_ids(
+        self,
+        video_ids: Iterable[str],
+        **kwargs: Any,
+    ) -> ProviderPage[VideoObservation]: ...
+
     def fetch_account_posts(
         self,
         account_id: str,

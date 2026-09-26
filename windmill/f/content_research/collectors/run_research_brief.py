@@ -352,6 +352,7 @@ def main(brief_id: str) -> dict[str, Any]:
                 config=config,
                 triggered_by=actor,
                 project_id=claim["project_id"],
+                brief_run_id=brief_run_id,
             )
             safe = _safe_result(result, brief_run_id, project_id=claim["project_id"])
             source_run_id = UUID(safe["run_id"])
