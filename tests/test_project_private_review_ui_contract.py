@@ -55,3 +55,10 @@ def test_project_l3_full_body_opens_in_readable_dialog() -> None:
     assert '我已核对上方完整证据包' in panel
     assert 'max-height: min(76vh, 820px)' in css
     assert 'maxHeight: 360' not in panel
+
+
+def test_project_asr_ui_discloses_standing_grant_auto_submission() -> None:
+    panel = (APP / "src/components/ProjectASRMediaReviewPanel.tsx").read_text(encoding="utf-8")
+    assert "单纯试听或保存单条审核不会立即调用付费转写" in panel
+    assert "项目持续授权生效时" in panel
+    assert "计划任务自动送交火山转写" in panel

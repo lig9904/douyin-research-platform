@@ -122,6 +122,9 @@ def test_dashboard_exposes_briefs_as_a_first_class_research_view() -> None:
     assert "crypto.randomUUID" in page
     assert "确认激活" in page
     assert "ASR 与 L3 始终保留独立人工审核" in page
+    assert "已有持续 ASR 授权" in page
+    assert "计划任务可能自动提交云端转写" in page
+    assert "L3 正文仍须单独审核" in page
     assert "确认归档" in page
     assert "WM_END_USER_EMAIL" not in page
     assert "tikhub_api_key" not in page

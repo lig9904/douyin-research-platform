@@ -242,7 +242,7 @@ export default function ResearchBriefs({
         <div className="activation-copy">
           <p>激活后会按任务范围调用 TikHub 并写入研究库；首次任务将尽快执行。</p>
           <p><strong>{discoveryEstimate(brief.source_type)}</strong>，缓存命中或没有新候选时实际费用可能更低。</p>
-          <p>音频转写和 L3 分析不会自动提交，仍须在内容页单独人工审核。</p>
+          <p>本任务只采公开元数据，不直接入库媒体或提交 ASR/L3。若项目已有持续 ASR 授权，后续已接受视频的音频成功入库后，计划任务可能自动提交云端转写；L3 正文仍须单独审核。</p>
         </div>
       ),
       okText: '确认激活',
@@ -294,7 +294,7 @@ export default function ResearchBriefs({
         showIcon
         message={projectId ? '当前项目任务只采公开元数据' : '任务负责确定研究范围，不替你作结论'}
         description={projectId
-          ? '采集会生成当前项目的候选视频，不等于已确认为可比的研究依据；项目任务暂不采新评论或媒体。需要 ASR 或 L3 时，先核对实际内容并接受视频，再受控入库媒体、逐条试听与审核。'
+          ? '采集会生成当前项目的候选视频，不等于已确认为可比的研究依据；项目任务暂不采新评论或媒体。视频须核对内容并接受后才能入库媒体；已有持续 ASR 授权的项目可能自动转写，未授权项目须逐条审核。L3 正文始终单独审核。'
           : '系统按来源、时间窗和深度采集并合并到现有视频、账号、热点资产；ASR 与 L3 始终保留独立人工审核。'}
       />
       {error && <Alert type="error" showIcon message="研究任务加载失败" description={error} />}
@@ -417,7 +417,7 @@ export default function ResearchBriefs({
             <li><b>发现</b><span>按指定来源抓取有限候选并补齐详情。</span></li>
             <li><b>合并</b><span>同一视频和账号进入统一资产，不制造重复记录。</span></li>
             <li><b>加深</b><span>{projectId ? '项目任务暂不采新评论或私有媒体；已保存的公开评论仅作阅读依据。' : '按深度采评论或私有媒体；无需的步骤直接停止。'}</span></li>
-            <li><b>人工判断</b><span>{projectId ? '先判断候选与项目目标是否可比；只有确认纳入的视频，才能在视频库继续逐条试听音频、审核待发送正文。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
+            <li><b>人工判断</b><span>{projectId ? '先判断候选与项目目标是否可比；确认纳入后再决定是否入库音频。已有持续 ASR 授权的项目可自动转写；待发送 L3 正文仍须在视频库单独核对。' : '需要转写或大模型分析时，再在内容页确认。'}</span></li>
           </ol>
         </Card>
       </div>

@@ -146,7 +146,7 @@ export default function ProjectASRMediaReviewPanel({ projectId, videoId }: {
   return <section className="detail-section" aria-label="项目音频与转写审核">
     <div className="detail-section-head"><h4>本项目音频审核</h4>
       <Button loading={busy} onClick={refresh}>加载音频</Button></div>
-    <p className="muted">只对本项目生效；试听和批准不会调用付费转写。请核对内容及云端交付范围。</p>
+    <p className="muted">只对本项目生效；单纯试听或保存单条审核不会立即调用付费转写。项目持续授权生效时，已接受视频的入库音频可能由计划任务自动送交火山转写；请核对内容及云端交付范围。</p>
     {canManageStanding && (grant ? <p><Tag color="blue">项目持续授权生效</Tag>火山转写 · 已纳入且可用的公开视频 · 未逐条核听{' '}
       <Button danger disabled={busy} onClick={revokeStanding}>撤销持续授权</Button></p>
       : <div><Checkbox checked={standingConfirmed} disabled={busy}
