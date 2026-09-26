@@ -557,7 +557,12 @@ verify_project_private_analysis_contract() {
           and t.tgname=e.trigger_name and not t.tgisinternal and t.tgenabled in ('O','A')
           and t.tgtype=e.trigger_type and t.tgfoid=to_regprocedure('public.'||e.function_name||'()')
           and exists(select 1 from pg_proc p where p.oid=t.tgfoid
-            and encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.body_sha256))
+            and (encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')=e.body_sha256
+              or (to_regclass('public.project_asr_standing_grant') is not null
+                and (e.function_name, encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')) in (
+                  ('enforce_project_asr_media_review_lifecycle','f2880b5cd7762e44703118611734eeb74cbc4c2adc7d4b00f663e85d1d9a4509'),
+                  ('enforce_project_asr_execution_job_approval','205f5da145c4eb988582c26edc2e514aac7988f3713911745e846712df24b6a6')
+                )))))
       union all select 'fk.'||table_name||'.'||parent_name from expected_fk e where not exists(
         select 1 from pg_constraint c where c.conrelid=to_regclass('public.'||e.table_name)
           and c.confrelid=to_regclass('public.'||e.parent_name) and c.contype='f' and c.convalidated
@@ -669,6 +674,78 @@ verify_project_case_review_contract() {
   [[ -z "$failed" ]] || { printf 'ERROR: project case review migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
+verify_project_asr_standing_contract() {
+  # 038 adds project-level ASR authorization while keeping it distinct from
+  # evidence that a person listened to an individual asset.
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with expected_trigger(table_name, trigger_name, function_name, body_md5, trigger_type) as (values
+      ('project_asr_standing_grant','trg_project_asr_standing_grant_lifecycle','enforce_project_asr_standing_grant_lifecycle','fc4107dd13821cca33e64cbfda8fc51b',23),
+      ('project_asr_standing_grant','trg_project_asr_standing_grant_no_delete','reject_project_asr_standing_grant_delete','3c67f3facb57a21b61f9873e1708ac91',11),
+      ('project_asr_media_review','trg_project_asr_media_review_lifecycle','enforce_project_asr_media_review_lifecycle','403fa4c8fba6cbc34508a81da073518c',23),
+      ('project_asr_execution_job','trg_project_asr_execution_job_approval','enforce_project_asr_execution_job_approval','33ef4e45a7324114216dd7bcae48d01e',23)
+    ), failures as (
+      select '038.ledger' as name where not exists(
+        select 1 from public.schema_migrations where filename='038_project_asr_standing_grant.sql')
+      union all select '038.grant_table' where to_regclass('public.project_asr_standing_grant') is null
+      union all select '038.grant_owner' where not exists(
+        select 1 from pg_tables where schemaname='public' and tablename='project_asr_standing_grant' and tableowner=current_user)
+      union all select '038.grant_privileges' where exists(
+        select 1 from pg_class c join pg_namespace n on n.oid=c.relnamespace
+        cross join lateral aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+        where n.nspname='public' and c.relname='project_asr_standing_grant' and a.grantee<>c.relowner)
+      union all select '038.active_unique_index' where not exists(
+        select 1 from pg_index i where i.indexrelid=to_regclass('public.uq_project_asr_standing_grant_active')
+          and i.indisunique and i.indisvalid and i.indisready
+          and pg_get_expr(i.indpred,i.indrelid) like '%status = ''active''%')
+      union all select '038.grant_provider_check' where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.project_asr_standing_grant')
+          and c.contype='c' and c.convalidated and pg_get_constraintdef(c.oid) like '%volcengine-doubao-asr%')
+      union all select '038.grant_scope_check' where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.project_asr_standing_grant')
+          and c.contype='c' and c.convalidated and pg_get_constraintdef(c.oid) like '%accepted_available_public_video%')
+      union all select '038.grant_version_check' where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.project_asr_standing_grant')
+          and c.contype='c' and c.convalidated and pg_get_constraintdef(c.oid) like '%project-asr-standing-v1%')
+      union all select '038.authorization_kind' where not exists(
+        select 1 from pg_attribute a where a.attrelid=to_regclass('public.project_asr_media_review')
+          and a.attname='authorization_kind' and a.atttypid='text'::regtype and a.attnotnull and not a.attisdropped)
+      union all select '038.authorization_kind_default' where not exists(
+        select 1 from pg_attribute a join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
+        where a.attrelid=to_regclass('public.project_asr_media_review') and a.attname='authorization_kind'
+          and pg_get_expr(d.adbin,d.adrelid) like '%listened%')
+      union all select '038.standing_grant_id' where not exists(
+        select 1 from pg_attribute a where a.attrelid=to_regclass('public.project_asr_media_review')
+          and a.attname='standing_grant_id' and a.atttypid='uuid'::regtype and not a.attisdropped)
+      union all select '038.grant_status_default' where not exists(
+        select 1 from pg_attribute a join pg_attrdef d on d.adrelid=a.attrelid and d.adnum=a.attnum
+        where a.attrelid=to_regclass('public.project_asr_standing_grant') and a.attname='status'
+          and pg_get_expr(d.adbin,d.adrelid) like '%active%')
+      union all select '038.review_grant_fk' where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.project_asr_media_review')
+          and c.confrelid=to_regclass('public.project_asr_standing_grant') and c.conname='project_asr_media_review_standing_grant_fk'
+          and c.contype='f' and c.convalidated
+          and position('FOREIGN KEY (standing_grant_id, project_id)' in pg_get_constraintdef(c.oid))>0)
+      union all select '038.authorization_state_check' where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.project_asr_media_review')
+          and c.conname='project_asr_media_review_authorization_state_check' and c.contype='c' and c.convalidated
+          and pg_get_constraintdef(c.oid) like '%standing_grant%'
+          and pg_get_constraintdef(c.oid) like '%not_listened%'
+          and pg_get_constraintdef(c.oid) like '%reviewed_by IS NULL%')
+      union all select '038.grant_lifecycle_check' where not exists(
+        select 1 from pg_constraint c where c.conrelid=to_regclass('public.project_asr_standing_grant')
+          and c.contype='c' and c.convalidated and pg_get_constraintdef(c.oid) like '%active%'
+          and pg_get_constraintdef(c.oid) like '%revoked%')
+      union all select '038.trigger.'||e.trigger_name from expected_trigger e where not exists(
+        select 1 from pg_trigger t join pg_proc p on p.oid=t.tgfoid
+        where t.tgrelid=to_regclass('public.'||e.table_name) and t.tgname=e.trigger_name
+          and not t.tgisinternal and t.tgenabled in ('O','A') and t.tgtype=e.trigger_type
+          and t.tgfoid=to_regprocedure('public.'||e.function_name||'()') and md5(p.prosrc)=e.body_md5)
+    ) select coalesce(string_agg(name, ',' order by name),'') from failures
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: project ASR standing grant migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
 archive_profile_count() {
   # Count only the profile COPY body while discarding every row.  The restore
   # drill compares counts without logging source content or references.
@@ -747,10 +824,11 @@ cmd_migrate() {
   verify_project_decision_evidence_contract
   verify_project_exact_video_brief_contract
   verify_project_case_review_contract
+  verify_project_asr_standing_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; verify_project_exact_video_brief_contract; verify_project_case_review_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, decision evidence, exact video brief, and case review contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; verify_project_private_analysis_contract; verify_project_experiment_contract; verify_project_experiment_timeline_contract; verify_project_decision_evidence_contract; verify_project_exact_video_brief_contract; verify_project_case_review_contract; verify_project_asr_standing_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, private analysis, experiment timeline, decision evidence, exact video brief, case review, and ASR standing grant contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -766,6 +844,7 @@ cmd_restore_drill() (
   local experiment_contract=legacy_absent experiment_state
   local timeline_contract=legacy_absent timeline_state
   local evidence_contract=legacy_absent evidence_state evidence_source_counts evidence_restored_counts
+  local asr_standing_contract=legacy_absent asr_standing_state asr_standing_source_count asr_standing_restored_count
   local exact_video_contract=legacy_absent exact_video_state
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
@@ -994,6 +1073,18 @@ cmd_restore_drill() (
       ;;
     *) echo 'ERROR: restored project case review schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
+  asr_standing_state="$(research_query "$RESTORE_DATABASE" "select exists(select 1 from schema_migrations where filename='038_project_asr_standing_grant.sql')::int || '|' || (to_regclass('public.project_asr_standing_grant') is not null)::int")"
+  case "$asr_standing_state" in
+    '0|0') asr_standing_contract=legacy_absent ;;
+    '1|1')
+      verify_project_asr_standing_contract "$RESTORE_DATABASE"
+      asr_standing_source_count="$(compose exec -T postgres pg_restore --data-only -f - < "$backup_dir/research.dump" | python3 "$ROOT_DIR/scripts/test-server-archive-counts.py" project_asr_standing_038)"
+      asr_standing_restored_count="$(research_query "$RESTORE_DATABASE" "select count(*) from project_asr_standing_grant")"
+      [[ "$asr_standing_source_count" == "$asr_standing_restored_count" ]] || { echo 'ERROR: project ASR standing grant restore counts do not match the backup archive.' >&2; exit 1; }
+      asr_standing_contract=present
+      ;;
+    *) echo 'ERROR: restored project ASR standing grant schema and migration ledger are inconsistent.' >&2; exit 1 ;;
+  esac
   windmill_verified="$(admin_query "$RESTORE_WINDMILL_DATABASE" "select (to_regclass('public.workspace') is not null)::int || '|' || (to_regclass('public.usr') is not null)::int || '|' || (select bool_and(tableowner=current_user) from pg_tables where schemaname='public' and tablename in ('workspace','usr'))::int")"
   [[ "$windmill_verified" == '1|1|1' ]] || { echo 'ERROR: restored Windmill database owner or key-object verification failed.' >&2; exit 1; }
   local business_sql business_result business_summary
@@ -1017,8 +1108,8 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   trap - EXIT
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   duration_seconds="$(( $(date +%s) - start_epoch ))"
-  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s experiment_contract=%s timeline_contract=%s evidence_contract=%s\n' \
-    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$decision_binding_contract" "$private_analysis_contract" "$experiment_contract" "$timeline_contract" "$evidence_contract"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s private_analysis_contract=%s experiment_contract=%s timeline_contract=%s evidence_contract=%s asr_standing_contract=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$decision_binding_contract" "$private_analysis_contract" "$experiment_contract" "$timeline_contract" "$evidence_contract" "$asr_standing_contract"
   printf 'EXACT_VIDEO_RESTORE_CONTRACT=%s\n' "$exact_video_contract"
 )
 

@@ -55,12 +55,16 @@ def main(project_id: str, video_id: str, media_review_id: str) -> dict:
     project, video, review = UUID(project_id), UUID(video_id), UUID(media_review_id)
     dsn, worker, media, storage = _configuration()
     service = ProjectASRService(dsn, delivery_origin=media["public_endpoint"],
-                                trusted_worker_actor=worker["service_reviewer_email"])
+                                trusted_worker_actor=worker["service_reviewer_email"],
+                                trusted_storage_location=media["storage_location"],
+                                trusted_bucket=media["bucket"])
     delivery: dict[str, ReviewedASRMediaDelivery] = {}
 
     def media_url(asset) -> str:
         # Final object integrity check occurs after the service locks and
         # rechecks the human approval, immediately before provider HTTP.
+        if asset.bucket != storage.bucket or asset.storage_location != media["storage_location"]:
+            raise PermissionError("project ASR media storage scope mismatch")
         storage.verify_object(StoredMediaObject(key=asset.object_key, sha256=asset.content_sha256,
                                                  size=asset.size_bytes, content_type=asset.content_type))
         url = storage.presigned_read_url(asset.object_key, expires_in=3600)

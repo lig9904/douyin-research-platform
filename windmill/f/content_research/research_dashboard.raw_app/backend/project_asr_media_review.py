@@ -44,14 +44,23 @@ def main(
     db: postgresql, project_id: str, video_id: str, action: str,
     asset_id: str = "", review_version: str = "media-v1",
     expected_manifest_fingerprint: str = "", consent_statement: str = "",
-    media_review_id: str = "",
+    media_review_id: str = "", standing_grant_id: str = "",
 ) -> dict:
-    if action not in {"list", "playback", "approve", "revoke"}:
+    if action not in {"list", "playback", "approve", "revoke",
+                      "standing_status", "standing_create", "standing_revoke"}:
         raise ValueError("unsupported project audio review action")
     project, video = UUID(project_id), UUID(video_id)
     try:
         dsn, origin, config = _config(db)
         service = ProjectASRService(dsn, delivery_origin=origin)
+        if action == "standing_status":
+            return service.standing_grant(project_id=project)
+        if action == "standing_create":
+            if consent_statement.strip() != "我授权本项目已纳入的公开视频音频交火山云端转写；未逐条核听，可随时撤销":
+                raise ValueError("explicit standing ASR statement is required")
+            return service.authorize_standing(project_id=project)
+        if action == "standing_revoke":
+            return service.revoke_standing(project_id=project, grant_id=UUID(standing_grant_id))
         if action == "list":
             return service.list_assets(project_id=project, video_id=video,
                                        review_version=review_version)

@@ -10,12 +10,15 @@ type Asset = {
   delivery_origin: string
   review_id?: string | null
   review_status: string
+  authorization_kind?: 'listened' | 'standing_grant'
 }
+type StandingGrant = { id: string; provider: string; source_scope: string; authorized_at: string }
 
 const reviewVersion = 'media-v1'
 const consent = '我已核对音频内容并同意交由云端转写'
+const standingConsent = '我授权本项目已纳入的公开视频音频交火山云端转写；未逐条核听，可随时撤销'
 const labels: Record<string, string> = {
-  not_reviewed: '待审核', approved: '已审核', revoked: '已撤销', stale: '资产已变化',
+  not_reviewed: '待审核', approved: '已审核', revoked: '已撤销', stale: '资产已变化', grant_revoked: '持续授权已撤销',
 }
 
 export default function ProjectASRMediaReviewPanel({ projectId, videoId }: {
@@ -30,6 +33,9 @@ export default function ProjectASRMediaReviewPanel({ projectId, videoId }: {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [grant, setGrant] = useState<StandingGrant | null>(null)
+  const [standingConfirmed, setStandingConfirmed] = useState(false)
+  const [canManageStanding, setCanManageStanding] = useState(false)
 
   const refresh = async () => {
     setBusy(true); setError(''); setNotice(''); setSelected(null); setUrl('')
@@ -39,9 +45,47 @@ export default function ProjectASRMediaReviewPanel({ projectId, videoId }: {
         project_id: projectId, video_id: videoId, action: 'list', review_version: reviewVersion,
       }) as { assets: Asset[] }
       setAssets(result.assets)
+      try {
+        const standing = await backend.project_asr_media_review({
+          project_id: projectId, video_id: videoId, action: 'standing_status',
+        }) as { grant: StandingGrant | null }
+        setGrant(standing.grant); setCanManageStanding(true)
+      } catch {
+        // A global reviewer may inspect and review one asset without being a
+        // project owner; the project-wide grant control must not hide assets.
+        setGrant(null); setCanManageStanding(false)
+      }
     } catch {
       setError('项目音频列表不可用；请确认你具有本项目审核权限且视频已纳入项目。')
     } finally { setBusy(false) }
+  }
+
+  const createStanding = async () => {
+    if (!standingConfirmed || grant) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      const result = await backend.project_asr_media_review({
+        project_id: projectId, video_id: videoId, action: 'standing_create',
+        consent_statement: standingConsent,
+      }) as { grant: StandingGrant }
+      setGrant(result.grant); setStandingConfirmed(false)
+      setNotice('本项目持续转写授权已保存；不表示任何音频已人工核听。定时派发仅处理符合项目范围的音频。')
+    } catch { setError('持续授权未保存，请核对项目负责人权限。') }
+    finally { setBusy(false) }
+  }
+
+  const revokeStanding = async () => {
+    if (!grant) return
+    setBusy(true); setError(''); setNotice('')
+    try {
+      await backend.project_asr_media_review({
+        project_id: projectId, video_id: videoId, action: 'standing_revoke', standing_grant_id: grant.id,
+      })
+      setGrant(null)
+      await refresh()
+      setNotice('持续授权已撤销；不会再因此发起新的转写。已提交供应商的任务可能仍会结算费用。')
+    } catch { setError('持续授权撤销未完成，请刷新后核对。') }
+    finally { setBusy(false) }
   }
 
   const playback = async (asset: Asset) => {
@@ -103,11 +147,17 @@ export default function ProjectASRMediaReviewPanel({ projectId, videoId }: {
     <div className="detail-section-head"><h4>本项目音频审核</h4>
       <Button loading={busy} onClick={refresh}>加载音频</Button></div>
     <p className="muted">只对本项目生效；试听和批准不会调用付费转写。请核对内容及云端交付范围。</p>
+    {canManageStanding && (grant ? <p><Tag color="blue">项目持续授权生效</Tag>火山转写 · 已纳入且可用的公开视频 · 未逐条核听{' '}
+      <Button danger disabled={busy} onClick={revokeStanding}>撤销持续授权</Button></p>
+      : <div><Checkbox checked={standingConfirmed} disabled={busy}
+          onChange={event => setStandingConfirmed(event.target.checked)}>{standingConsent}</Checkbox>{' '}
+        <Button disabled={!standingConfirmed || busy} onClick={createStanding}>保存项目持续授权</Button></div>)}
     {error && <Alert type="error" showIcon message={error} />}
     {notice && <Alert type="success" showIcon message={notice} />}
     {assets?.length === 0 && <p className="muted">本视频尚无可审核 WAV 音频；需先完成受控媒体入库。</p>}
     {assets?.map(asset => <div key={asset.asset_id} style={{ margin: '12px 0' }}>
-      <Tag>{labels[asset.review_status] || '状态未知'}</Tag>
+      <Tag>{asset.authorization_kind === 'standing_grant' && asset.review_status === 'approved'
+        ? '持续授权·未人工核听' : labels[asset.review_status] || '状态未知'}</Tag>
       <span>WAV · {(asset.size_bytes / 1024).toFixed(1)} KB · {asset.content_sha256.slice(0, 12)}</span>{' '}
       <Button disabled={busy} onClick={() => playback(asset)}>试听</Button>{' '}
       {asset.review_status === 'approved' && asset.review_id

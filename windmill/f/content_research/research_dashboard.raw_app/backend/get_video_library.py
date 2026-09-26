@@ -175,6 +175,7 @@ def _public_asr_transcript(row: dict[str, Any]) -> dict[str, Any]:
         "text": row["text"],
         "truncated": row["truncated"],
         "quality_status": row["quality_status"],
+        "authorization_kind": row.get("authorization_kind"),
         "provider": row["asr_provider"],
         "model_id": row["model_id"],
         "model_revision": row["model_revision"],
@@ -747,7 +748,7 @@ def main(
                       'unreviewed' as quality_status,
                       t.asr_provider, t.model_id, t.model_revision,
                       t.engine_version, t.language, t.audio_duration_ms,
-                      t.created_at, c.api_cost, c.asr_cost, c.llm_cost,
+                      t.created_at, r.authorization_kind, c.api_cost, c.asr_cost, c.llm_cost,
                       c.total_cost, c.cost_currency, c.cost_basis
                     from project_transcript t
                     join project_asr_execution_job j

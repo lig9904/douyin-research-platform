@@ -29,6 +29,7 @@ TARGETS = {
     ),
     'project_decision_evidence_035': ('project_decision_card_evidence_ref',),
     'project_case_review_037': ('project_video_case_review',),
+    'project_asr_standing_038': ('project_asr_standing_grant',),
     'subject_score_029': ('project_video_subject_score',),
     'project_private_analysis_032': (
         'project_asr_media_review', 'project_research_task_cost',
