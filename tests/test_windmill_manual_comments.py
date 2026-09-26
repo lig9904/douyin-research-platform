@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,20 @@ module = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = module
 SPEC.loader.exec_module(module)
 PROJECT_ID = str(uuid4())
+
+
+def test_release_lock_matches_source_and_includes_runtime_dependencies() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    lock = SCRIPT.with_suffix(".script.lock").read_text(encoding="utf-8")
+    metadata = SCRIPT.with_suffix(".script.yaml").read_text(encoding="utf-8")
+    commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", source)
+    assert commit is not None
+    assert lock.startswith("# workspace-dependencies-mode: manual\n# py: 3.14\n")
+    assert f"douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@{commit.group(1)}" in lock
+    assert "psycopg==3.3.6\n" in lock
+    assert "psycopg-binary==3.3.6\n" in lock
+    assert "wmill==1.815.0\n" in lock
+    assert "lock: '!inline f/content_research/collectors/manual_comment_collection.script.lock'" in metadata
 
 
 def request(**overrides):
