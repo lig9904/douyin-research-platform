@@ -254,6 +254,34 @@ def test_video_library_filters_and_detail() -> None:
     assert detail["source_url"] == "https://example.com/video-lib-1"
 
 
+def test_video_library_shows_bounded_comment_feature_summary() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    backend = load_backend()
+    resource = resource_from_dsn(DSN)
+    assert backend.main(resource, selected_video_id=video_id)["detail"]["comment_features"] is None
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """insert into video_comment_feature_snapshot(
+                 video_id,feature_version,evidence_fingerprint,
+                 sampled_comment_count,root_comment_count,sampled_reply_count,
+                 source_observation_count,text_present_count,question_text_count,
+                 like_known_count,reply_known_count,eligible_text_count,
+                 duplicate_text_count,metadata)
+               values(%s,'comment-features-v1.1.0',%s,
+                 2,2,0,3,2,1,2,0,2,0,'{"private":"not for UI"}'::jsonb)""",
+            (video_id, "a" * 64),
+        )
+    summary = backend.main(resource, selected_video_id=video_id)["detail"]["comment_features"]
+    assert summary["feature_version"] == "comment-features-v1.1.0"
+    assert summary["sampled_comment_count"] == 2
+    assert summary["source_observation_count"] == 3
+    assert summary["eligible_text_count"] == 2
+    assert summary["question_text_count"] == 1
+    assert summary["duplicate_text_count"] == 0
+    assert "metadata" not in summary and "evidence_fingerprint" not in summary
+
+
 def test_video_library_numeric_ranges_exclude_null_but_keep_reported_zero() -> None:
     assert DSN
     video_id = clear_and_seed()

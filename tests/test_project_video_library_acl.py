@@ -302,6 +302,14 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
                    values(%s,'comment-features-v1',%s,2,2,0,2,2,1,2,0)""",
                 (video_a, "e" * 64),
             )
+            own_summary = module.main(
+                params, project_id=str(project_a), selected_video_id=str(video_a),
+            )["detail"]["comment_features"]
+            assert own_summary["sampled_comment_count"] == 2
+            assert "evidence_fingerprint" not in own_summary
+            assert module.main(
+                params, project_id=str(project_b), selected_video_id=str(video_a),
+            )["detail"]["comment_features"] is None
             evidence = ProjectL3EvidenceService(project_dsn).prepare(
                 project_id=project_a, video_id=video_a, transcript_id=transcript,
                 review_version="v1",

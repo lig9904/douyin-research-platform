@@ -79,6 +79,15 @@ type VideoItem = {
     like_count?: number | null
     published_at?: string | null
   }[]
+  comment_features?: {
+    feature_version: string
+    calculated_at: string
+    sampled_comment_count: number
+    source_observation_count: number
+    eligible_text_count: number | null
+    question_text_count: number
+    duplicate_text_count: number | null
+  } | null
   l3_analysis?: L3Analysis | null
   asr_transcript?: ASRTranscript | null
 }
@@ -1044,6 +1053,27 @@ export default function VideoLibrary({
                         ))}
                         {!detail.evidence?.length && <p className="muted">暂无结构化来源证据</p>}
                       </div>
+                    </section>
+
+                    <section className="detail-section" aria-label="评论样本概况">
+                      <div className="detail-section-head">
+                        <h4>评论样本概况</h4>
+                        <span>{detail.comment_features
+                          ? `${detail.comment_features.feature_version} · 更新于 ${formatFullDate(detail.comment_features.calculated_at)}`
+                          : '尚无 L2 评论特征'}</span>
+                      </div>
+                      {detail.comment_features ? <>
+                        <div className="detail-metrics">
+                          {[
+                            [detail.comment_features.sampled_comment_count, '去重评论样本'],
+                            [detail.comment_features.source_observation_count, '评论观测记录'],
+                            [detail.comment_features.eligible_text_count ?? '—', '可分析文本'],
+                            [detail.comment_features.question_text_count, '含问号文本'],
+                            [detail.comment_features.duplicate_text_count ?? '—', '重复文本'],
+                          ].map(([value, label]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}
+                        </div>
+                        <p className="muted">这是已采集评论的非随机样本，不代表全部评论或目标客群；问句、重复文本等是规则计数，不是情感或购买意向。下方仅展示最多 5 条高赞样本，不能据此推断整体偏好。</p>
+                      </> : <p className="muted">尚无评论特征；下方若有评论，也不能把少量高赞样本当作整体结论。</p>}
                     </section>
 
                     <section className="detail-section">

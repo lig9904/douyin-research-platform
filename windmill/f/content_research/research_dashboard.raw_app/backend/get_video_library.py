@@ -641,6 +641,21 @@ def main(
                 """,
                 (selected_id,),
             )
+            comment_features = None
+            if scoped_project_id is None or detail.get("project_inclusion_status") == "accepted":
+                comment_features = _fetch_one(
+                    conn,
+                    """
+                    select feature_version, calculated_at, sampled_comment_count,
+                      source_observation_count, eligible_text_count,
+                      question_text_count, duplicate_text_count
+                    from video_comment_feature_snapshot
+                    where video_id=%s::uuid
+                    order by calculated_at desc, id desc
+                    limit 1
+                    """,
+                    (selected_id,),
+                )
             if scoped_project_id is None:
                 asr_row = _legacy_analysis_row(
                     conn,
@@ -794,6 +809,7 @@ def main(
                 )
             detail["evidence"] = evidence
             detail["comments"] = comments
+            detail["comment_features"] = comment_features or None
             detail["asr_transcript"] = (
                 _public_asr_transcript(asr_row) if asr_row else None
             )
