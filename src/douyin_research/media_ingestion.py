@@ -114,13 +114,21 @@ class MediaIngestionService:
                             video_asset.content_sha256, video_asset.content_type), video_file)
                     else:
                         stage = "source_lookup"
+                        # Never fall back to an older CDN address when the newest
+                        # exact-ID detail has no usable media URL. An old signed
+                        # address is more likely to be expired than a safe source.
                         response = lock.execute(
                             """select id,response_body from external_api_response
-                            where provider='tikhub' and platform='douyin'
-                              and endpoint_key='douyin.app.multi_video_v2' and response_code='200'
-                              and response_body @> %s
+                            where provider='tikhub' and platform='douyin' and response_code='200'
+                              and (
+                                (endpoint_key='douyin.app.multi_video_v2' and response_body @> %s)
+                                or (endpoint_key='douyin.app.one_video' and response_body @> %s)
+                              )
                             order by requested_at desc,id desc limit 1""",
-                            (Jsonb({"data": {"aweme_details": [{"aweme_id": video["platform_video_id"]}]}}),),
+                            (
+                                Jsonb({"data": {"aweme_details": [{"aweme_id": video["platform_video_id"]}]}}),
+                                Jsonb({"data": {"aweme_detail": {"aweme_id": video["platform_video_id"]}}}),
+                            ),
                         ).fetchone()
                         if response is None:
                             raise ValueError("cached_media_source_unavailable")
