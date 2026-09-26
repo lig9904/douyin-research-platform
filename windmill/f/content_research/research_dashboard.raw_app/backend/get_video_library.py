@@ -317,7 +317,28 @@ def main(
 
     base_cte = """
     with latest_metric as (
-      select * from merged_video_metric
+      select m.video_id, m.play_count, m.like_count, m.comment_count,
+        m.share_count, m.collect_count,
+        coalesce(profile.follower_count, m.author_follower_count) as author_follower_count,
+        m.captured_at, m.oldest_field_captured_at, m.metric_source_kind,
+        case when profile.follower_count is not null
+          then m.metric_provenance || jsonb_build_object(
+            'author_follower_count', jsonb_build_object(
+              'source_kind', 'verified_account_profile',
+              'captured_at', profile.captured_at))
+          else m.metric_provenance end as metric_provenance
+      from merged_video_metric m
+      join source_video metric_video on metric_video.id=m.video_id
+      left join lateral (
+        select am.follower_count, am.captured_at
+        from account_metric_snapshot am
+        where am.account_id=metric_video.account_id
+          and am.observation_key like 'account-profile:%%'
+          and am.captured_at >= now() - interval '30 days'
+          and am.follower_count is not null
+        order by am.captured_at desc, am.id desc
+        limit 1
+      ) profile on true
     ),
     latest_score as (
       select distinct on (video_id)

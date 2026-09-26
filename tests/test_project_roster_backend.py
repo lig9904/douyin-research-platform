@@ -121,7 +121,8 @@ def test_project_roster_enforces_actor_membership_org_project_and_relation_windo
                   id bigserial primary key,
                   account_id uuid not null references source_account(id),
                   captured_at timestamptz not null default now(),
-                  follower_count bigint
+                  follower_count bigint,
+                  observation_key text
                 );
                 """,
                 prepare=False,
@@ -343,7 +344,8 @@ def test_project_roster_returns_server_side_legacy_admin_without_leaking_allowli
                   id bigserial primary key,
                   account_id uuid not null references source_account(id),
                   captured_at timestamptz not null default now(),
-                  follower_count bigint
+                  follower_count bigint,
+                  observation_key text
                 );
                 """,
                 prepare=False,

@@ -35,6 +35,32 @@ def validate_tikhub_envelope(payload: Any) -> dict[str, Any]:
     return payload
 
 
+def normalize_account_profile(
+    payload: dict[str, Any], *, requested_sec_user_id: str,
+    raw_ref: str | None, observed_at: datetime,
+) -> AccountRef:
+    """Accept only a profile bound to the requested stable Douyin identity."""
+    data = validate_tikhub_envelope(payload).get("data")
+    user = data.get("user") if isinstance(data, dict) else None
+    if not isinstance(user, dict):
+        raise ProviderSchemaError("account profile missing data.user")
+    sec_uid = _first_str(user, "sec_uid", "sec_user_id")
+    if not sec_uid or sec_uid != requested_sec_user_id:
+        raise ProviderSchemaError("account profile sec_uid does not match request")
+    raw_followers = user.get("follower_count")
+    if type(raw_followers) is int and raw_followers >= 0:
+        follower_count = raw_followers
+    elif isinstance(raw_followers, str) and raw_followers.isdecimal():
+        follower_count = int(raw_followers)
+    else:
+        raise ProviderSchemaError("account profile follower_count is unavailable")
+    return AccountRef(
+        provider="tikhub", platform="douyin", platform_account_id=sec_uid,
+        sec_user_id=sec_uid, nickname=_first_str(user, "nickname"),
+        follower_count=follower_count, observed_at=observed_at, raw_ref=raw_ref,
+    )
+
+
 def normalize_video_observations(
     payload: dict[str, Any],
     *,

@@ -156,9 +156,19 @@ def main(
     base_cte = """
     with latest_account_metric as (
       select distinct on (account_id)
-        account_id, follower_count, following_count, total_favorited,
-        video_count, captured_at
+        account_id, follower_count, captured_at, observation_key
       from account_metric_snapshot
+      order by account_id,
+        coalesce(observation_key like 'account-profile:%%'
+         and captured_at >= now() - interval '30 days', false) desc,
+        captured_at desc, id desc
+    ),
+    latest_complete_metric as (
+      select distinct on (account_id)
+        account_id, following_count, total_favorited, video_count
+      from account_metric_snapshot
+      where following_count is not null or total_favorited is not null
+        or video_count is not null
       order by account_id, captured_at desc, id desc
     ),
     first_window_metric as (
@@ -166,12 +176,14 @@ def main(
         account_id, follower_count, captured_at
       from account_metric_snapshot
       where captured_at >= now() - (%s || ' days')::interval
+        and observation_key like 'account-profile:%%'
       order by account_id, captured_at asc, id asc
     ),
     metric_window_count as (
       select account_id, count(*)::int as snapshot_count
       from account_metric_snapshot
       where captured_at >= now() - (%s || ' days')::interval
+        and observation_key like 'account-profile:%%'
       group by account_id
     ),
     latest_video_metric as (
@@ -227,9 +239,9 @@ def main(
         a.monitoring_priority,
         a.last_seen_at,
         m.follower_count,
-        m.following_count,
-        m.total_favorited,
-        m.video_count,
+        cm.following_count,
+        cm.total_favorited,
+        cm.video_count,
         m.captured_at as metric_captured_at,
         coalesce(vs.posts_count,0) as posts_count,
         vs.avg_like_count,
@@ -241,6 +253,7 @@ def main(
         coalesce(vs.blackhorse_count,0) as blackhorse_count,
         case
           when coalesce(mc.snapshot_count,0) >= 2
+           and m.observation_key like 'account-profile:%%'
            and m.follower_count is not null
            and fm.follower_count is not null
           then m.follower_count - fm.follower_count
@@ -249,6 +262,7 @@ def main(
         coalesce(d.content_domains, array[]::text[]) as content_domains
       from source_account a
       left join latest_account_metric m on m.account_id=a.id
+      left join latest_complete_metric cm on cm.account_id=a.id
       left join first_window_metric fm on fm.account_id=a.id
       left join metric_window_count mc on mc.account_id=a.id
       left join period_video_stats vs on vs.account_id=a.id

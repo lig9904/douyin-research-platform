@@ -322,6 +322,37 @@ def test_video_library_numeric_ranges_exclude_null_but_keep_reported_zero() -> N
     assert reported_zero["items"][0]["author_follower_count"] == 0
 
 
+def test_video_library_uses_fresh_verified_profile_without_rewriting_video_zero() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    module = load_backend()
+    resource = resource_from_dsn(DSN)
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """update metric_snapshot set author_follower_count=0
+               where video_id=%s""", (video_id,),
+        )
+        conn.execute(
+            """insert into account_metric_snapshot(
+                 account_id,provider,source_endpoint,observation_key,captured_at,
+                 follower_count)
+               select account_id,'tikhub','douyin.app.user_profile',
+                 'account-profile:fixture',now(),1755
+               from source_video where id=%s""", (video_id,),
+        )
+    result = module.main(resource, selected_video_id=video_id,
+                         follower_min=1700, follower_max=1800)
+    assert result["total"] == 1
+    assert result["items"][0]["author_follower_count"] == 1755
+    assert result["detail"]["author_follower_count"] == 1755
+    assert result["detail"]["metric_provenance"]["author_follower_count"]["source_kind"] == "verified_account_profile"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute(
+            "select author_follower_count from metric_snapshot where video_id=%s",
+            (video_id,),
+        ).fetchone()[0] == 0
+
+
 def test_video_library_query_and_pagination_empty_state() -> None:
     assert DSN
     clear_and_seed()

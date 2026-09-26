@@ -30,7 +30,8 @@ def _load():
 def test_project_daily_cost_contract_is_project_scoped_and_keeps_unknown_amounts_unknown() -> None:
     source = BACKEND.read_text(encoding="utf-8")
     assert "project_research_task_cost" in source
-    assert "run.run_type in ('l0l1_discovery','comment_collection')" in source
+    assert "run.run_type in ('l0l1_discovery','comment_collection'," in source
+    assert "'account_profile_refresh')" in source
     assert "project_actor_can_read" in source
     assert "with authorized_project as materialized" in source
     assert "cost.project_id" in source
@@ -112,17 +113,27 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
                     '{"api_cost_basis":"unknown","unknown_cost_calls":1}'::jsonb),
                    ('comment_collection',%s,'success',0.002,'USD',
                     '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
+                   ('account_profile_refresh',%s,'success',0.001,'USD',
+                    '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
                    ('media_ingestion',%s,'success',100,'USD',
                     '{"api_cost_basis":"estimated"}'::jsonb),
                    ('l0l1_discovery',%s,'success',99,'USD',
                     '{"api_cost_basis":"actual","unknown_cost_calls":0}'::jsonb)""",
-                (project_a, project_a, project_a, project_a, project_b),
+                (project_a, project_a, project_a, project_a, project_a, project_b),
             )
             # Real failed runs retain the pipeline_run default CNY, which must
             # not be presented as a known CNY charge for a USD provider.
             conn.execute(
                 """insert into pipeline_run(run_type,project_id,status,api_cost,summary)
                    values ('l0l1_discovery',%s,'failed',0,'{}'::jsonb)""",
+                (project_a,),
+            )
+            conn.execute(
+                """insert into pipeline_run(
+                     run_type,project_id,status,api_cost,cost_currency,summary)
+                   values ('account_profile_refresh',%s,'failed',0,'USD',
+                     '{"api_cost_basis":"unknown","unknown_cost_calls":1,
+                       "known_estimated_cost_usd":0.001}'::jsonb)""",
                 (project_a,),
             )
             asset = conn.execute("""insert into media_asset(video_id,kind,storage_location,bucket,
@@ -165,17 +176,18 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert day == {
                 **day,
                 "cost_currency": "USD",
-                "task_count": 9,
+                "task_count": 11,
                 "asr_task_count": 4,
                 "l3_task_count": 2,
                 "discovery_run_count": 2,
                 "comment_run_count": 1,
-                "known_amount": 2.504,
+                "profile_run_count": 2,
+                "known_amount": 2.506,
                 "actual_amount": 1.0,
-                "estimated_amount": 1.004,
+                "estimated_amount": 1.006,
                 "mixed_amount": 0.5,
-                "unknown_task_count": 4,
-                "unbilled_job_count": 1,
+                "unknown_task_count": 5,
+                "unbilled_job_count": 2,
                 "cost_status": "partial",
             }
             assert "unknown_amount" not in day
@@ -184,6 +196,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert cny["task_count"] == 1
             assert cny["discovery_run_count"] == 0
             assert cny["comment_run_count"] == 0
+            assert cny["profile_run_count"] == 0
             assert cny["known_amount"] == 0.3
             assert cny["actual_amount"] == 0.3
             assert cny["estimated_amount"] is None
@@ -195,6 +208,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert unpriced["task_count"] == 1
             assert unpriced["discovery_run_count"] == 1
             assert unpriced["comment_run_count"] == 0
+            assert unpriced["profile_run_count"] == 0
             assert unpriced["known_amount"] is None
             assert unpriced["unknown_task_count"] == 1
             assert unpriced["unbilled_job_count"] == 1

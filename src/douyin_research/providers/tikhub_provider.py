@@ -14,12 +14,13 @@ from .normalizer import (
     extract_batch_detail_ids,
     extract_pagination,
     normalize_comment_samples,
+    normalize_account_profile,
     normalize_video_observations,
     validate_tikhub_envelope,
 )
 from .store import ProviderStore, utcnow
 from .transport import ProviderTransport, TikHubTransport
-from .types import CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
+from .types import AccountRef, CommentSample, ProviderCallMeta, ProviderPage, VideoObservation
 from .video_fetch_plan import plan_exact_video_brief, plan_video_fetches
 from .cost_accounting import quote_call
 from .errors import attach_provider_diagnostic, provider_failure_summary
@@ -36,6 +37,7 @@ class TikHubDouyinProvider:
         "video.batch_detail",
         "video.statistics",
         "account.posts",
+        "account.profile",
         "comments.list",
         "comments.replies",
     })
@@ -132,6 +134,33 @@ class TikHubDouyinProvider:
         }
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         return self._video_page(spec, kwargs, force_refresh=force_refresh)
+
+    def fetch_account_profile(
+        self, sec_user_id: str, *, force_refresh: bool = False,
+    ) -> ProviderPage[AccountRef]:
+        stable_id = sec_user_id.strip() if isinstance(sec_user_id, str) else ""
+        if not stable_id or len(stable_id) > 256 or any(c.isspace() for c in stable_id):
+            raise ValueError("sec_user_id must be a stable nonempty identifier")
+        spec = get_endpoint("douyin.app.user_profile")
+
+        def validate_profile(payload: dict[str, Any]) -> None:
+            normalize_account_profile(
+                payload, requested_sec_user_id=stable_id,
+                raw_ref=None, observed_at=utcnow(),
+            )
+
+        payload, fp, cached, raw_ref, observed_at = self._call(
+            spec, {"sec_user_id": stable_id},
+            validate_payload=validate_profile, force_refresh=force_refresh,
+        )
+        account = normalize_account_profile(
+            payload, requested_sec_user_id=stable_id,
+            raw_ref=raw_ref, observed_at=observed_at,
+        )
+        return ProviderPage(
+            items=[account], endpoint_key=spec.key,
+            request_fingerprint=fp, cached=cached, raw_ref=raw_ref,
+        )
 
     def fetch_videos(
         self,

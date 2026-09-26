@@ -11,7 +11,8 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
-from douyin_research.providers.types import VideoObservation
+from douyin_research.providers.normalizer import normalize_account_profile
+from douyin_research.providers.types import AccountRef, VideoObservation
 
 
 @dataclass(slots=True)
@@ -41,6 +42,94 @@ class IngestResult:
 class L0L1Store:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
+
+    def ingest_verified_account_profile(
+        self, account: AccountRef, *, endpoint_key: str,
+        project_id: UUID, video_platform_id: str,
+    ) -> tuple[UUID, bool]:
+        """Record a bound public profile only for an already-known stable account.
+
+        No nickname/UID fallback or new account creation is permitted here.
+        The raw provider envelope remains in external_api_response; the metric
+        row carries only its reference and an idempotency key.
+        """
+        if (
+            endpoint_key != "douyin.app.user_profile"
+            or account.provider != "tikhub" or account.platform != "douyin"
+            or not account.sec_user_id
+            or account.platform_account_id != account.sec_user_id
+            or account.follower_count is None or account.follower_count < 0
+            or not account.raw_ref
+            or not account.raw_ref.startswith("external_api_response:")
+        ):
+            raise ValueError("verified account profile is required")
+        raw_id = account.raw_ref.removeprefix("external_api_response:")
+        if not raw_id.isdecimal() or len(raw_id) > 20:
+            raise ValueError("invalid account profile raw reference")
+        key = "account-profile:" + hashlib.sha256(
+            (account.platform + ":" + account.platform_account_id + ":" + account.raw_ref)
+            .encode("utf-8")
+        ).hexdigest()
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                """select account.platform_account_id
+                   from research_project project
+                   join research_organization organization
+                     on organization.id=project.organization_id
+                   join project_video_inclusion inclusion
+                     on inclusion.project_id=project.id and inclusion.status='accepted'
+                   join source_video video on video.id=inclusion.video_id
+                   join source_account account on account.id=video.account_id
+                   where project.id=%s and project.status='active'
+                     and organization.status='active'
+                     and video.platform='douyin' and account.platform='douyin'
+                     and video.platform_video_id=%s
+                   for share of project, organization, inclusion, video, account""",
+                (project_id, video_platform_id),
+            )
+            scope_row = cur.fetchone()
+            if scope_row is None or scope_row[0] != account.platform_account_id:
+                raise PermissionError("accepted project account identity is required")
+            cur.execute(
+                """select response_body, requested_at from external_api_response
+                   where id=%s and provider=%s and platform=%s and endpoint_key=%s
+                     and http_status=200 and response_code='200'""",
+                (int(raw_id), account.provider, account.platform, endpoint_key),
+            )
+            raw_row = cur.fetchone()
+            if raw_row is None:
+                raise ValueError("verified account profile raw response is unavailable")
+            confirmed = normalize_account_profile(
+                raw_row[0], requested_sec_user_id=account.sec_user_id,
+                raw_ref=account.raw_ref, observed_at=raw_row[1],
+            )
+            if confirmed.follower_count != account.follower_count:
+                raise ValueError("account profile differs from raw response")
+            cur.execute(
+                """select id from source_account
+                   where platform=%s and platform_account_id=%s
+                   for share""",
+                (account.platform, account.platform_account_id),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValueError("account profile identity is not in the canonical catalogue")
+            account_id = row[0]
+            cur.execute(
+                """insert into account_metric_snapshot(
+                     account_id,provider,source_endpoint,observation_key,
+                     captured_at,follower_count,raw_metrics
+                   ) values (%s,%s,%s,%s,%s,%s,%s)
+                   on conflict do nothing returning id""",
+                (
+                    account_id, account.provider, endpoint_key, key,
+                    raw_row[1], account.follower_count,
+                    Jsonb({"raw_ref": account.raw_ref, "identity_verified": True}),
+                ),
+            )
+            inserted = cur.fetchone() is not None
+            conn.commit()
+        return account_id, inserted
 
     def create_run(
         self,

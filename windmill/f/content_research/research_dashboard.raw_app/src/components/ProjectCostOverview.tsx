@@ -10,6 +10,7 @@ type CostDay = {
   l3_task_count: number
   discovery_run_count: number
   comment_run_count: number
+  profile_run_count: number
   known_amount: number | null
   actual_amount: number | null
   estimated_amount: number | null
@@ -55,7 +56,7 @@ export default function ProjectCostOverview({ projectId }: { projectId: string }
   const unknown = report?.records.reduce((total, row) => total + row.unknown_task_count, 0) || 0
 
   return <div className="operations-page">
-    <Alert type="info" showIcon message="项目执行账本" description="按项目、上海自然日和币种展示项目发现、评论、ASR 与 L3 任务流水；发现和评论费用按任务启动日归属，跨午夜时可能不同于供应商实扣日。未与供应商分笔实扣对齐的费用仍是估算，币种不折算，未知费用不计为零。失败运行的币种未确定时单列为 UNKNOWN。" />
+    <Alert type="info" showIcon message="项目执行账本" description="按项目、上海自然日和币种展示项目发现、评论、账号核验、ASR 与 L3 任务流水；发现、评论和账号核验费用按任务启动日归属，跨午夜时可能不同于供应商实扣日。未与供应商分笔实扣对齐的费用仍是估算，币种不折算，未知费用不计为零。失败运行的币种未确定时单列为 UNKNOWN。" />
     <div className="operations-filters card">
       <Select value={days} onChange={(next) => { setDays(next); void load(next) }} options={[
         { value: 1, label: '今天' }, { value: 7, label: '近 7 天' },
@@ -65,19 +66,19 @@ export default function ProjectCostOverview({ projectId }: { projectId: string }
     </div>
     {error && <Alert type="error" showIcon message="项目账本未加载" description={error} />}
     {loading ? <div className="operations-loading"><Spin /></div> : report && <>
-      {unknown > 0 && <Alert type="warning" showIcon message={`有 ${unknown} 项任务金额待对账`} description="已知金额只是部分记录；不能当作本项目或供应商的实际总消费。" />}
+      {unknown > 0 && <Alert type="warning" showIcon message={`有 ${unknown} 项任务金额或执行状态待对账`} description="已知金额可能只是失败任务的部分报价；不能当作本项目或供应商的实际总消费。" />}
       <section className="card operations-section">
         <h2>{report.project_name} · 每日执行费用</h2>
         <p>账期时区：{report.report_timezone}。同一日期不同币种分行显示。</p>
         <Table size="small" rowKey={(row) => `${row.cost_date}-${row.cost_currency}`} pagination={false}
-          dataSource={report.records} locale={{ emptyText: '所选日期内尚无项目发现、评论、ASR 或 L3 费用记录' }} columns={[
+          dataSource={report.records} locale={{ emptyText: '所选日期内尚无项目发现、评论、账号核验、ASR 或 L3 费用记录' }} columns={[
             { title: '日期', dataIndex: 'cost_date' },
             { title: '币种', dataIndex: 'cost_currency' },
-            { title: '任务', render: (_, row) => `${row.task_count}（发现 ${row.discovery_run_count} / 评论 ${row.comment_run_count} / ASR ${row.asr_task_count} / L3 ${row.l3_task_count}）` },
+            { title: '任务', render: (_, row) => `${row.task_count}（发现 ${row.discovery_run_count} / 评论 ${row.comment_run_count} / 账号核验 ${row.profile_run_count} / ASR ${row.asr_task_count} / L3 ${row.l3_task_count}）` },
             { title: '已知金额', render: (_, row) => amount(row.known_amount, row.cost_currency) },
             { title: '口径拆分', render: (_, row) => `实扣 ${amount(row.actual_amount, row.cost_currency)} · 估算 ${amount(row.estimated_amount, row.cost_currency)} · 混合 ${amount(row.mixed_amount, row.cost_currency)}` },
             { title: '待对账', render: (_, row) => row.unknown_task_count
-              ? <><Tag color="warning">{row.unknown_task_count} 项金额未知</Tag>{row.unbilled_job_count > 0 && <Tag color="error">含 {row.unbilled_job_count} 项执行中断/未落账</Tag>}</>
+              ? <><Tag color="warning">{row.unknown_task_count} 项金额或执行状态未闭合</Tag>{row.unbilled_job_count > 0 && <Tag color="error">含 {row.unbilled_job_count} 项执行中断/未落账</Tag>}</>
               : <Tag color="green">无未知项</Tag> },
           ]} />
       </section>

@@ -171,8 +171,12 @@ function formatCount(v?: number | null) {
   return Number(v).toLocaleString('zh-CN')
 }
 
-function formatFollowerCount(v?: number | null) {
-  return v === 0 ? '0 · 待核' : formatCount(v)
+function hasVerifiedFollowerCount(item: VideoItem) {
+  return item.metric_provenance?.author_follower_count?.source_kind === 'verified_account_profile'
+}
+
+function formatFollowerCount(v?: number | null, verified = false) {
+  return v === 0 && !verified ? '0 · 待核' : formatCount(v)
 }
 
 const zeroFollowerExplanation = '上游接口返回账号粉丝 0，尚不能据此认定真实为零；请核对账号主页或独立账号接口，以及采集时间。'
@@ -779,9 +783,9 @@ export default function VideoLibrary({
                               <span className="avatar">{(item.account_name || '?').slice(0, 1)}</span>
                               <div>
                                 <strong>{item.account_name || '未知账号'}</strong>
-                                <small>{item.author_follower_count === 0
+                                <small>{item.author_follower_count === 0 && !hasVerifiedFollowerCount(item)
                                   ? <Tooltip title={zeroFollowerExplanation}>{formatFollowerCount(item.author_follower_count)}</Tooltip>
-                                  : formatFollowerCount(item.author_follower_count)}</small>
+                                  : formatFollowerCount(item.author_follower_count, hasVerifiedFollowerCount(item))}</small>
                               </div>
                             </div>
                           </td>
@@ -804,9 +808,9 @@ export default function VideoLibrary({
                           <td>{formatCount(item.like_count)}</td>
                           <td>{formatCount(item.comment_count)}</td>
                           <td>{formatCount(item.share_count)}</td>
-                          <td>{item.author_follower_count === 0
+                          <td>{item.author_follower_count === 0 && !hasVerifiedFollowerCount(item)
                             ? <Tooltip title={zeroFollowerExplanation}>{formatFollowerCount(item.author_follower_count)}</Tooltip>
-                            : formatFollowerCount(item.author_follower_count)}</td>
+                            : formatFollowerCount(item.author_follower_count, hasVerifiedFollowerCount(item))}</td>
                           <td>{formatPlayInteractionRate(item)}</td>
                           {!isProject && <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
@@ -888,7 +892,7 @@ export default function VideoLibrary({
                         <span className="avatar large">{(detail.account_name || '?').slice(0, 1)}</span>
                         <div>
                           <strong>{detail.account_name || '未知账号'}</strong>
-                          <small>{formatFollowerCount(detail.author_follower_count)} 粉丝</small>
+                          <small>{formatFollowerCount(detail.author_follower_count, hasVerifiedFollowerCount(detail))} 粉丝</small>
                         </div>
                       </div>
                       {!isProject && <Button
@@ -928,7 +932,7 @@ export default function VideoLibrary({
                         <h4>数据表现</h4>
                         <span>合并数据 · 最近字段更新 {formatFullDate(detail.metric_captured_at)}</span>
                       </div>
-                      {(hasContradictoryZeroPlay(detail) || detail.author_follower_count === 0) && <Alert
+                      {(hasContradictoryZeroPlay(detail) || (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail))) && <Alert
                         type="warning"
                         showIcon
                         message="播放量或账号粉丝的零值待核"
@@ -940,7 +944,7 @@ export default function VideoLibrary({
                           [formatCount(detail.like_count), '点赞'],
                           [formatCount(detail.comment_count), '评论'],
                           [formatCount(detail.share_count), '分享'],
-                          [formatFollowerCount(detail.author_follower_count), '账号粉丝'],
+                          [formatFollowerCount(detail.author_follower_count, hasVerifiedFollowerCount(detail)), '账号粉丝'],
                           [formatPlayInteractionRate(detail), '互动/播放（合并估算）'],
                           ...(!isProject ? [
                             [priorityText(Number(detail.priority || 0)), '优先级'],
@@ -957,11 +961,11 @@ export default function VideoLibrary({
 
                     <details key={`metric-evidence-${detail.id}`}>
                       <summary>查看合并依据与指标历史</summary>
-                      <p className="muted">播放量、账号粉丝优先采用榜单记录；其余指标采用最新非缺失记录。保留上游零值供核查；与正向互动冲突时不能当作真实播放量。各字段时间可能不同。</p>
+                      <p className="muted">播放量优先采用榜单记录；账号粉丝若有 30 天内经身份核验的账号详情则优先采用该值，否则沿用视频合并值。其余指标采用最新非缺失记录。保留上游零值供核查；与正向互动冲突时不能当作真实播放量。各字段时间可能不同。</p>
                       {Object.entries(detail.metric_provenance || {}).map(([field, evidence]) => (
                         <p key={field} className="muted">
                           {({play_count:'播放量', like_count:'点赞', comment_count:'评论', share_count:'分享', collect_count:'收藏', author_follower_count:'账号粉丝'} as Record<string,string>)[field] || field}
-                          ：{evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '详情' : '其他'} · {formatFullDate(evidence.captured_at)}
+                          ：{evidence.source_kind === 'verified_account_profile' ? '账号详情（身份已核验）' : evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '视频详情' : '其他'} · {formatFullDate(evidence.captured_at)}
                         </p>
                       ))}
                       <MetricTimeline videoId={detail.id} projectId={projectId} />

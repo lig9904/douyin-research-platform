@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Protocol, runtime_checkable
 
-from .types import CommentSample, ProviderPage, VideoObservation
+from .types import AccountRef, CommentSample, ProviderPage, VideoObservation
 
 
 @runtime_checkable
@@ -49,6 +49,12 @@ class PlatformResearchProvider(Protocol):
         account_id: str,
         **kwargs: Any,
     ) -> ProviderPage[VideoObservation]: ...
+
+    def fetch_account_profile(
+        self,
+        sec_user_id: str,
+        **kwargs: Any,
+    ) -> ProviderPage[AccountRef]: ...
 
     def fetch_comments(
         self,
