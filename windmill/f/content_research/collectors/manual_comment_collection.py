@@ -41,6 +41,7 @@ MAX_ITEMS = 200
 COMMENT_PAGE_COST_USD = 0.001
 LOCK_NAME = "douyin_research:manual_comment_collection"
 _EMAIL = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
+MANUAL_FLOW_PATH = "f/content_research/flows/manual_comment_collection"
 
 
 class postgresql(TypedDict):
@@ -190,6 +191,24 @@ def _dsn(db: postgresql) -> str:
     )
 
 
+def _actor_from_windmill() -> str:
+    viewer = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
+    if viewer:
+        actor = viewer
+    elif (
+        os.environ.get("WM_FLOW_PATH") == MANUAL_FLOW_PATH
+        and not os.environ.get("WM_SCHEDULE_PATH")
+    ):
+        # This private manual Flow runs under the authenticated Windmill user.
+        # Never use WM_EMAIL as a generic App fallback: an App runs as publisher.
+        actor = os.environ.get("WM_EMAIL", "").strip().lower()
+    else:
+        actor = ""
+    if len(actor) > 254 or not _EMAIL.fullmatch(actor):
+        raise PermissionError("project member identity is required")
+    return actor
+
+
 def _preflight(dsn: str, video_platform_id: str, project_id: str, *, require_budget: bool = True) -> None:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
@@ -202,9 +221,7 @@ def _preflight(dsn: str, video_platform_id: str, project_id: str, *, require_bud
         row = cur.fetchone()
         if row is None:
             raise RuntimeError("source video must exist before comment collection")
-        actor = os.environ.get("WM_END_USER_EMAIL", "").strip().lower()
-        if len(actor) > 254 or not _EMAIL.fullmatch(actor):
-            raise PermissionError("project member identity is required")
+        actor = _actor_from_windmill()
         cur.execute(
                 """select 1 from research_project project
                    join research_organization organization on organization.id=project.organization_id

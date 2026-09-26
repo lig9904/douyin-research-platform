@@ -226,6 +226,34 @@ def test_project_preflight_requires_real_member_and_accepted_video(monkeypatch) 
     assert "member.role in ('owner','admin','researcher')" in cursor.statements[1]
 
 
+def test_manual_flow_uses_authenticated_executor_not_payload(monkeypatch) -> None:
+    monkeypatch.delenv("WM_END_USER_EMAIL", raising=False)
+    monkeypatch.setenv("WM_FLOW_PATH", module.MANUAL_FLOW_PATH)
+    monkeypatch.delenv("WM_SCHEDULE_PATH", raising=False)
+    monkeypatch.setenv("WM_EMAIL", "Owner@Example.com")
+    assert module._actor_from_windmill() == "owner@example.com"
+
+
+def test_app_viewer_takes_precedence_over_publisher(monkeypatch) -> None:
+    monkeypatch.setenv("WM_END_USER_EMAIL", "Reader@Example.com")
+    monkeypatch.setenv("WM_EMAIL", "publisher@example.com")
+    assert module._actor_from_windmill() == "reader@example.com"
+
+
+@pytest.mark.parametrize("flow_path,schedule_path", [
+    ("", ""),
+    ("f/other/flow", ""),
+    ("f/content_research/flows/manual_comment_collection", "f/scheduled/trigger"),
+])
+def test_publisher_identity_is_not_a_generic_fallback(monkeypatch, flow_path, schedule_path) -> None:
+    monkeypatch.delenv("WM_END_USER_EMAIL", raising=False)
+    monkeypatch.setenv("WM_EMAIL", "publisher@example.com")
+    monkeypatch.setenv("WM_FLOW_PATH", flow_path)
+    monkeypatch.setenv("WM_SCHEDULE_PATH", schedule_path)
+    with pytest.raises(PermissionError, match="project member identity"):
+        module._actor_from_windmill()
+
+
 def test_execution_returns_only_redacted_aggregates() -> None:
     calls = []
 
