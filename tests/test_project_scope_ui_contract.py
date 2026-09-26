@@ -28,6 +28,8 @@ def test_project_roster_is_required_before_loading_global_home() -> None:
     cost = _source("src/components/ProjectCostOverview.tsx")
     assert "backend.get_project_daily_cost({ project_id: projectId, days: nextDays })" in cost
     assert "未知费用不计为零" in cost
+    assert "row.discovery_run_count" in cost
+    assert "发现费用未与供应商分笔实扣对齐时仍是估算" in cost
 
 
 def test_project_video_calls_carry_scope_and_hide_unscoped_review_paths() -> None:

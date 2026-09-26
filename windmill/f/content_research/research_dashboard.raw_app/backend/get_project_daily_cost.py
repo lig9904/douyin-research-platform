@@ -7,6 +7,8 @@
 Amounts are deliberately returned as *known* subtotals.  A task whose billing
 basis is unknown (or whose component total has not been established) increases
 ``unknown_task_count`` and never becomes a misleading zero-valued amount.
+Project-owned L0/L1 discovery runs are included without dividing global
+supplier charges across projects.
 """
 
 from __future__ import annotations
@@ -88,8 +90,9 @@ def _json(value: Any) -> Any:
 def main(db: postgresql, project_id: str, days: int = 30):
     """Return per-currency daily spend known to one authorized project member.
 
-    ``known_amount`` is the sum of values whose full three-component cost is
-    available.  ``actual_amount``, ``estimated_amount``, and ``mixed_amount``
+    ``known_amount`` sums completed ASR/L3 task totals and finished discovery
+    run API costs only when their recorded billing basis is known.
+    ``actual_amount``, ``estimated_amount``, and ``mixed_amount``
     retain their recorded billing basis; no conversion or cross-currency total
     is performed.  If ``unknown_task_count`` is non-zero, callers must present
     the day as partial rather than treating the known amount as total spend.
@@ -150,12 +153,28 @@ def main(db: postgresql, project_id: str, days: int = 30):
                       where job.created_at >= (select start_at from cutoff)
                         and not exists (select 1 from project_research_task_cost cost
                                         where cost.task_key=job.task_key)
+                     union all
+                     select run.started_at,run.cost_currency,'l0l1_discovery',
+                            case when run.status='success'
+                                      and run.summary->>'api_cost_basis' in ('actual','estimated','mixed')
+                                      and run.summary->>'unknown_cost_calls'='0'
+                                 then run.summary->>'api_cost_basis' else 'unknown' end,
+                            case when run.status='success'
+                                      and run.summary->>'api_cost_basis' in ('actual','estimated','mixed')
+                                      and run.summary->>'unknown_cost_calls'='0'
+                                 then run.api_cost else null::numeric end,
+                            run.status<>'success'
+                       from pipeline_run run
+                       join authorized_project project_row on project_row.id=run.project_id
+                      where run.run_type='l0l1_discovery'
+                        and run.started_at >= (select start_at from cutoff)
                    ), daily_cost as (
                      select (cost.created_at at time zone 'Asia/Shanghai')::date as cost_date,
                             cost.cost_currency,
                             count(*)::integer as task_count,
                             count(*) filter (where cost.task_type='asr_transcription')::integer as asr_task_count,
                             count(*) filter (where cost.task_type='l3_structured_research')::integer as l3_task_count,
+                            count(*) filter (where cost.task_type='l0l1_discovery')::integer as discovery_run_count,
                             sum(cost.total_cost) filter (where cost.total_cost is not null) as known_amount,
                             sum(cost.total_cost) filter (
                               where cost.cost_basis='actual' and cost.total_cost is not null) as actual_amount,
@@ -171,6 +190,7 @@ def main(db: postgresql, project_id: str, days: int = 30):
                       group by cost_date, cost.cost_currency
                    )
                    select cost_date, cost_currency, task_count, asr_task_count, l3_task_count,
+                          discovery_run_count,
                           known_amount, actual_amount, estimated_amount, mixed_amount,
                           unknown_task_count, unbilled_job_count
                      from daily_cost
