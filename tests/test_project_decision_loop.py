@@ -259,6 +259,10 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             ref_read = next(card for card in read.main(db, str(project))["cards"] if card["id"] == ref_card["card_id"])
             assert [item["role"] for item in ref_read["evidence_refs"]] == ["comparable", "counterexample"]
             assert ref_read["evidence_refs"][0]["video_title"] == "另一条已接受视频"
+            assert ref_read["evidence_refs"][0]["case_review_reference_at_binding"] == "https://www.douyin.com/video/8888888888888888887"
+            assert ref_read["evidence_refs"][0]["case_review_facts_at_binding"] == "已核对画面与声音"
+            assert ref_read["evidence_refs"][0]["case_review_comparability_at_binding"] == "只可在限定场景借鉴"
+            assert ref_read["evidence_refs"][0]["case_review_counterevidence_at_binding"] == ""
             assert ref_read["evidence_refs"][0]["reference_withdrawn"] is True
             assert ref_read["evidence_refs"][1]["reference_withdrawn"] is False
             monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")

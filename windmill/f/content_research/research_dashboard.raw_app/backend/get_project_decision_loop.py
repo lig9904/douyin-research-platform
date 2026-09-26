@@ -153,8 +153,10 @@ def main(db: postgresql, project_id: str):
                          (ref_case_review.id = ref.case_review_id_at_binding
                           and ref_case_review.status = 'complete'),
                        'case_review_version_at_binding', bound_ref_review.version_no,
+                       'case_review_reference_at_binding', bound_ref_review.source_reference,
                        'case_review_facts_at_binding', bound_ref_review.verified_facts,
                        'case_review_gaps_at_binding', bound_ref_review.evidence_gaps,
+                       'case_review_counterevidence_at_binding', bound_ref_review.counterevidence,
                        'case_review_comparability_at_binding', bound_ref_review.comparability_note,
                        'reference_withdrawn',
                          (ref_inclusion.project_id is null or ref_inclusion.status <> 'accepted'
