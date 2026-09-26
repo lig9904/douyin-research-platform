@@ -495,6 +495,57 @@ export default function VideoLibrary({
     }
   }
 
+  const refreshProjectVideoStatistics = async (videoPlatformId: string) => {
+    if (!projectId || !canReviewProject || !/^\d{15,25}$/.test(videoPlatformId)) return
+    const targetProjectId = projectId
+    let confirmationOpened = false
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      const preview = await backend.refresh_project_video_statistics({
+        project_id: targetProjectId,
+        video_platform_ids: [videoPlatformId],
+        action: 'preview',
+      }) as { eligible?: boolean; maximum_new_calls?: number; estimated_base_price_usd?: number }
+      if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId || preview.eligible !== true) return
+      confirmationOpened = true
+      Modal.confirm({
+        title: '核验这条视频的公开播放量？',
+        content: `详情接口的 0 播放可能是缺失值。缓存未命中时最多发起 ${preview.maximum_new_calls ?? 1} 次 TikHub 统计请求，基础价估算 USD ${Number(preview.estimated_base_price_usd ?? 0.001).toFixed(3)}；实扣以供应商日账为准。保留原始详情快照，不发送评论、音频或转写。`,
+        okText: '确认付费核验',
+        cancelText: '取消',
+        onCancel: () => setWriteBusy(false),
+        onOk: async () => {
+          if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId) {
+            setWriteBusy(false)
+            return
+          }
+          setWriteBusy(true)
+          try {
+            const result = await backend.refresh_project_video_statistics({
+              project_id: targetProjectId,
+              video_platform_ids: [videoPlatformId],
+              action: 'execute',
+              confirmation: 'REFRESH_PUBLIC_VIDEO_STATISTICS_PAID',
+            }) as { play_counts?: Record<string, number>; external_calls?: number; cached_calls?: number; snapshots_inserted?: number }
+            if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId) return
+            setWriteNotice(`播放量核验：${result.play_counts?.[videoPlatformId] ?? '未返回'}；新增请求 ${result.external_calls ?? 0} 次、缓存命中 ${result.cached_calls ?? 0} 次、保存快照 ${result.snapshots_inserted ?? 0} 条。实扣待日账核对。`)
+            await load(filters, selectedVideoId)
+          } catch (e) {
+            if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+          } finally {
+            if (activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
+          }
+        },
+      })
+    } catch (e) {
+      if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (!confirmationOpened && activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
+    }
+  }
+
   const openCollection = (ids: string[]) => {
     setCollectionTargetIds(ids)
     setCollectionName(userState?.collections[0]?.name || '')
@@ -974,6 +1025,12 @@ export default function VideoLibrary({
                         onClick={() => void refreshProjectAccountProfile(detail.platform_video_id)}
                       >
                         刷新公开账号资料
+                      </Button>}
+                      {isProject && canReviewProject && detail.project_inclusion_status === 'accepted' && detail.platform === 'douyin' && <Button
+                        loading={writeBusy}
+                        onClick={() => void refreshProjectVideoStatistics(detail.platform_video_id)}
+                      >
+                        核验公开播放量
                       </Button>}
                     </div>
 

@@ -11,6 +11,7 @@ type CostDay = {
   discovery_run_count: number
   comment_run_count: number
   profile_run_count: number
+  statistics_run_count: number
   known_amount: number | null
   actual_amount: number | null
   estimated_amount: number | null
@@ -74,7 +75,7 @@ export default function ProjectCostOverview({ projectId }: { projectId: string }
           dataSource={report.records} locale={{ emptyText: '所选日期内尚无项目发现、评论、账号核验、ASR 或 L3 费用记录' }} columns={[
             { title: '日期', dataIndex: 'cost_date' },
             { title: '币种', dataIndex: 'cost_currency' },
-            { title: '任务', render: (_, row) => `${row.task_count}（发现 ${row.discovery_run_count} / 评论 ${row.comment_run_count} / 账号核验 ${row.profile_run_count} / ASR ${row.asr_task_count} / L3 ${row.l3_task_count}）` },
+            { title: '任务', render: (_, row) => `${row.task_count}（发现 ${row.discovery_run_count} / 评论 ${row.comment_run_count} / 账号核验 ${row.profile_run_count} / 播放核验 ${row.statistics_run_count ?? 0} / ASR ${row.asr_task_count} / L3 ${row.l3_task_count}）` },
             { title: '已知金额', render: (_, row) => amount(row.known_amount, row.cost_currency) },
             { title: '口径拆分', render: (_, row) => `实扣 ${amount(row.actual_amount, row.cost_currency)} · 估算 ${amount(row.estimated_amount, row.cost_currency)} · 混合 ${amount(row.mixed_amount, row.cost_currency)}` },
             { title: '待对账', render: (_, row) => row.unknown_task_count

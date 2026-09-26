@@ -115,11 +115,13 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
                     '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
                    ('account_profile_refresh',%s,'success',0.001,'USD',
                     '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
+                   ('video_statistics_refresh',%s,'success',0.001,'USD',
+                    '{"api_cost_basis":"estimated","unknown_cost_calls":0}'::jsonb),
                    ('media_ingestion',%s,'success',100,'USD',
                     '{"api_cost_basis":"estimated"}'::jsonb),
                    ('l0l1_discovery',%s,'success',99,'USD',
                     '{"api_cost_basis":"actual","unknown_cost_calls":0}'::jsonb)""",
-                (project_a, project_a, project_a, project_a, project_a, project_b),
+                (project_a, project_a, project_a, project_a, project_a, project_a, project_b),
             )
             # Real failed runs retain the pipeline_run default CNY, which must
             # not be presented as a known CNY charge for a USD provider.
@@ -176,15 +178,16 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert day == {
                 **day,
                 "cost_currency": "USD",
-                "task_count": 11,
+                "task_count": 12,
                 "asr_task_count": 4,
                 "l3_task_count": 2,
                 "discovery_run_count": 2,
                 "comment_run_count": 1,
                 "profile_run_count": 2,
-                "known_amount": 2.506,
+                "statistics_run_count": 1,
+                "known_amount": 2.507,
                 "actual_amount": 1.0,
-                "estimated_amount": 1.006,
+                "estimated_amount": 1.007,
                 "mixed_amount": 0.5,
                 "unknown_task_count": 5,
                 "unbilled_job_count": 2,
@@ -197,6 +200,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert cny["discovery_run_count"] == 0
             assert cny["comment_run_count"] == 0
             assert cny["profile_run_count"] == 0
+            assert cny["statistics_run_count"] == 0
             assert cny["known_amount"] == 0.3
             assert cny["actual_amount"] == 0.3
             assert cny["estimated_amount"] is None
@@ -209,6 +213,7 @@ def test_project_daily_cost_aggregates_known_subtotals_without_cross_project_fal
             assert unpriced["discovery_run_count"] == 1
             assert unpriced["comment_run_count"] == 0
             assert unpriced["profile_run_count"] == 0
+            assert unpriced["statistics_run_count"] == 0
             assert unpriced["known_amount"] is None
             assert unpriced["unknown_task_count"] == 1
             assert unpriced["unbilled_job_count"] == 1

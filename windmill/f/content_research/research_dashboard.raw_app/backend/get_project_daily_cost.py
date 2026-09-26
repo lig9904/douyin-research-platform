@@ -156,12 +156,12 @@ def main(db: postgresql, project_id: str, days: int = 30):
                      union all
                      select run.started_at,
                             case when run.status='success' then run.cost_currency
-                                 when run.run_type='account_profile_refresh'
+                                 when run.run_type in ('account_profile_refresh','video_statistics_refresh')
                                   and coalesce((run.summary->>'known_estimated_cost_usd')::numeric,0)>0
                                  then 'USD'
                                  else 'UNKNOWN' end,
                             run.run_type,
-                            case when run.run_type='account_profile_refresh'
+                            case when run.run_type in ('account_profile_refresh','video_statistics_refresh')
                                       and run.status<>'success'
                                       and coalesce((run.summary->>'known_estimated_cost_usd')::numeric,0)>0
                                  then 'estimated'
@@ -169,7 +169,7 @@ def main(db: postgresql, project_id: str, days: int = 30):
                                       and run.summary->>'api_cost_basis' in ('actual','estimated','mixed')
                                       and run.summary->>'unknown_cost_calls'='0'
                                  then run.summary->>'api_cost_basis' else 'unknown' end,
-                            case when run.run_type='account_profile_refresh'
+                            case when run.run_type in ('account_profile_refresh','video_statistics_refresh')
                                       and run.status<>'success'
                                       and coalesce((run.summary->>'known_estimated_cost_usd')::numeric,0)>0
                                  then (run.summary->>'known_estimated_cost_usd')::numeric
@@ -181,7 +181,7 @@ def main(db: postgresql, project_id: str, days: int = 30):
                        from pipeline_run run
                        join authorized_project project_row on project_row.id=run.project_id
                       where run.run_type in ('l0l1_discovery','comment_collection',
-                                             'account_profile_refresh')
+                                             'account_profile_refresh','video_statistics_refresh')
                         and run.started_at >= (select start_at from cutoff)
                    ), daily_cost as (
                      select (cost.created_at at time zone 'Asia/Shanghai')::date as cost_date,
@@ -192,6 +192,7 @@ def main(db: postgresql, project_id: str, days: int = 30):
                             count(*) filter (where cost.task_type='l0l1_discovery')::integer as discovery_run_count,
                             count(*) filter (where cost.task_type='comment_collection')::integer as comment_run_count,
                             count(*) filter (where cost.task_type='account_profile_refresh')::integer as profile_run_count,
+                            count(*) filter (where cost.task_type='video_statistics_refresh')::integer as statistics_run_count,
                             sum(cost.total_cost) filter (
                               where cost.cost_basis in ('actual','estimated','mixed')
                                 and cost.total_cost is not null) as known_amount,
@@ -210,7 +211,7 @@ def main(db: postgresql, project_id: str, days: int = 30):
                       group by cost_date, cost.cost_currency
                    )
                    select cost_date, cost_currency, task_count, asr_task_count, l3_task_count,
-                          discovery_run_count,comment_run_count,profile_run_count,
+                          discovery_run_count,comment_run_count,profile_run_count,statistics_run_count,
                           known_amount, actual_amount, estimated_amount, mixed_amount,
                           unknown_task_count, unbilled_job_count
                      from daily_cost
