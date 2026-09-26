@@ -62,6 +62,31 @@ def test_public_douyin_video_validator(row: dict[str, str], expected: bool) -> N
 
 
 @pytest.mark.skipif(not DSN, reason="isolated TEST_DATABASE_URL required")
+def test_migration_038_upgrades_037_schema_and_is_replay_safe() -> None:
+    assert DSN
+    namespace = f"standing_upgrade_{uuid4().hex}"
+    marker = "-- A project may authorize cloud ASR for its accepted, available public-video"
+    baseline, separator, _ = SCHEMA.read_text(encoding="utf-8").partition(marker)
+    assert separator
+    migration = MIGRATION.read_text(encoding="utf-8")
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
+        try:
+            conn.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
+            conn.execute(baseline, prepare=False)
+            for _ in range(2):
+                conn.execute(migration, prepare=False)
+            assert conn.execute("select to_regclass('project_asr_standing_grant') is not null").fetchone()[0]
+            assert conn.execute("""select count(*) from pg_constraint
+                where conrelid='project_asr_media_review'::regclass
+                  and conname in ('project_asr_media_review_standing_grant_fk',
+                                  'project_asr_media_review_authorization_state_check')""").fetchone()[0] == 2
+        finally:
+            conn.execute("set search_path to public")
+            conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(namespace)))
+
+
+@pytest.mark.skipif(not DSN, reason="isolated TEST_DATABASE_URL required")
 def test_standing_grant_review_and_asr_job_lifecycle() -> None:
     assert DSN
     namespace = f"standing_asr_{uuid4().hex}"

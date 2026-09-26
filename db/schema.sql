@@ -3502,6 +3502,8 @@ alter table project_asr_media_review
   add column if not exists authorization_kind text not null default 'listened',
   add column if not exists standing_grant_id uuid;
 alter table project_asr_media_review
+  drop constraint if exists project_asr_media_review_standing_grant_fk;
+alter table project_asr_media_review
   add constraint project_asr_media_review_standing_grant_fk
   foreign key (standing_grant_id, project_id)
   references project_asr_standing_grant(id, project_id) on delete restrict;
@@ -3518,12 +3520,17 @@ begin
     and pg_get_constraintdef(oid) like '%revoked_by%'
     and pg_get_constraintdef(oid) like '%revoked_at%'
     and conname <> 'project_asr_media_review_authorization_state_check';
-  if old_check is null then
+  if old_check is not null then
+    execute format('alter table project_asr_media_review drop constraint %I', old_check);
+  elsif not exists (select 1 from pg_constraint
+                    where conrelid='project_asr_media_review'::regclass
+                      and conname='project_asr_media_review_authorization_state_check') then
     raise exception '032 project ASR media review lifecycle check not found';
   end if;
-  execute format('alter table project_asr_media_review drop constraint %I', old_check);
 end;
 $$;
+alter table project_asr_media_review
+  drop constraint if exists project_asr_media_review_authorization_state_check;
 alter table project_asr_media_review
   add constraint project_asr_media_review_authorization_state_check check (
     (authorization_kind='listened' and standing_grant_id is null and
