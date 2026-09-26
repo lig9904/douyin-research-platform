@@ -310,6 +310,17 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
             assert module.main(
                 params, project_id=str(project_b), selected_video_id=str(video_a),
             )["detail"]["comment_features"] is None
+            conn.execute(
+                "update project_video_inclusion set status='shortlisted' where project_id=%s and video_id=%s",
+                (project_a, video_a),
+            )
+            assert module.main(
+                params, project_id=str(project_a), selected_video_id=str(video_a),
+            )["detail"]["comment_features"] is None
+            conn.execute(
+                "update project_video_inclusion set status='accepted' where project_id=%s and video_id=%s",
+                (project_a, video_a),
+            )
             evidence = ProjectL3EvidenceService(project_dsn).prepare(
                 project_id=project_a, video_id=video_a, transcript_id=transcript,
                 review_version="v1",

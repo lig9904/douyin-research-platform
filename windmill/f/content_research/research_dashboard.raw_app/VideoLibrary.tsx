@@ -1063,7 +1063,7 @@ export default function VideoLibrary({
                           : '尚无 L2 评论特征'}</span>
                       </div>
                       {detail.comment_features ? <>
-                        <div className="detail-metrics">
+                        <div className="detail-metrics comment-feature-metrics">
                           {[
                             [detail.comment_features.sampled_comment_count, '去重评论样本'],
                             [detail.comment_features.source_observation_count, '评论观测记录'],
