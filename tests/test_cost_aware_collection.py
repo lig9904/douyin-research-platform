@@ -69,6 +69,71 @@ def test_exact_video_page_rejects_provider_extra_or_missing_ids_before_ingest():
     assert store.calls[0].status == "error"
     assert store.cache == {}
     assert store.calls[0].estimated_cost == pytest.approx(.001)
+    assert store.calls[0].metadata["failure"]["exact_video_missing_positions"] == [0]
+    assert store.calls[0].metadata["failure"]["exact_video_unexpected_count"] == 1
+
+
+def test_exact_video_batch_records_only_id_differences_on_partial_response():
+    ids = [str(7500000000000000000 + value) for value in range(3)]
+
+    def response(request):
+        assert request.url.path.endswith("/fetch_multi_video")
+        return httpx.Response(200, json={"code": 200, "data": {"aweme_details": [
+            {"aweme_id": ids[0], "desc": "not persisted on mismatch"},
+            {"aweme_id": ids[2], "desc": "not persisted on mismatch"},
+        ], "filter_list": [{"aweme_id": ids[1], "reason": 7}]}})
+
+    provider, store = _provider(response)
+    with pytest.raises(ValueError, match="do not match"):
+        provider.fetch_exact_video_ids(ids)
+    failure = store.calls[0].metadata["failure"]
+    assert failure["exact_video_missing_positions"] == [1]
+    assert failure["exact_video_unexpected_count"] == 0
+    assert failure["exact_video_duplicate_count"] == 0
+    assert "reason" not in str(failure)
+    assert ids[1] not in str(failure)
+    assert store.cache == {}
+
+
+@pytest.mark.parametrize("serialized,spaced", [(False, False), (True, False), (False, True)])
+def test_exact_video_batch_rejects_duplicate_details_before_cache(serialized, spaced):
+    ids = [str(7500000000000000000 + value) for value in range(3)]
+
+    def response(request):
+        assert request.url.path.endswith("/fetch_multi_video")
+        details = [
+            {"aweme_id": video_id, "desc": "detail"}
+            for video_id in (ids[0], (" " + ids[0]) if spaced else ids[0], ids[1], ids[2])
+        ]
+        return httpx.Response(200, json={"code": 200, "data": {
+            "aweme_details": json.dumps(details) if serialized else details,
+        }})
+
+    provider, store = _provider(response)
+    with pytest.raises(ValueError, match="do not match"):
+        provider.fetch_exact_video_ids(ids)
+    assert store.calls[0].status == "error"
+    assert store.calls[0].metadata["failure"]["exact_video_duplicate_count"] == 1
+    assert store.cache == {}
+
+
+def test_exact_video_second_batch_missing_position_uses_whole_brief_order():
+    ids = [str(7500000000000000000 + value) for value in range(11)]
+
+    def response(request):
+        if request.url.path.endswith("/fetch_multi_video"):
+            return httpx.Response(200, json={"code": 200, "data": {"aweme_details": [
+                {"aweme_id": video_id, "desc": "detail"} for video_id in ids[:10]
+            ]}})
+        assert request.url.path.endswith("/fetch_one_video")
+        assert request.url.params["aweme_id"] == ids[10]
+        return httpx.Response(200, json={"code": 200, "data": {"aweme_detail": None}})
+
+    provider, store = _provider(response)
+    with pytest.raises(ValueError, match="do not match"):
+        provider.fetch_exact_video_ids(ids)
+    assert [call.status for call in store.calls] == ["success", "error"]
+    assert store.calls[1].metadata["failure"]["exact_video_missing_positions"] == [10]
 
 
 def test_exact_video_page_recovers_after_mismatched_live_response():

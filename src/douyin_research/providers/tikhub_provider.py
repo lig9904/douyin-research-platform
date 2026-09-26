@@ -11,6 +11,7 @@ from uuid import uuid4
 from .endpoints import EndpointSpec, get_endpoint
 from .fingerprint import request_fingerprint
 from .normalizer import (
+    extract_batch_detail_ids,
     extract_pagination,
     normalize_comment_samples,
     normalize_video_observations,
@@ -166,9 +167,21 @@ class TikHubDouyinProvider:
                     payload, endpoint_key=spec.key, raw_ref=None, observed_at=utcnow(),
                 )
                 returned_ids = [item.video.platform_video_id for item in observations]
-                if (len(returned_ids) != len(set(returned_ids))
-                        or set(returned_ids) != set(request.video_ids)):
-                    raise ValueError("exact video response IDs do not match the request")
+                detail_ids = extract_batch_detail_ids(payload)
+                duplicate_count = len(detail_ids) - len(set(detail_ids))
+                if duplicate_count or set(returned_ids) != set(request.video_ids):
+                    exc = ValueError("exact video response IDs do not match the request")
+                    attach_provider_diagnostic(
+                        exc,
+                        exact_video_missing_positions=[
+                            index for index, video_id in enumerate(ids)
+                            if video_id not in returned_ids
+                            and video_id in request.video_ids
+                        ],
+                        exact_video_unexpected_count=len(set(returned_ids) - set(request.video_ids)),
+                        exact_video_duplicate_count=duplicate_count,
+                    )
+                    raise exc
             page = self._video_page(
                 spec, kwargs,
                 fingerprint_body=kwargs.get("body"),

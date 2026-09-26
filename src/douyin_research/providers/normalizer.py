@@ -84,6 +84,31 @@ def normalize_video_observations(
     return observations
 
 
+def extract_batch_detail_ids(payload: dict[str, Any]) -> list[str]:
+    """Read batch detail IDs before observation deduplication.
+
+    This uses the same JSON-string traversal and ID whitespace normalization as
+    video normalization, but never treats filter-list entries as details.
+    """
+    ids: list[str] = []
+    excluded = frozenset({"aweme_details", "filter_list", "verification_filter_list"})
+    for obj in _walk_dicts(payload.get("data"), excluded_keys=excluded):
+        details = obj.get("aweme_details")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except json.JSONDecodeError:
+                details = None
+        if not isinstance(details, list):
+            continue
+        for item in details:
+            if isinstance(item, dict):
+                video_id = _as_str(item.get("aweme_id"))
+                if video_id:
+                    ids.append(video_id)
+    return ids
+
+
 def _normalize_low_fan_item(
     obj: dict[str, Any],
     *,

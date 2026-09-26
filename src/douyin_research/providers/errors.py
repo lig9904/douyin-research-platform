@@ -20,6 +20,9 @@ def attach_provider_diagnostic(
     provider_error_code: object = None,
     provider_request_id: object = None,
     logical_call_id: object = None,
+    exact_video_missing_positions: object = None,
+    exact_video_unexpected_count: object = None,
+    exact_video_duplicate_count: object = None,
 ) -> Exception:
     """Attach an allow-listed diagnostic without retaining provider payloads.
 
@@ -42,6 +45,15 @@ def attach_provider_diagnostic(
         diagnostic["provider_request_id"] = request_id
     if isinstance(logical_call_id, str) and _LOGICAL_CALL_ID.fullmatch(logical_call_id):
         diagnostic["ledger_logical_call_id"] = logical_call_id.lower()
+    positions = _bounded_positions(exact_video_missing_positions)
+    if positions is not None:
+        diagnostic["exact_video_missing_positions"] = positions
+    for key, value in (
+        ("exact_video_unexpected_count", exact_video_unexpected_count),
+        ("exact_video_duplicate_count", exact_video_duplicate_count),
+    ):
+        if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 20:
+            diagnostic[key] = value
     exc.provider_diagnostic = diagnostic
     return exc
 
@@ -86,7 +98,23 @@ def _safe_diagnostic(value: object) -> dict[str, object]:
     logical_id = value.get("ledger_logical_call_id")
     if isinstance(logical_id, str) and _LOGICAL_CALL_ID.fullmatch(logical_id):
         safe["ledger_logical_call_id"] = logical_id.lower()
+    positions = _bounded_positions(value.get("exact_video_missing_positions"))
+    if positions is not None:
+        safe["exact_video_missing_positions"] = positions
+    for key in ("exact_video_unexpected_count", "exact_video_duplicate_count"):
+        count = value.get(key)
+        if isinstance(count, int) and not isinstance(count, bool) and 0 <= count <= 20:
+            safe[key] = count
     return safe
+
+
+def _bounded_positions(value: object) -> list[int] | None:
+    """Reference the brief's existing ID order without copying provider IDs."""
+    if not isinstance(value, (list, tuple)) or len(value) > 20:
+        return None
+    if not all(isinstance(item, int) and not isinstance(item, bool) and 0 <= item < 20 for item in value):
+        return None
+    return sorted(set(value))
 
 
 def _bounded_token(value: object, pattern: re.Pattern[str]) -> str | None:

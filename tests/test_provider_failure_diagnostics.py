@@ -76,6 +76,9 @@ def test_failure_summary_revalidates_untrusted_exception_diagnostics() -> None:
         "provider_error_code": "secret\nbody",
         "provider_request_id": "https://private.example/path?token=secret",
         "ledger_logical_call_id": "not-a-uuid",
+        "exact_video_missing_positions": ["https://private.example/path?token=secret"],
+        "exact_video_unexpected_count": "123",
+        "exact_video_duplicate_count": True,
         "raw_response": "private response body",
     }
     assert provider_failure_summary(error, stage="detail_enrichment", item_count=1) == {
