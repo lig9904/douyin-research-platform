@@ -2,13 +2,13 @@
 
 ## 实现与部署状态
 
-入口为 `f/content_research/collectors/ingest_video_media`，依赖固定到媒体服务已合并提交 `fd2694729c784a0f2e34b2c0a4d6746da57813fe`。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
+入口为 `f/content_research/collectors/ingest_video_media`，当前待发布的依赖固定到包含单视频详情来源兼容性的提交 `9d638f625846766361bb2106b709e5db17f9b9eb`。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
 
 2026-09-21 已通过浏览器 JumpServer 在测试服务器构建并部署媒体镜像 `douyin-research-media-worker:87eeac7`，两个普通 Worker 均已确认 ffmpeg/ffprobe、Python 3.13.5 及可写临时目录；server/native/postgres 未替换。镜像 ID 为 `sha256:08e0267834a4f76ef1eb33f0fe6a790fe5eddd7dff926e5b0f0712974d549da5`。无网络临时容器实际转换合成音频并验证 pcm_s16le、16000 Hz、单声道通过，不是真实视频链路验收。
 
 主机临时目录 `/srv/douyin-research-test/media-tmp` 绑定到容器 `/srv/research-media-tmp`，findmnt 确认位于 `/dev/sdb1` 的 500G 数据盘。迁移账本已验证至017；迁移前备份 `/srv/douyin-research-test/backups/20260920T190539Z`。备份校验不等于恢复演练通过。
 
-媒体脚本已创建到 test-research，但首次发布缺少本地锁元数据；本次补齐 Linux x86_64 Python3.13 依赖锁、inline引用及同步hash，需重新发布。实际工作区尚无 `media_storage_config` 与 `automation_worker_identity`，须配置后执行真实媒体任务；ASR/L3新固定配置也尚缺，不得宣称全链路已运行。
+上述是 2026-09-21 的历史部署状态。2026-09-26 在测试服只读回查，媒体脚本已有 5 个版本且最新版本带非空锁，但仍固定旧服务提交 `fd2694729c784a0f2e34b2c0a4d6746da57813fe`；`media_storage_config`（Secret）与 `automation_worker_identity` 均已存在，未读取其值。普通 Worker 的系统 `python3` 为 3.13.5；脚本内联依赖声明 `requires-python ==3.14.*`，这两项不能混为同一执行解释器，实际 Windmill 作业的 Python 版本仍须运行回读。九九项目的两条 HandsMini 视频均无 `media_asset`，因此尚未完成这两条的媒体或 ASR/L3 验收。
 
 ## 服务端配置
 
