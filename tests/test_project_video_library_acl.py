@@ -181,7 +181,8 @@ def test_project_video_library_blocks_known_cross_project_video_and_preserves_le
             )
             stale_by_id = module.main(params, project_id=str(project_a), query="library-a")
             assert [item["id"] for item in stale_by_id["items"]] == [str(video_a)]
-            assert module.main(params, project_id=str(project_a), query="A 可见视频")["total"] == 0
+            assert module.main(params, project_id=str(project_a), query="A 可见视频")["total"] == 1
+            assert module.main(params, project_id=str(project_a), query="library-b")["total"] == 0
             conn.execute(
                 "update project_video_inclusion set last_seen_at=now() where project_id=%s",
                 (project_a,),

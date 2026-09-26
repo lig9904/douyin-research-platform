@@ -286,10 +286,11 @@ def main(
         source_type, source_type,
     )
 
+    # Project UI intentionally hides the legacy recency selector. Return all
+    # non-archived project inclusions; a hidden 30-day cutoff would make older
+    # accepted evidence disappear even when the project member searches for it.
     scoped_where_sql = """
       (%s='all' or v.platform=%s)
-      and (inclusion_row.last_seen_at >= now() - (%s || ' days')::interval
-           or v.platform_video_id=%s)
       and (%s < 0 or (m.play_count is not null and m.play_count >= %s))
       and (%s < 0 or (m.play_count is not null and m.play_count <= %s))
       and (%s < 0 or (m.author_follower_count is not null and m.author_follower_count >= %s))
@@ -304,7 +305,7 @@ def main(
       and (%s='all' or inclusion_row.source_type=%s)
     """
     scoped_args = (
-        platform, platform, days, query,
+        platform, platform,
         play_min, play_min,
         play_max, play_max,
         follower_min, follower_min,
