@@ -107,10 +107,12 @@ def _accepted_account_cursor(
                'douyin.search.video_v2','douyin.creator.material',
                'douyin.app.user_posts')
              and response_body::text like '%%' || %s || '%%'
-           order by requested_at desc limit 30""",
+           order by requested_at desc""",
         (video_platform_id,),
     )
-    for payload, endpoint_key, observed_at in cur.fetchall():
+    # Do not cap candidates before verifying the exact ID and sec_uid: later
+    # responses can omit author identity while an older one remains valid.
+    for payload, endpoint_key, observed_at in cur:
         try:
             observations = normalize_video_observations(
                 payload, endpoint_key=endpoint_key, raw_ref=None,

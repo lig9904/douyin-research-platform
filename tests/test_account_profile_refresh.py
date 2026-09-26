@@ -108,6 +108,21 @@ def test_project_profile_refresh_deduplicates_accounts_and_records_estimated_cos
                             "request_fingerprint": fingerprint,
                         })),
                     )
+                # Newer incomplete raw responses must not hide an older exact
+                # video/sec_uid match during the paid-call preflight.
+                for index in range(31):
+                    conn.execute(
+                        """insert into external_api_response(
+                             provider,platform,endpoint_key,request_fingerprint,
+                             requested_at,http_status,response_code,response_body)
+                           values ('tikhub','douyin','douyin.app.multi_video',%s,
+                             now() + (%s * interval '1 second'),200,'200',%s::jsonb)""",
+                        (f"incomplete-{index}", index + 1, json.dumps({
+                            "code": 200, "data": {"aweme_list": [{
+                                "aweme_id": video_ids[0], "author": {"uid": "legacy-only"},
+                            }]},
+                        })),
+                    )
             transport = ProfileTransport()
             first = refresh_project_account_profiles(
                 dsn=scoped_dsn, project_id=project_id,
