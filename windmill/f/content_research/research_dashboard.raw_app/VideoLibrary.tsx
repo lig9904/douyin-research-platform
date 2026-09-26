@@ -999,8 +999,15 @@ export default function VideoLibrary({
                       {(hasContradictoryZeroPlay(detail) || (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail))) && <Alert
                         type="warning"
                         showIcon
-                        message="播放量或账号粉丝的零值待核"
-                        description="保留上游原值和来源供复核。播放量为 0 却有正向互动时，不能计算互动率或比较传播效果；账号粉丝为 0 时，须核对账号主页或独立账号接口后再用于筛选。"
+                        message={hasContradictoryZeroPlay(detail)
+                          ? (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail)
+                            ? '播放量与账号粉丝的零值待核' : '播放量为 0，仍需核对')
+                          : '账号粉丝为 0，仍需核对'}
+                        description={hasContradictoryZeroPlay(detail)
+                          ? (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail)
+                            ? '播放量为 0 却有正向互动，不能计算互动率或比较传播效果；账号粉丝为 0 且未经独立核验，也不能用于筛选。请核对各自来源。'
+                            : '播放量为 0 却有正向互动，不能计算互动率或比较传播效果；请核对播放量的上游来源。')
+                          : '账号粉丝为 0 且未经独立账号接口核验，须核对账号主页或独立账号接口后再用于筛选。'}
                       />}
                       <div className="detail-metrics">
                         {[
