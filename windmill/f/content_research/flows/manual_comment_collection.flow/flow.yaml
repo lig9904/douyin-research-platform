@@ -15,6 +15,9 @@ value:
           count:
             type: javascript
             expr: flow_input.count
+          cursor:
+            type: javascript
+            expr: flow_input.cursor
           db:
             type: static
             value: $res:f/content_research/research_db
@@ -27,6 +30,12 @@ value:
           max_pages:
             type: javascript
             expr: flow_input.max_pages
+          project_id:
+            type: javascript
+            expr: flow_input.project_id
+          rebuild_features_only:
+            type: javascript
+            expr: flow_input.rebuild_features_only
           video_platform_id:
             type: javascript
             expr: flow_input.video_platform_id
@@ -45,6 +54,10 @@ schema:
       default: 20
       maximum: 20
       minimum: 1
+    cursor:
+      type: string
+      description: Decimal next_cursor from previous run; 0 starts at the first page.
+      default: '0'
     execute:
       type: boolean
       description: False performs a zero-call preview.
@@ -52,13 +65,21 @@ schema:
     max_items:
       type: integer
       default: 20
-      maximum: 40
+      maximum: 200
       minimum: 1
     max_pages:
       type: integer
       default: 1
-      maximum: 2
+      maximum: 10
       minimum: 1
+    project_id:
+      type: string
+      description: Active project UUID; required for execution.
+      default: ''
+    rebuild_features_only:
+      type: boolean
+      description: Rebuild L2 from stored comments without TikHub calls; use REBUILD_COMMENT_FEATURES confirmation.
+      default: false
     video_platform_id:
       type: string
       description: Existing Douyin platform video ID. It is not returned by the flow.

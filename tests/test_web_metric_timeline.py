@@ -107,3 +107,64 @@ def test_metric_timeline_bounds_and_hides_provider_columns(monkeypatch: pytest.M
         with psycopg.connect(DSN) as conn, conn.cursor() as cur:
             cur.execute("delete from source_video where id=%s", (video_id,))
             conn.commit()
+
+
+def test_library_flags_near_time_share_source_discrepancy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert DSN
+    monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
+    video_id = uuid4()
+    try:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                "insert into source_video(id, platform, platform_video_id, title) "
+                "values (%s, 'douyin', %s, 'share discrepancy fixture')",
+                (video_id, str(video_id)),
+            )
+            cur.execute(
+                """
+                insert into metric_snapshot(
+                  video_id, provider, source_endpoint, observation_key,
+                  play_count, like_count, comment_count, share_count, captured_at
+                ) values
+                  (%s, 'test', 'douyin.app.one_video', %s,
+                   0, 500, 20, 1000, now() - interval '2 minutes'),
+                  (%s, 'test', 'douyin.app.video_statistics', %s,
+                   10000, 510, null, 20, now() - interval '1 minute')
+                """,
+                (video_id, f"share-detail-{video_id}", video_id, f"share-stat-{video_id}"),
+            )
+        library = _backend("get_video_library.py")
+        monkeypatch.setattr(library, "_get_legacy_allowlist", lambda: "viewer@example.com")
+        result = library.main(_resource(), query="share discrepancy fixture")
+        item = next(item for item in result["items"] if item["id"] == str(video_id))
+        detail = result["detail"]
+        assert item["share_source_conflict"] is True
+        assert detail["share_source_conflict"] is True
+        assert detail["share_source_comparison"]["detail"] == 1000
+        assert detail["share_source_comparison"]["statistics"] == 20
+        assert detail["share_count"] == 20
+        assert detail["play_count"] == 10000
+        assert "source_endpoint" not in str(detail)
+        with psycopg.connect(DSN) as conn:
+            conn.execute(
+                "update metric_snapshot set captured_at=now() - interval '3 days' "
+                "where video_id=%s and source_endpoint='douyin.app.one_video'",
+                (video_id,),
+            )
+        detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
+        assert detail["share_source_conflict"] is False
+        assert detail["share_source_comparison"]["detail"] == 1000
+        with psycopg.connect(DSN) as conn:
+            conn.execute(
+                "update metric_snapshot set captured_at=now(), share_count=25 "
+                "where video_id=%s and source_endpoint='douyin.app.one_video'",
+                (video_id,),
+            )
+        detail = library.main(_resource(), selected_video_id=str(video_id))["detail"]
+        assert detail["share_source_conflict"] is False
+        assert detail["share_source_comparison"]["detail"] == 25
+    finally:
+        with psycopg.connect(DSN) as conn:
+            conn.execute("delete from source_video where id=%s", (video_id,))

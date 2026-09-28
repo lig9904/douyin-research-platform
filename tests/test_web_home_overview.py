@@ -235,6 +235,40 @@ def test_home_backend_all_platforms_works() -> None:
     assert result["kpis"]["blackhorse_candidates"] == 1
 
 
+def test_home_and_library_agree_on_share_discrepancy() -> None:
+    assert DSN
+    clear_and_seed()
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("select id from source_video where platform_video_id='video-home'")
+        video_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            insert into metric_snapshot(
+              video_id, provider, source_endpoint, observation_key,
+              play_count, like_count, comment_count, share_count, captured_at
+            ) values
+              (%s, 'test', 'douyin.app.one_video', %s,
+               0, 500, 20, 1000, now() - interval '2 minutes'),
+              (%s, 'test', 'douyin.app.video_statistics', %s,
+               10000, 510, null, 20, now() - interval '1 minute')
+            """,
+            (video_id, f"home-detail-{video_id}", video_id, f"home-stat-{video_id}"),
+        )
+    home = load_backend().main(resource_from_dsn(DSN), platform="douyin", hours=24)
+    assert home["blackhorse"][0]["share_source_conflict"] is True
+
+    path = Path(
+        "windmill/f/content_research/research_dashboard.raw_app/"
+        "backend/get_video_library.py"
+    )
+    spec = importlib.util.spec_from_file_location("get_video_library_home_consistency", path)
+    assert spec and spec.loader
+    library = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(library)
+    result = library.main(resource_from_dsn(DSN), selected_video_id=str(video_id))
+    assert result["detail"]["share_source_conflict"] is True
+
+
 def test_home_returns_supplier_account_total_independent_of_selected_platform() -> None:
     assert DSN
     scope = f"home-daily-{uuid4()}"

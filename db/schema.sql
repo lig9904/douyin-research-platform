@@ -899,6 +899,32 @@ create table if not exists supplier_daily_spend (
 comment on table supplier_daily_spend is
   'Supplier-reported daily bill snapshots by explicit account or product scope. Not per-request allocation.';
 
+-- A separate, durable queue keeps unissued bill dates visible without making
+-- up a zero-value supplier snapshot. Resolution does not imply final billing.
+create table if not exists volc_billing_sync_gap (
+  account_scope text not null check (account_scope ~ '^payer:[0-9]{1,18}$'),
+  billing_date date not null,
+  status text not null default 'pending' check (status in ('pending', 'resolved')),
+  first_seen_at timestamptz not null default now(),
+  last_attempt_at timestamptz,
+  attempt_count integer not null default 0 check (attempt_count >= 0),
+  next_attempt_after timestamptz,
+  last_success_at timestamptz,
+  resolved_at timestamptz,
+  last_result_code text check (last_result_code in (
+    'bill_unavailable', 'snapshot_rejected', 'scope_conflict', 'execution_failed',
+    'snapshot_written', 'already_final'
+  )),
+  primary key (account_scope, billing_date),
+  check ((status = 'resolved') = (resolved_at is not null)),
+  check (status = 'pending' or next_attempt_after is null)
+);
+create index if not exists idx_volc_billing_sync_gap_pending
+  on volc_billing_sync_gap(account_scope, next_attempt_after, last_attempt_at, billing_date)
+  where status = 'pending';
+comment on table volc_billing_sync_gap is
+  'Non-monetary Volcano account/day reconciliation queue. Pending is not zero spend; resolved does not mean supplier-finalized.';
+
 -- User-authored research briefs are the control plane for collection scope.
 create table if not exists research_brief (
   id uuid primary key default gen_random_uuid(),
@@ -920,23 +946,33 @@ create table if not exists research_brief (
   constraint research_brief_owner_check check (char_length(owner_actor) between 3 and 254),
   constraint research_brief_name_check check (char_length(name) between 1 and 80),
   constraint research_brief_platform_check check (platform = 'douyin'),
-  constraint research_brief_source_check check (source_type in ('low_fan', 'keyword', 'account')),
+  constraint research_brief_source_check check (source_type in ('low_fan', 'keyword', 'account', 'video_ids')),
   constraint research_brief_target_check check (
     (source_type = 'low_fan' and target is null) or
     (source_type in ('keyword', 'account') and target is not null and
-     char_length(target) between 1 and 120)
+     char_length(target) between 1 and 120) or
+    (source_type = 'video_ids' and target is not null and
+    char_length(target) between 15 and 519 and
+     target ~ '^[0-9]{15,25}(,[0-9]{15,25})*$')
   ),
   constraint research_brief_window_check check (
-    time_window_hours in (24,72,168,720) and
+    (time_window_hours in (24,72,168,720) or
+     (source_type = 'video_ids' and time_window_hours = 0)) and
+    (source_type <> 'video_ids' or time_window_hours = 0) and
     (source_type <> 'low_fan' or time_window_hours in (24,72,168))
   ),
   constraint research_brief_item_check check (
     max_items between 1 and 20 and
     (source_type <> 'low_fan' or max_items <= 5) and
-    (depth not in ('media','review_ready') or max_items <= 5)
+    (depth not in ('media','review_ready') or max_items <= 5) and
+    (source_type <> 'video_ids' or
+     (max_items = array_length(string_to_array(target, ','), 1) and depth = 'metadata'))
   ),
   constraint research_brief_depth_check check (depth in ('metadata','comments','media','review_ready')),
-  constraint research_brief_cadence_check check (cadence_hours is null or cadence_hours in (6,12,24)),
+  constraint research_brief_cadence_check check (
+    (cadence_hours is null or cadence_hours in (6,12,24)) and
+    (source_type <> 'video_ids' or cadence_hours is null)
+  ),
   constraint research_brief_status_check check (status in ('draft','active','paused','archived')),
   constraint research_brief_version_check check (config_version >= 1),
   constraint research_brief_due_check check ((status='active' and next_due_at is not null) or status <> 'active')
@@ -1014,12 +1050,18 @@ create table if not exists asr_media_review (
 create or replace view merged_video_metric as
 with candidates as (
   select m.video_id, m.id, m.captured_at, f.field, f.value,
-    case when m.source_endpoint='douyin.billboard.low_fan' then 'billboard'
+    case when m.source_endpoint in ('douyin.app.video_statistics','douyin.app.multi_video_statistics')
+      then 'statistics'
+      when m.source_endpoint='douyin.billboard.low_fan' then 'billboard'
       when m.source_endpoint in ('douyin.app.multi_video_v2','douyin.app.multi_video',
-        'douyin.app.one_video','douyin.app.video_statistics','douyin.app.multi_video_statistics') then 'detail'
+        'douyin.app.one_video') then 'detail'
       else 'other' end as source_kind,
-    case when f.field in ('play_count','author_follower_count')
-      and m.source_endpoint='douyin.billboard.low_fan' then 0 else 1 end as source_priority
+    case when f.field='play_count'
+      and m.source_endpoint in ('douyin.app.video_statistics','douyin.app.multi_video_statistics')
+      then 0
+      when f.field in ('play_count','author_follower_count')
+        and m.source_endpoint='douyin.billboard.low_fan' then 1
+      else 2 end as source_priority
   from metric_snapshot m
   cross join lateral (values
     ('play_count',m.play_count), ('like_count',m.like_count),
@@ -1283,6 +1325,84 @@ begin
   return new;
 end;
 $$;
+
+-- 044: project-private original proposals, independent of reference Cases.
+create table if not exists project_creative_concept (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references research_project(id) on delete restrict,
+  created_by text not null check (char_length(created_by) between 3 and 254 and created_by = lower(created_by)),
+  created_at timestamptz not null default now(),
+  unique (id, project_id)
+);
+create index if not exists idx_project_creative_concept_project_time
+  on project_creative_concept(project_id, created_at desc, id);
+
+create table if not exists project_creative_concept_revision (
+  concept_id uuid not null,
+  project_id uuid not null,
+  version_no integer not null check (version_no between 1 and 10000),
+  title text not null check (char_length(btrim(title)) between 1 and 160),
+  premise text not null check (char_length(btrim(premise)) between 1 and 1200),
+  character_choice text not null check (char_length(btrim(character_choice)) between 1 and 1200),
+  episode_payoff text not null check (char_length(btrim(episode_payoff)) between 1 and 1200),
+  evidence_note text not null check (char_length(btrim(evidence_note)) between 1 and 1200),
+  test_question text not null check (char_length(btrim(test_question)) between 1 and 800),
+  production_constraints text not null check (char_length(btrim(production_constraints)) between 1 and 1200),
+  status text not null check (status in ('draft', 'ready_for_internal_test', 'withdrawn')),
+  recorded_by text not null check (char_length(recorded_by) between 3 and 254 and recorded_by = lower(recorded_by)),
+  recorded_at timestamptz not null default now(),
+  primary key (concept_id, version_no),
+  foreign key (concept_id, project_id)
+    references project_creative_concept(id, project_id) on delete restrict
+);
+create index if not exists idx_project_creative_concept_revision_project
+  on project_creative_concept_revision(project_id, concept_id, version_no desc);
+
+create or replace function enforce_project_creative_concept_revision_sequence()
+returns trigger language plpgsql as $$
+declare
+  preceding record;
+begin
+  perform 1 from project_creative_concept
+   where id=new.concept_id and project_id=new.project_id for update;
+  if not found then
+    raise exception 'creative concept is unavailable in this project';
+  end if;
+  select version_no, status into preceding
+    from project_creative_concept_revision
+   where concept_id=new.concept_id order by version_no desc limit 1;
+  if preceding.version_no is null then
+    if new.version_no <> 1 then
+      raise exception 'first creative concept revision must be v1';
+    end if;
+  elsif preceding.status='withdrawn' or new.version_no <> preceding.version_no+1 then
+    raise exception 'creative concept revision is withdrawn or out of sequence';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_creative_concept_revision_sequence on project_creative_concept_revision;
+create trigger trg_project_creative_concept_revision_sequence
+before insert on project_creative_concept_revision
+for each row execute function enforce_project_creative_concept_revision_sequence();
+
+create or replace function reject_project_creative_concept_rewrite()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'creative concept history is append-only';
+end;
+$$;
+drop trigger if exists trg_project_creative_concept_immutable on project_creative_concept;
+create trigger trg_project_creative_concept_immutable
+before update or delete on project_creative_concept
+for each row execute function reject_project_creative_concept_rewrite();
+drop trigger if exists trg_project_creative_concept_revision_immutable on project_creative_concept_revision;
+create trigger trg_project_creative_concept_revision_immutable
+before update or delete on project_creative_concept_revision
+for each row execute function reject_project_creative_concept_rewrite();
+
+comment on table project_creative_concept_revision is
+  'Original project-private proposal history. A ready revision only means prepared for internal low-fidelity testing; it is never an approved Case, adopted action, rights clearance, or publication.';
 drop trigger if exists trg_account_identity_link_cross_platform on account_identity_link;
 create trigger trg_account_identity_link_cross_platform
 before insert or update of left_account_id, right_account_id on account_identity_link
@@ -1606,6 +1726,9 @@ alter table research_brief
 alter table research_brief
   add constraint research_brief_subject_gate_status_check
   check (subject_gate_status in ('not_applicable', 'ready', 'subject_required'));
+alter table research_brief
+  add constraint research_brief_exact_project_check
+  check (source_type <> 'video_ids' or (project_id is not null and subject_id is not null));
 create index if not exists idx_research_brief_project_subject_due
   on research_brief(project_id, subject_id, next_due_at, id)
   where project_id is not null and subject_id is not null and status='active';
@@ -2434,3 +2557,2234 @@ for each row execute function enforce_project_decision_card_adopt_profile_bindin
 
 comment on table project_decision_card_profile_binding is
   'Immutable point-in-time binding from a post-031 adopted action card to one approved, rights-cleared local subject profile version.';
+
+-- Project-private ASR/L3 is deliberately separate from canonical transcript,
+-- analysis_run and research_task_cost.  The same public video may be reviewed
+-- and analysed by multiple projects, but neither approval, transcript, result
+-- nor cost may be silently reused across the project boundary.
+
+create table if not exists project_asr_media_review (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  asset_id uuid not null,
+  review_version text not null check (char_length(review_version) between 1 and 80),
+  media_fingerprint text not null check (media_fingerprint ~ '^[0-9a-f]{64}$'),
+  -- Full MediaAssetReference plus normalized HTTPS delivery origin fingerprint.
+  -- It is calculated by the review backend, not from content_sha256 alone.
+  asset_manifest_fingerprint text not null check (asset_manifest_fingerprint ~ '^[0-9a-f]{64}$'),
+  delivery_origin text not null check (char_length(delivery_origin) between 1 and 120),
+  identity_source text not null check (identity_source = 'windmill_end_user_email_allowlist_v1'),
+  -- This is a human confirmation of the exact delivery scope.  Worker/model
+  -- code must never synthesize it or update it after approval.
+  review_statement jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(review_statement) = 'object' and pg_column_size(review_statement) <= 8192),
+  status text not null default 'draft' check (status in ('draft', 'approved', 'revoked')),
+  reviewed_by text check (reviewed_by is null or (char_length(reviewed_by) between 3 and 254 and reviewed_by = lower(reviewed_by))),
+  reviewed_at timestamptz,
+  revoked_by text check (revoked_by is null or (char_length(revoked_by) between 3 and 254 and revoked_by = lower(revoked_by))),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (id, project_id, video_id),
+  unique (project_id, asset_id, review_version),
+  foreign key (project_id, video_id)
+    references project_video_inclusion(project_id, video_id) on delete restrict,
+  foreign key (asset_id, video_id)
+    references media_asset(id, video_id) on delete restrict,
+  check (
+    (status = 'draft' and reviewed_by is null and reviewed_at is null and revoked_by is null and revoked_at is null)
+    or (status = 'approved' and reviewed_by is not null and reviewed_at is not null and revoked_by is null and revoked_at is null)
+    or (status = 'revoked' and revoked_by is not null and revoked_at is not null
+        and ((reviewed_by is null and reviewed_at is null) or (reviewed_by is not null and reviewed_at is not null)))
+  )
+);
+create index if not exists idx_project_asr_media_review_active
+  on project_asr_media_review(project_id, video_id, reviewed_at desc)
+  where status = 'approved';
+
+create or replace function enforce_project_asr_media_review_lifecycle()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.status <> 'draft' or new.reviewed_by is not null or new.reviewed_at is not null
+       or new.revoked_by is not null or new.revoked_at is not null then
+      raise exception 'project_asr_media_review must begin as draft';
+    end if;
+  elsif old.status = 'draft' then
+    if new.status not in ('draft', 'approved', 'revoked') then
+      raise exception 'draft project_asr_media_review may only become approved or revoked';
+    end if;
+  elsif old.status = 'approved' then
+    if new.status <> 'revoked' then
+      raise exception 'approved project_asr_media_review may only become revoked';
+    end if;
+  else
+    raise exception 'revoked project_asr_media_review is immutable';
+  end if;
+
+  if tg_op = 'UPDATE' and old.status <> 'draft' and (
+    new.project_id, new.video_id, new.asset_id, new.review_version, new.media_fingerprint, new.asset_manifest_fingerprint,
+    new.delivery_origin, new.identity_source, new.review_statement, new.reviewed_by, new.reviewed_at
+  ) is distinct from (
+    old.project_id, old.video_id, old.asset_id, old.review_version, old.media_fingerprint, old.asset_manifest_fingerprint,
+    old.delivery_origin, old.identity_source, old.review_statement, old.reviewed_by, old.reviewed_at
+  ) then
+    raise exception 'approved project_asr_media_review content is immutable';
+  end if;
+  if not exists (
+    select 1 from media_asset asset
+    where asset.id=new.asset_id and asset.video_id=new.video_id
+      and asset.kind='audio' and asset.content_type='audio/wav'
+      and asset.content_sha256=new.media_fingerprint
+  ) then
+    raise exception 'project_asr_media_review requires matching normalized WAV audio asset fingerprint';
+  end if;
+
+  if new.status = 'approved' then
+    if new.reviewed_by is null then
+      raise exception 'approved project_asr_media_review requires reviewed_by';
+    end if;
+    new.reviewed_at := coalesce(new.reviewed_at, clock_timestamp());
+    new.revoked_by := null;
+    new.revoked_at := null;
+  elsif new.status = 'revoked' then
+    if new.revoked_by is null then
+      raise exception 'revoked project_asr_media_review requires revoked_by';
+    end if;
+    new.revoked_at := coalesce(new.revoked_at, clock_timestamp());
+    if tg_op = 'INSERT' or old.status = 'draft' then
+      new.reviewed_by := null;
+      new.reviewed_at := null;
+    end if;
+  elsif tg_op = 'INSERT' or old.status = 'draft' then
+    new.reviewed_by := null;
+    new.reviewed_at := null;
+    new.revoked_by := null;
+    new.revoked_at := null;
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_asr_media_review_lifecycle on project_asr_media_review;
+create trigger trg_project_asr_media_review_lifecycle
+before insert or update on project_asr_media_review
+for each row execute function enforce_project_asr_media_review_lifecycle();
+
+create or replace function reject_project_asr_media_review_delete()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'project_asr_media_review must be revoked, not deleted';
+end;
+$$;
+drop trigger if exists trg_project_asr_media_review_no_delete on project_asr_media_review;
+create trigger trg_project_asr_media_review_no_delete
+before delete on project_asr_media_review
+for each row execute function reject_project_asr_media_review_delete();
+
+create table if not exists project_research_task_cost (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  task_key text not null unique check (char_length(task_key) between 1 and 512),
+  task_type text not null check (task_type in ('asr_transcription', 'l3_structured_research')),
+  task_version text not null check (char_length(task_version) between 1 and 160),
+  status text not null check (status in ('completed', 'failed', 'cancelled')),
+  input_fingerprint text not null check (input_fingerprint ~ '^[0-9a-f]{64}$'),
+  output_fingerprint text check (output_fingerprint is null or output_fingerprint ~ '^[0-9a-f]{64}$'),
+  api_cost numeric(14,6) check (api_cost >= 0),
+  asr_cost numeric(14,6) check (asr_cost >= 0),
+  llm_cost numeric(14,6) check (llm_cost >= 0),
+  total_cost numeric(14,6) generated always as (
+    case when api_cost is null or asr_cost is null or llm_cost is null then null
+      else api_cost + asr_cost + llm_cost end
+  ) stored,
+  cost_currency text not null check (char_length(cost_currency) between 1 and 12),
+  cost_basis text not null check (cost_basis in ('actual', 'estimated', 'mixed', 'unknown')),
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  unique (id, project_id, video_id),
+  foreign key (project_id, video_id)
+    references project_video_inclusion(project_id, video_id) on delete restrict
+);
+create index if not exists idx_project_research_task_cost_project_video_time
+  on project_research_task_cost(project_id, video_id, created_at desc);
+
+create table if not exists project_asr_execution_job (
+  id uuid primary key default gen_random_uuid(),
+  task_key text not null unique check (char_length(task_key) between 1 and 512),
+  project_id uuid not null,
+  video_id uuid not null,
+  media_review_id uuid not null,
+  reviewed_asset_id uuid not null,
+  review_version text not null check (char_length(review_version) between 1 and 80),
+  media_fingerprint text not null check (media_fingerprint ~ '^[0-9a-f]{64}$'),
+  asset_manifest_fingerprint text not null check (asset_manifest_fingerprint ~ '^[0-9a-f]{64}$'),
+  provider text not null check (char_length(provider) between 1 and 120),
+  model_id text not null check (char_length(model_id) between 1 and 160),
+  model_revision text not null check (char_length(model_revision) between 1 and 160),
+  engine_version text not null check (char_length(engine_version) between 1 and 160),
+  source_fingerprint text not null check (source_fingerprint ~ '^[0-9a-f]{64}$'),
+  status text not null check (status in ('queued', 'submitting', 'submitted', 'running', 'completed', 'failed', 'cancelled')),
+  provider_task_ref text,
+  submission_count integer not null default 0 check (submission_count between 0 and 1),
+  poll_count integer not null default 0 check (poll_count >= 0),
+  estimated_api_cost numeric(14,6) check (estimated_api_cost >= 0),
+  estimated_asr_cost numeric(14,6) check (estimated_asr_cost >= 0),
+  cost_currency text not null check (char_length(cost_currency) between 1 and 12),
+  task_cost_id uuid unique,
+  error_code text,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (id, project_id, video_id),
+  foreign key (project_id, video_id)
+    references project_video_inclusion(project_id, video_id) on delete restrict,
+  foreign key (media_review_id, project_id, video_id)
+    references project_asr_media_review(id, project_id, video_id) on delete restrict,
+  foreign key (reviewed_asset_id, video_id)
+    references media_asset(id, video_id) on delete restrict,
+  foreign key (task_cost_id, project_id, video_id)
+    references project_research_task_cost(id, project_id, video_id) on delete restrict
+);
+create index if not exists idx_project_asr_execution_job_project_video_time
+  on project_asr_execution_job(project_id, video_id, created_at desc);
+
+create or replace function enforce_project_asr_execution_job_approval()
+returns trigger language plpgsql as $$
+declare review_row project_asr_media_review%rowtype;
+begin
+  -- Lock the approval while changing into a dispatchable state so revocation
+  -- cannot interleave with this state transition.  The worker must still read
+  -- it again immediately before Provider HTTP; this trigger cannot cover work
+  -- performed after the database transaction has committed.
+  if new.status in ('submitting', 'submitted', 'running', 'completed') then
+    select * into review_row from project_asr_media_review
+      where id=new.media_review_id and project_id=new.project_id and video_id=new.video_id
+      for update;
+    if not found or review_row.status <> 'approved'
+       or review_row.review_version <> new.review_version
+       or review_row.media_fingerprint <> new.media_fingerprint
+       or review_row.asset_manifest_fingerprint <> new.asset_manifest_fingerprint
+       or review_row.asset_id <> new.reviewed_asset_id then
+      raise exception 'project_asr_execution_job requires current approved project media review';
+    end if;
+    if not exists (
+      select 1 from project_video_inclusion inclusion_row
+      join source_video video_row on video_row.id=inclusion_row.video_id
+      where inclusion_row.project_id=new.project_id and inclusion_row.video_id=new.video_id
+        and inclusion_row.status='accepted' and video_row.availability_status='available'
+    ) then
+      raise exception 'project_asr_execution_job requires accepted available project video';
+    end if;
+  end if;
+  if tg_op = 'UPDATE' and old.project_id is distinct from new.project_id then
+    raise exception 'project_asr_execution_job project_id is immutable';
+  end if;
+  if new.task_cost_id is not null and not exists (
+    select 1 from project_research_task_cost cost
+    where cost.id=new.task_cost_id and cost.project_id=new.project_id and cost.video_id=new.video_id
+      and cost.task_key=new.task_key and cost.task_type='asr_transcription'
+  ) then
+    raise exception 'project_asr_execution_job task cost must be matching local ASR cost';
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_asr_execution_job_approval on project_asr_execution_job;
+create trigger trg_project_asr_execution_job_approval
+before insert or update on project_asr_execution_job
+for each row execute function enforce_project_asr_execution_job_approval();
+
+create table if not exists project_transcript (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  execution_job_id uuid not null unique,
+  media_review_id uuid not null,
+  asr_provider text not null,
+  model_id text,
+  model_revision text,
+  engine_version text,
+  language text,
+  text_content text not null check (char_length(text_content) > 0),
+  text_fingerprint text not null check (text_fingerprint ~ '^[0-9a-f]{64}$'),
+  segments jsonb,
+  audio_duration_ms bigint check (audio_duration_ms is null or audio_duration_ms >= 0),
+  task_cost_id uuid unique,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(),
+  unique (id, project_id, video_id),
+  foreign key (project_id, video_id)
+    references project_video_inclusion(project_id, video_id) on delete restrict,
+  foreign key (execution_job_id, project_id, video_id)
+    references project_asr_execution_job(id, project_id, video_id) on delete restrict,
+  foreign key (media_review_id, project_id, video_id)
+    references project_asr_media_review(id, project_id, video_id) on delete restrict,
+  foreign key (task_cost_id, project_id, video_id)
+    references project_research_task_cost(id, project_id, video_id) on delete restrict
+);
+create index if not exists idx_project_transcript_project_video_time
+  on project_transcript(project_id, video_id, created_at desc);
+
+create or replace function enforce_project_transcript_completed_job()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from project_asr_execution_job job
+    where job.id=new.execution_job_id and job.project_id=new.project_id and job.video_id=new.video_id
+      and job.media_review_id=new.media_review_id and job.status='completed'
+  ) then
+    raise exception 'project_transcript requires completed local ASR execution job';
+  end if;
+  if new.task_cost_id is not null and not exists (
+    select 1 from project_asr_execution_job job
+    where job.id=new.execution_job_id and job.project_id=new.project_id and job.video_id=new.video_id
+      and job.task_cost_id=new.task_cost_id
+  ) then
+    raise exception 'project_transcript task cost must be the local ASR job cost';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_transcript_completed_job on project_transcript;
+create trigger trg_project_transcript_completed_job
+before insert on project_transcript
+for each row execute function enforce_project_transcript_completed_job();
+create or replace function reject_project_transcript_change()
+returns trigger language plpgsql as $$ begin raise exception 'project_transcript is immutable'; end; $$;
+drop trigger if exists trg_project_transcript_immutable on project_transcript;
+create trigger trg_project_transcript_immutable before update or delete on project_transcript
+for each row execute function reject_project_transcript_change();
+
+create table if not exists project_l3_privacy_review (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  transcript_id uuid not null,
+  review_version text not null check (char_length(review_version) between 1 and 80),
+  evidence_fingerprint text not null check (evidence_fingerprint ~ '^[0-9a-f]{64}$'),
+  evidence_manifest jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(evidence_manifest) = 'object' and pg_column_size(evidence_manifest) <= 16384),
+  status text not null default 'draft' check (status in ('draft', 'approved', 'revoked')),
+  reviewed_by text check (reviewed_by is null or (char_length(reviewed_by) between 3 and 254 and reviewed_by = lower(reviewed_by))),
+  reviewed_at timestamptz,
+  revoked_by text check (revoked_by is null or (char_length(revoked_by) between 3 and 254 and revoked_by = lower(revoked_by))),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (id, project_id, video_id),
+  unique (project_id, video_id, review_version, evidence_fingerprint),
+  foreign key (project_id, video_id)
+    references project_video_inclusion(project_id, video_id) on delete restrict,
+  foreign key (transcript_id, project_id, video_id)
+    references project_transcript(id, project_id, video_id) on delete restrict,
+  check (
+    (status = 'draft' and reviewed_by is null and reviewed_at is null and revoked_by is null and revoked_at is null)
+    or (status = 'approved' and reviewed_by is not null and reviewed_at is not null and revoked_by is null and revoked_at is null)
+    or (status = 'revoked' and revoked_by is not null and revoked_at is not null
+        and ((reviewed_by is null and reviewed_at is null) or (reviewed_by is not null and reviewed_at is not null)))
+  )
+);
+create index if not exists idx_project_l3_privacy_review_active
+  on project_l3_privacy_review(project_id, video_id, reviewed_at desc) where status='approved';
+
+create or replace function enforce_project_l3_privacy_review_lifecycle()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='INSERT' then
+    if new.status <> 'draft' or new.reviewed_by is not null or new.reviewed_at is not null
+       or new.revoked_by is not null or new.revoked_at is not null then
+      raise exception 'project_l3_privacy_review must begin as draft';
+    end if;
+  elsif old.status='draft' then
+    if new.status not in ('draft','approved','revoked') then raise exception 'draft project_l3_privacy_review may only become approved or revoked'; end if;
+  elsif old.status='approved' then
+    if new.status <> 'revoked' then raise exception 'approved project_l3_privacy_review may only become revoked'; end if;
+  else
+    raise exception 'revoked project_l3_privacy_review is immutable';
+  end if;
+  if tg_op='UPDATE' and old.status <> 'draft' and (
+    new.project_id,new.video_id,new.transcript_id,new.review_version,new.evidence_fingerprint,
+    new.evidence_manifest,new.reviewed_by,new.reviewed_at
+  ) is distinct from (
+    old.project_id,old.video_id,old.transcript_id,old.review_version,old.evidence_fingerprint,
+    old.evidence_manifest,old.reviewed_by,old.reviewed_at
+  ) then raise exception 'approved project_l3_privacy_review content is immutable'; end if;
+  if new.status='approved' then
+    if new.reviewed_by is null then raise exception 'approved project_l3_privacy_review requires reviewed_by'; end if;
+    new.reviewed_at:=coalesce(new.reviewed_at,clock_timestamp()); new.revoked_by:=null; new.revoked_at:=null;
+  elsif new.status='revoked' then
+    if new.revoked_by is null then raise exception 'revoked project_l3_privacy_review requires revoked_by'; end if;
+    new.revoked_at:=coalesce(new.revoked_at,clock_timestamp());
+    if tg_op='INSERT' or old.status='draft' then new.reviewed_by:=null; new.reviewed_at:=null; end if;
+  elsif tg_op='INSERT' or old.status='draft' then
+    new.reviewed_by:=null; new.reviewed_at:=null; new.revoked_by:=null; new.revoked_at:=null;
+  end if;
+  new.updated_at:=clock_timestamp(); return new;
+end;
+$$;
+drop trigger if exists trg_project_l3_privacy_review_lifecycle on project_l3_privacy_review;
+create trigger trg_project_l3_privacy_review_lifecycle before insert or update on project_l3_privacy_review
+for each row execute function enforce_project_l3_privacy_review_lifecycle();
+create or replace function reject_project_l3_privacy_review_delete()
+returns trigger language plpgsql as $$ begin raise exception 'project_l3_privacy_review must be revoked, not deleted'; end; $$;
+drop trigger if exists trg_project_l3_privacy_review_no_delete on project_l3_privacy_review;
+create trigger trg_project_l3_privacy_review_no_delete before delete on project_l3_privacy_review
+for each row execute function reject_project_l3_privacy_review_delete();
+
+create table if not exists project_l3_execution_job (
+  id uuid primary key default gen_random_uuid(),
+  task_key text not null unique check (char_length(task_key) between 1 and 512),
+  project_id uuid not null,
+  video_id uuid not null,
+  privacy_review_id uuid not null,
+  review_version text not null check (char_length(review_version) between 1 and 80),
+  evidence_fingerprint text not null check (evidence_fingerprint ~ '^[0-9a-f]{64}$'),
+  provider text not null check (char_length(provider) between 1 and 120),
+  model_id text not null check (char_length(model_id) between 1 and 160),
+  model_revision text not null check (char_length(model_revision) between 1 and 160),
+  prompt_version text not null check (char_length(prompt_version) between 1 and 160),
+  schema_version text not null check (char_length(schema_version) between 1 and 160),
+  input_fingerprint text not null check (input_fingerprint ~ '^[0-9a-f]{64}$'),
+  status text not null check (status in ('queued', 'running', 'completed', 'failed', 'cancelled')),
+  attempt_count integer not null default 0 check (attempt_count between 0 and 1),
+  estimated_llm_cost numeric(14,6) check (estimated_llm_cost >= 0),
+  cost_currency text not null check (char_length(cost_currency) between 1 and 12),
+  task_cost_id uuid unique,
+  error_code text,
+  metadata jsonb not null default '{}'::jsonb check (jsonb_typeof(metadata) = 'object'),
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now(),
+  unique (id, project_id, video_id),
+  foreign key (project_id, video_id) references project_video_inclusion(project_id,video_id) on delete restrict,
+  foreign key (privacy_review_id, project_id, video_id) references project_l3_privacy_review(id,project_id,video_id) on delete restrict,
+  foreign key (task_cost_id, project_id, video_id) references project_research_task_cost(id,project_id,video_id) on delete restrict
+);
+create index if not exists idx_project_l3_execution_job_project_video_time on project_l3_execution_job(project_id,video_id,created_at desc);
+
+create or replace function enforce_project_l3_execution_job_approval()
+returns trigger language plpgsql as $$
+declare review_row project_l3_privacy_review%rowtype;
+begin
+  if new.status in ('running','completed') then
+    -- Same transaction-level serialization as ASR.  The worker repeats this
+    -- check immediately before Provider HTTP to close the post-commit window.
+    select * into review_row from project_l3_privacy_review
+      where id=new.privacy_review_id and project_id=new.project_id and video_id=new.video_id for update;
+    if not found or review_row.status<>'approved' or review_row.review_version<>new.review_version
+       or review_row.evidence_fingerprint<>new.evidence_fingerprint then
+      raise exception 'project_l3_execution_job requires current approved project privacy review';
+    end if;
+  end if;
+  if tg_op='UPDATE' and old.project_id is distinct from new.project_id then
+    raise exception 'project_l3_execution_job project_id is immutable';
+  end if;
+  if new.task_cost_id is not null and not exists (
+    select 1 from project_research_task_cost cost
+    where cost.id=new.task_cost_id and cost.project_id=new.project_id and cost.video_id=new.video_id
+      and cost.task_key=new.task_key and cost.task_type='l3_structured_research'
+  ) then
+    raise exception 'project_l3_execution_job task cost must be matching local L3 cost';
+  end if;
+  new.updated_at:=clock_timestamp(); return new;
+end;
+$$;
+drop trigger if exists trg_project_l3_execution_job_approval on project_l3_execution_job;
+create trigger trg_project_l3_execution_job_approval before insert or update on project_l3_execution_job
+for each row execute function enforce_project_l3_execution_job_approval();
+
+create table if not exists project_l3_analysis_result (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  execution_job_id uuid not null unique,
+  privacy_review_id uuid not null,
+  analysis_type text not null default 'l3_structured_research' check (analysis_type='l3_structured_research'),
+  output jsonb not null check (jsonb_typeof(output)='object'),
+  output_fingerprint text not null check (output_fingerprint ~ '^[0-9a-f]{64}$'),
+  task_cost_id uuid unique,
+  created_at timestamptz not null default now(),
+  unique (id,project_id,video_id),
+  foreign key (project_id,video_id) references project_video_inclusion(project_id,video_id) on delete restrict,
+  foreign key (execution_job_id,project_id,video_id) references project_l3_execution_job(id,project_id,video_id) on delete restrict,
+  foreign key (privacy_review_id,project_id,video_id) references project_l3_privacy_review(id,project_id,video_id) on delete restrict,
+  foreign key (task_cost_id,project_id,video_id) references project_research_task_cost(id,project_id,video_id) on delete restrict
+);
+create index if not exists idx_project_l3_analysis_result_project_video_time on project_l3_analysis_result(project_id,video_id,created_at desc);
+
+create or replace function enforce_project_l3_analysis_result_completed_job()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from project_l3_execution_job job
+    where job.id=new.execution_job_id and job.project_id=new.project_id and job.video_id=new.video_id
+      and job.privacy_review_id=new.privacy_review_id and job.status='completed'
+  ) then raise exception 'project_l3_analysis_result requires completed local L3 execution job'; end if;
+  if new.task_cost_id is not null and not exists (
+    select 1 from project_l3_execution_job job
+    where job.id=new.execution_job_id and job.project_id=new.project_id and job.video_id=new.video_id
+      and job.task_cost_id=new.task_cost_id
+  ) then raise exception 'project_l3_analysis_result task cost must be the local L3 job cost'; end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_l3_analysis_result_completed_job on project_l3_analysis_result;
+create trigger trg_project_l3_analysis_result_completed_job before insert on project_l3_analysis_result
+for each row execute function enforce_project_l3_analysis_result_completed_job();
+create or replace function reject_project_l3_analysis_result_change()
+returns trigger language plpgsql as $$ begin raise exception 'project_l3_analysis_result is immutable'; end; $$;
+drop trigger if exists trg_project_l3_analysis_result_immutable on project_l3_analysis_result;
+create trigger trg_project_l3_analysis_result_immutable before update or delete on project_l3_analysis_result
+for each row execute function reject_project_l3_analysis_result_change();
+
+comment on table project_asr_media_review is
+  'Project-local human approval for sending one exact media fingerprint to ASR. Approval may be revoked but never reused cross-project.';
+comment on table project_transcript is
+  'Project-private ASR result. Canonical transcript is not a fallback or cache for this table.';
+comment on table project_l3_privacy_review is
+  'Project-local approval for one exact L3 evidence bundle; approval may be revoked before dispatch.';
+comment on table project_l3_analysis_result is
+  'Project-private L3 result. Cross-project result sharing requires a separate explicit grant, never an implicit join.';
+
+-- Fresh-volume bootstrap parity with migration 033. Existing installations
+-- apply the reviewed migration; a new volume receives the same write gates.
+alter table project_decision_card
+  add column if not exists evaluation_metric text,
+  add column if not exists success_rule text,
+  add column if not exists observation_window_days integer,
+  add column if not exists comparison_basis text,
+  add column if not exists confounder_plan text,
+  add column if not exists review_verdict text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid='project_decision_card'::regclass
+    and conname='project_decision_card_experiment_contract_check') then
+    alter table project_decision_card
+      add constraint project_decision_card_experiment_contract_check check (
+        (evaluation_metric is null and success_rule is null and observation_window_days is null
+          and comparison_basis is null and confounder_plan is null)
+        or
+        (num_nulls(evaluation_metric, success_rule, observation_window_days,
+          comparison_basis, confounder_plan) = 0
+          and char_length(btrim(evaluation_metric)) between 1 and 160
+          and char_length(btrim(success_rule)) between 1 and 500
+          and observation_window_days between 1 and 90
+          and char_length(btrim(comparison_basis)) between 1 and 500
+          and char_length(btrim(confounder_plan)) between 1 and 500)
+      );
+  end if;
+end $$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid='project_decision_card'::regclass
+    and conname='project_decision_card_review_verdict_check') then
+    alter table project_decision_card
+      add constraint project_decision_card_review_verdict_check check (
+        (review_verdict is null or (evaluation_metric is not null and status='reviewed'
+          and review_verdict in ('supported','not_supported','inconclusive')))
+        and (evaluation_metric is null or
+          ((status='reviewed') = (review_verdict is not null)))
+      );
+  end if;
+end $$;
+create or replace function enforce_project_decision_card_experiment_contract()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.evaluation_metric is null or new.success_rule is null
+      or new.observation_window_days is null or new.comparison_basis is null
+      or new.confounder_plan is null then
+      raise exception 'new project decision card requires preregistered experiment contract';
+    end if;
+  elsif new.status='reviewed' and old.status is distinct from 'reviewed'
+    and old.evaluation_metric is null then
+    raise exception 'legacy project decision card cannot be reviewed without preregistration';
+  elsif (new.evaluation_metric, new.success_rule, new.observation_window_days,
+         new.comparison_basis, new.confounder_plan)
+        is distinct from
+        (old.evaluation_metric, old.success_rule, old.observation_window_days,
+         old.comparison_basis, old.confounder_plan) then
+    raise exception 'project decision card experiment contract is immutable';
+  elsif old.evaluation_metric is not null
+    and (new.hypothesis, new.reference_point, new.adaptation_difference,
+         new.decision, new.subject_id)
+        is distinct from
+        (old.hypothesis, old.reference_point, old.adaptation_difference,
+         old.decision, old.subject_id) then
+    raise exception 'preregistered project decision hypothesis is immutable';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_decision_card_experiment_contract on project_decision_card;
+create trigger trg_project_decision_card_experiment_contract
+before insert or update on project_decision_card
+for each row execute function enforce_project_decision_card_experiment_contract();
+
+alter table project_publication_record
+  add column if not exists platform text,
+  add column if not exists account_reference text,
+  add column if not exists platform_content_id text,
+  add column if not exists content_version text,
+  add column if not exists distribution_mode text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conrelid='project_publication_record'::regclass
+    and conname='project_publication_provenance_check') then
+    alter table project_publication_record
+      add constraint project_publication_provenance_check check (
+        (platform is null and account_reference is null and platform_content_id is null
+          and content_version is null and distribution_mode is null)
+        or
+        (num_nulls(platform, account_reference, platform_content_id,
+          content_version, distribution_mode) = 0
+          and platform in ('douyin', 'xiaohongshu', 'kuaishou', 'bilibili', 'other')
+          and char_length(btrim(account_reference)) between 1 and 160
+          and char_length(btrim(platform_content_id)) between 1 and 160
+          and char_length(btrim(content_version)) between 1 and 160
+          and distribution_mode in ('organic', 'paid', 'mixed'))
+      );
+  end if;
+end $$;
+create or replace function enforce_project_publication_provenance()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.decision_card_id is null or new.platform is null
+      or new.account_reference is null or new.platform_content_id is null
+      or new.content_version is null or new.distribution_mode is null then
+      raise exception 'new project publication requires linked action and real platform provenance';
+    end if;
+    if not exists (
+      select 1 from project_decision_card card
+      where card.id=new.decision_card_id and card.project_id=new.project_id
+        and card.evaluation_metric is not null
+        and ((card.decision='adopt' and card.status in ('active','adopted'))
+          or (card.decision='observe' and card.status='observing'))
+    ) then
+      raise exception 'new project publication requires active preregistered adopted or observing action';
+    end if;
+  elsif (new.platform, new.account_reference, new.platform_content_id,
+         new.content_version, new.distribution_mode, new.decision_card_id)
+        is distinct from
+        (old.platform, old.account_reference, old.platform_content_id,
+         old.content_version, old.distribution_mode, old.decision_card_id) then
+    raise exception 'project publication provenance is immutable';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_publication_provenance on project_publication_record;
+create trigger trg_project_publication_provenance
+before insert or update on project_publication_record
+for each row execute function enforce_project_publication_provenance();
+create or replace function reject_preregistered_publication_change()
+returns trigger language plpgsql as $$
+begin
+  if old.platform_content_id is not null then
+    raise exception 'preregistered project publication is immutable';
+  end if;
+  return old;
+end;
+$$;
+drop trigger if exists trg_preregistered_publication_immutable on project_publication_record;
+create trigger trg_preregistered_publication_immutable
+before update or delete on project_publication_record
+for each row execute function reject_preregistered_publication_change();
+create unique index if not exists uq_project_publication_platform_content
+  on project_publication_record(project_id, platform, platform_content_id)
+  where platform_content_id is not null;
+comment on column project_decision_card.success_rule is
+  'Human-preregistered falsifiable success rule. Never inferred from outcome data.';
+comment on column project_publication_record.platform_content_id is
+  'Actual published platform work ID, not a planned or simulated content ID.';
+
+-- Fresh-volume bootstrap parity with migration 034. A reported platform time
+-- is still human-entered evidence, not independent platform verification.
+alter table project_publication_record
+  add column if not exists published_at timestamptz;
+create or replace function enforce_project_decision_card_experiment_contract()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.evaluation_metric is null or new.success_rule is null
+      or new.observation_window_days is null or new.comparison_basis is null
+      or new.confounder_plan is null then
+      raise exception 'new project decision card requires preregistered experiment contract';
+    end if;
+  elsif new.status='reviewed' and old.status is distinct from 'reviewed'
+    and old.evaluation_metric is null then
+    raise exception 'legacy project decision card cannot be reviewed without preregistration';
+  elsif (new.evaluation_metric, new.success_rule, new.observation_window_days,
+         new.comparison_basis, new.confounder_plan)
+        is distinct from
+        (old.evaluation_metric, old.success_rule, old.observation_window_days,
+         old.comparison_basis, old.confounder_plan) then
+    raise exception 'project decision card experiment contract is immutable';
+  elsif old.evaluation_metric is not null
+    and (new.hypothesis, new.reference_point, new.adaptation_difference,
+         new.decision, new.subject_id, new.source_video_id, new.created_at)
+        is distinct from
+        (old.hypothesis, old.reference_point, old.adaptation_difference,
+         old.decision, old.subject_id, old.source_video_id, old.created_at) then
+    raise exception 'preregistered project decision hypothesis and source are immutable';
+  end if;
+  return new;
+end;
+$$;
+create or replace function enforce_project_publication_provenance()
+returns trigger language plpgsql as $$
+declare
+  card_created_at timestamptz;
+begin
+  if tg_op = 'INSERT' then
+    if new.decision_card_id is null or new.platform is null
+      or new.account_reference is null or new.platform_content_id is null
+      or new.content_version is null or new.distribution_mode is null
+      or new.published_at is null then
+      raise exception 'new project publication requires linked action and self-reported platform provenance';
+    end if;
+    select card.created_at into card_created_at
+    from project_decision_card card
+    where card.id=new.decision_card_id and card.project_id=new.project_id
+      and card.evaluation_metric is not null
+      and ((card.decision='adopt' and card.status in ('active','adopted'))
+        or (card.decision='observe' and card.status='observing'));
+    if card_created_at is null then
+      raise exception 'new project publication requires active preregistered adopted or observing action';
+    end if;
+    if new.published_at < card_created_at or new.published_at > now()
+      or new.publication_date <> (new.published_at at time zone 'Asia/Shanghai')::date then
+      raise exception 'project publication time must follow preregistration and match local publication date';
+    end if;
+  elsif (new.platform, new.account_reference, new.platform_content_id,
+         new.content_version, new.distribution_mode, new.decision_card_id,
+         new.published_at)
+        is distinct from
+        (old.platform, old.account_reference, old.platform_content_id,
+         old.content_version, old.distribution_mode, old.decision_card_id,
+         old.published_at) then
+    raise exception 'project publication provenance is immutable';
+  end if;
+  return new;
+end;
+$$;
+comment on column project_publication_record.published_at is
+  'Human-entered platform publication time, not independently verified; NULL marks a pre-034 historical row.';
+
+-- Fresh-volume bootstrap parity with migration 035.
+create table if not exists project_decision_card_evidence_ref (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  decision_card_id uuid not null,
+  position smallint not null check (position between 1 and 12),
+  video_id uuid not null references source_video(id) on delete restrict,
+  role text not null check (role in ('comparable', 'counterexample')),
+  reason text not null check (char_length(reason) between 1 and 500 and reason = btrim(reason)),
+  video_title_at_binding text,
+  account_name_at_binding text,
+  created_at timestamptz not null default now(),
+  unique (decision_card_id, video_id),
+  unique (decision_card_id, position),
+  foreign key (decision_card_id, project_id)
+    references project_decision_card(id, project_id) on delete restrict
+);
+create index if not exists idx_project_decision_card_evidence_ref_project_card
+  on project_decision_card_evidence_ref(project_id, decision_card_id, position);
+create or replace function enforce_project_decision_card_evidence_ref()
+returns trigger language plpgsql as $$
+declare
+  primary_video uuid;
+  card_created_at timestamptz;
+  card_status text;
+begin
+  if tg_op <> 'INSERT' then
+    raise exception 'project_decision_card_evidence_ref is append-only';
+  end if;
+  -- Serializes concurrent additions to one card, including the 12-ref ceiling.
+  select card.source_video_id, card.created_at, card.status
+    into primary_video, card_created_at, card_status
+  from project_decision_card card
+  where card.id=new.decision_card_id and card.project_id=new.project_id
+  for update;
+  if primary_video is null then
+    raise exception 'project_decision_card_evidence_ref requires a local decision card';
+  end if;
+  if card_created_at is distinct from transaction_timestamp()
+     or card_status not in ('active', 'observing', 'excluded') then
+    raise exception 'project_decision_card_evidence_ref must be bound when the card is created';
+  end if;
+  if new.video_id=primary_video then
+    raise exception 'project_decision_card_evidence_ref cannot repeat primary video';
+  end if;
+  if (select count(*) from project_decision_card_evidence_ref ref
+      where ref.decision_card_id=new.decision_card_id) >= 12 then
+    raise exception 'project_decision_card_evidence_ref exceeds 12 videos';
+  end if;
+  if not exists (
+    select 1 from project_video_inclusion inclusion_row
+    join source_video video_row on video_row.id=inclusion_row.video_id
+    where inclusion_row.project_id=new.project_id
+      and inclusion_row.video_id=new.video_id
+      and inclusion_row.status='accepted'
+      and video_row.availability_status='available'
+  ) then
+    raise exception 'project_decision_card_evidence_ref requires locally accepted available video';
+  end if;
+  select video_row.title, account_row.nickname
+    into new.video_title_at_binding, new.account_name_at_binding
+  from source_video video_row
+  left join source_account account_row on account_row.id=video_row.account_id
+  where video_row.id=new.video_id;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_project_decision_card_evidence_ref on project_decision_card_evidence_ref;
+create trigger trg_project_decision_card_evidence_ref
+before insert or update or delete on project_decision_card_evidence_ref
+for each row execute function enforce_project_decision_card_evidence_ref();
+comment on table project_decision_card_evidence_ref is
+  'Immutable project-local comparison or counterexample public video bound to a decision card; later withdrawal remains visible.';
+
+-- Fresh-volume bootstrap parity with migration 037. Keep earlier migration
+-- snapshots above this marker unchanged for historical-upgrade tests.
+create table if not exists project_video_case_review (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references research_project(id) on delete restrict,
+  video_id uuid not null references source_video(id) on delete restrict,
+  version_no integer not null check (version_no > 0),
+  status text not null check (status in ('partial', 'complete', 'insufficient')),
+  source_reference text not null check (char_length(source_reference) between 1 and 512),
+  observed_at timestamptz not null,
+  video_coverage text not null check (video_coverage in ('none', 'partial', 'complete')),
+  audio_coverage text not null check (audio_coverage in ('none', 'partial', 'complete', 'not_applicable')),
+  audio_not_applicable_reason text check (audio_not_applicable_reason is null or char_length(audio_not_applicable_reason) between 1 and 1000),
+  key_event_complete boolean,
+  verified_facts text not null default '' check (char_length(verified_facts) <= 4000),
+  evidence_gaps text not null default '' check (char_length(evidence_gaps) <= 4000),
+  counterevidence text not null default '' check (char_length(counterevidence) <= 4000),
+  comparability_note text not null default '' check (char_length(comparability_note) <= 4000),
+  reviewed_by text not null check (char_length(reviewed_by) between 3 and 254 and reviewed_by = lower(reviewed_by)),
+  created_at timestamptz not null default now(),
+  unique (project_id, video_id, version_no),
+  check ((audio_coverage = 'not_applicable') = (audio_not_applicable_reason is not null)),
+  check (key_event_complete is distinct from false or status = 'insufficient'),
+  check (status <> 'complete' or (video_coverage = 'complete'
+    and (audio_coverage = 'complete' or (audio_coverage = 'not_applicable' and audio_not_applicable_reason is not null))
+    and key_event_complete is true and char_length(trim(verified_facts)) > 0
+    and char_length(trim(comparability_note)) > 0))
+);
+create index if not exists idx_project_video_case_review_latest
+  on project_video_case_review(project_id, video_id, version_no desc);
+create or replace function reject_project_video_case_review_mutation()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'project_video_case_review is append-only';
+end;
+$$;
+drop trigger if exists trg_project_video_case_review_append_only on project_video_case_review;
+create trigger trg_project_video_case_review_append_only
+before update or delete on project_video_case_review
+for each row execute function reject_project_video_case_review_mutation();
+comment on table project_video_case_review is
+  'Project-private human Case viewing history. No accepted, ASR or L3 state is inferred from these rows.';
+
+alter table project_decision_card
+  add column if not exists source_case_review_id uuid references project_video_case_review(id) on delete restrict;
+alter table project_decision_card_evidence_ref
+  add column if not exists case_review_id_at_binding uuid references project_video_case_review(id) on delete restrict;
+create or replace function reject_project_case_binding_mutation()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'bound project case review is immutable';
+end;
+$$;
+drop trigger if exists trg_project_decision_card_case_binding_immutable on project_decision_card;
+create trigger trg_project_decision_card_case_binding_immutable
+before update of source_case_review_id on project_decision_card
+for each row execute function reject_project_case_binding_mutation();
+
+create or replace function enforce_project_decision_card_accepted_source()
+returns trigger language plpgsql as $$
+declare
+  bound_review uuid;
+begin
+  if not exists (
+    select 1 from project_video_inclusion inclusion_row
+    where inclusion_row.project_id = new.project_id
+      and inclusion_row.video_id = new.source_video_id
+      and inclusion_row.status = 'accepted'
+      and exists (select 1 from source_video video_row
+                  where video_row.id=new.source_video_id and video_row.availability_status='available')
+  ) then
+    raise exception 'project_decision_card requires current complete project case review';
+  end if;
+  select review.id into bound_review from project_video_case_review review
+  where review.project_id=new.project_id and review.video_id=new.source_video_id
+  order by review.version_no desc limit 1;
+  if bound_review is null or
+     (select review.status from project_video_case_review review where review.id=bound_review) <> 'complete' then
+    raise exception 'project_decision_card requires current complete project case review';
+  end if;
+  new.source_case_review_id := bound_review;
+  return new;
+end;
+$$;
+
+create or replace function enforce_project_decision_card_evidence_ref()
+returns trigger language plpgsql as $$
+declare
+  primary_video uuid;
+  card_created_at timestamptz;
+  card_status text;
+  bound_review uuid;
+begin
+  if tg_op <> 'INSERT' then
+    raise exception 'project_decision_card_evidence_ref is append-only';
+  end if;
+  select card.source_video_id, card.created_at, card.status
+    into primary_video, card_created_at, card_status
+  from project_decision_card card
+  where card.id=new.decision_card_id and card.project_id=new.project_id
+  for update;
+  if primary_video is null then
+    raise exception 'project_decision_card_evidence_ref requires a local decision card';
+  end if;
+  if card_created_at is distinct from transaction_timestamp()
+     or card_status not in ('active', 'observing', 'excluded') then
+    raise exception 'project_decision_card_evidence_ref must be bound when the card is created';
+  end if;
+  if new.video_id=primary_video then
+    raise exception 'project_decision_card_evidence_ref cannot repeat primary video';
+  end if;
+  if (select count(*) from project_decision_card_evidence_ref ref
+      where ref.decision_card_id=new.decision_card_id) >= 12 then
+    raise exception 'project_decision_card_evidence_ref exceeds 12 videos';
+  end if;
+  if not exists (
+    select 1 from project_video_inclusion inclusion_row
+    join source_video video_row on video_row.id=inclusion_row.video_id
+    where inclusion_row.project_id=new.project_id
+      and inclusion_row.video_id=new.video_id
+      and inclusion_row.status='accepted'
+      and video_row.availability_status='available'
+  ) then
+    raise exception 'project_decision_card_evidence_ref requires current complete project case review';
+  end if;
+  select review.id into bound_review from project_video_case_review review
+  where review.project_id=new.project_id and review.video_id=new.video_id
+  order by review.version_no desc limit 1;
+  if bound_review is null or
+     (select review.status from project_video_case_review review where review.id=bound_review) <> 'complete' then
+    raise exception 'project_decision_card_evidence_ref requires current complete project case review';
+  end if;
+  new.case_review_id_at_binding := bound_review;
+  select video_row.title, account_row.nickname
+    into new.video_title_at_binding, new.account_name_at_binding
+  from source_video video_row
+  left join source_account account_row on account_row.id=video_row.account_id
+  where video_row.id=new.video_id;
+  return new;
+end;
+$$;
+
+-- Continuing an action requires the same reviewed evidence versions and a
+-- still-approved, rights-cleared profile when the action adopts an IP.
+create or replace function project_action_evidence_is_current(p_project uuid, p_card uuid)
+returns boolean language sql stable as $$
+  select exists (
+    select 1 from project_decision_card card
+    left join project_decision_card_profile_binding binding
+      on binding.project_id=card.project_id and binding.decision_card_id=card.id
+    left join research_subject_profile_version profile
+      on profile.project_id=card.project_id and profile.id=binding.profile_id
+    where card.id=p_card and card.project_id=p_project
+      and (card.decision <> 'adopt' or
+           (profile.status='approved' and profile.rights_status='cleared'))
+  ) and not exists (
+    select 1 from (
+      select card.source_video_id as video_id, card.source_case_review_id as bound_id
+      from project_decision_card card where card.id=p_card and card.project_id=p_project
+      union all
+      select ref.video_id, ref.case_review_id_at_binding
+      from project_decision_card_evidence_ref ref
+      where ref.decision_card_id=p_card and ref.project_id=p_project
+    ) source_row
+    left join project_video_inclusion inclusion_row
+      on inclusion_row.project_id=p_project and inclusion_row.video_id=source_row.video_id
+    left join source_video video_row on video_row.id=source_row.video_id
+    left join lateral (
+      select review.id, review.status from project_video_case_review review
+      where review.project_id=p_project and review.video_id=source_row.video_id
+      order by review.version_no desc limit 1
+    ) latest_review on true
+    where inclusion_row.project_id is null or inclusion_row.status <> 'accepted'
+       or video_row.availability_status is distinct from 'available'
+       or source_row.bound_id is null or latest_review.id is distinct from source_row.bound_id
+       or latest_review.status is distinct from 'complete'
+  );
+$$;
+
+create or replace function enforce_project_action_current_evidence()
+returns trigger language plpgsql as $$
+begin
+  if tg_table_name='project_publication_record' then
+    if new.decision_card_id is not null and
+       not project_action_evidence_is_current(new.project_id,new.decision_card_id) then
+      raise exception 'project action evidence is no longer current';
+    end if;
+  elsif new.status='adopted' and old.status is distinct from new.status and
+        not project_action_evidence_is_current(new.project_id,new.id) then
+    raise exception 'project action evidence is no longer current';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_publication_current_evidence on project_publication_record;
+create trigger trg_project_publication_current_evidence
+before insert on project_publication_record
+for each row execute function enforce_project_action_current_evidence();
+drop trigger if exists trg_project_decision_card_current_evidence on project_decision_card;
+create trigger trg_project_decision_card_current_evidence
+before update of status on project_decision_card
+for each row execute function enforce_project_action_current_evidence();
+
+-- A project may authorize cloud ASR for its accepted, available public-video
+-- evidence without claiming that a human listened to each normalized WAV.
+-- source_video has no separate visibility flag, so the worker must verify
+-- public provenance and reject non-public source material.
+create table if not exists project_asr_standing_grant (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null references research_project(id) on delete restrict,
+  grant_version text not null default 'project-asr-standing-v1'
+    check (grant_version = 'project-asr-standing-v1'),
+  provider text not null check (provider = 'volcengine-doubao-asr'),
+  source_scope text not null check (source_scope = 'accepted_available_public_video'),
+  status text not null default 'active' check (status in ('active', 'revoked')),
+  authorized_by text not null check (char_length(authorized_by) between 3 and 254 and authorized_by = lower(authorized_by)),
+  authorized_at timestamptz not null default clock_timestamp(),
+  revoked_by text check (revoked_by is null or (char_length(revoked_by) between 3 and 254 and revoked_by = lower(revoked_by))),
+  revoked_at timestamptz,
+  unique (id, project_id),
+  check ((status = 'active' and revoked_by is null and revoked_at is null)
+      or (status = 'revoked' and revoked_by is not null and revoked_at is not null))
+);
+create unique index if not exists uq_project_asr_standing_grant_active
+  on project_asr_standing_grant(project_id) where status='active';
+
+create or replace function enforce_project_asr_standing_grant_lifecycle()
+returns trigger language plpgsql as $$
+begin
+  if tg_op = 'INSERT' then
+    if new.status <> 'active' or new.revoked_by is not null or new.revoked_at is not null then
+      raise exception 'project ASR standing grant must begin active';
+    end if;
+  elsif old.status <> 'active' or new.status <> 'revoked' then
+    raise exception 'project ASR standing grant may only transition active to revoked';
+  elsif (new.id,new.project_id,new.grant_version,new.provider,new.source_scope,new.authorized_by,new.authorized_at)
+        is distinct from
+        (old.id,old.project_id,old.grant_version,old.provider,old.source_scope,old.authorized_by,old.authorized_at) then
+    raise exception 'project ASR standing grant scope and authorization are immutable';
+  elsif new.revoked_by is null then
+    raise exception 'project ASR standing grant revocation requires actor';
+  else
+    new.revoked_at := coalesce(new.revoked_at, clock_timestamp());
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_asr_standing_grant_lifecycle on project_asr_standing_grant;
+create trigger trg_project_asr_standing_grant_lifecycle
+before insert or update on project_asr_standing_grant
+for each row execute function enforce_project_asr_standing_grant_lifecycle();
+create or replace function reject_project_asr_standing_grant_delete()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'project ASR standing grant must be revoked, not deleted';
+end;
+$$;
+drop trigger if exists trg_project_asr_standing_grant_no_delete on project_asr_standing_grant;
+create trigger trg_project_asr_standing_grant_no_delete
+before delete on project_asr_standing_grant
+for each row execute function reject_project_asr_standing_grant_delete();
+
+alter table project_asr_media_review
+  add column if not exists authorization_kind text not null default 'listened',
+  add column if not exists standing_grant_id uuid;
+alter table project_asr_media_review
+  drop constraint if exists project_asr_media_review_standing_grant_fk;
+alter table project_asr_media_review
+  add constraint project_asr_media_review_standing_grant_fk
+  foreign key (standing_grant_id, project_id)
+  references project_asr_standing_grant(id, project_id) on delete restrict;
+
+-- 032's unnamed table-level lifecycle check requires reviewed_by/at for every
+-- approved row. Replace that exact check so standing approval cannot assert it.
+do $$
+declare old_check text;
+begin
+  select conname into old_check from pg_constraint
+  where conrelid='project_asr_media_review'::regclass and contype='c'
+    and pg_get_constraintdef(oid) like '%reviewed_by%'
+    and pg_get_constraintdef(oid) like '%reviewed_at%'
+    and pg_get_constraintdef(oid) like '%revoked_by%'
+    and pg_get_constraintdef(oid) like '%revoked_at%'
+    and conname <> 'project_asr_media_review_authorization_state_check';
+  if old_check is not null then
+    execute format('alter table project_asr_media_review drop constraint %I', old_check);
+  elsif not exists (select 1 from pg_constraint
+                    where conrelid='project_asr_media_review'::regclass
+                      and conname='project_asr_media_review_authorization_state_check') then
+    raise exception '032 project ASR media review lifecycle check not found';
+  end if;
+end;
+$$;
+alter table project_asr_media_review
+  drop constraint if exists project_asr_media_review_authorization_state_check;
+alter table project_asr_media_review
+  add constraint project_asr_media_review_authorization_state_check check (
+    (authorization_kind='listened' and standing_grant_id is null and
+      ((status='draft' and reviewed_by is null and reviewed_at is null and revoked_by is null and revoked_at is null)
+       or (status='approved' and reviewed_by is not null and reviewed_at is not null and revoked_by is null and revoked_at is null)
+       or (status='revoked' and revoked_by is not null and revoked_at is not null
+           and ((reviewed_by is null and reviewed_at is null) or (reviewed_by is not null and reviewed_at is not null)))))
+    or
+    (authorization_kind='standing_grant' and standing_grant_id is not null
+      and review_version=('standing-media-v1:' || standing_grant_id::text)
+      and review_statement->>'listening_status' is not distinct from 'not_listened'
+      and coalesce(review_statement->>'consent_statement','') <> '我已核对音频内容并同意交由云端转写'
+      and reviewed_by is null and reviewed_at is null
+      and ((status in ('draft','approved') and revoked_by is null and revoked_at is null)
+        or (status='revoked' and revoked_by is not null and revoked_at is not null)))
+  );
+
+create or replace function enforce_project_asr_media_review_lifecycle()
+returns trigger language plpgsql as $$
+declare grant_row project_asr_standing_grant%rowtype;
+begin
+  if tg_op = 'INSERT' then
+    if new.status <> 'draft' or new.reviewed_by is not null or new.reviewed_at is not null
+       or new.revoked_by is not null or new.revoked_at is not null then
+      raise exception 'project_asr_media_review must begin as draft';
+    end if;
+  elsif old.status = 'draft' then
+    if new.status not in ('draft', 'approved', 'revoked') then
+      raise exception 'draft project_asr_media_review may only become approved or revoked';
+    end if;
+  elsif old.status = 'approved' then
+    if new.status <> 'revoked' then
+      raise exception 'approved project_asr_media_review may only become revoked';
+    end if;
+  else
+    raise exception 'revoked project_asr_media_review is immutable';
+  end if;
+
+  if tg_op = 'UPDATE' and old.status <> 'draft' and (
+    new.project_id, new.video_id, new.asset_id, new.review_version, new.media_fingerprint, new.asset_manifest_fingerprint,
+    new.delivery_origin, new.identity_source, new.review_statement, new.authorization_kind, new.standing_grant_id,
+    new.reviewed_by, new.reviewed_at
+  ) is distinct from (
+    old.project_id, old.video_id, old.asset_id, old.review_version, old.media_fingerprint, old.asset_manifest_fingerprint,
+    old.delivery_origin, old.identity_source, old.review_statement, old.authorization_kind, old.standing_grant_id,
+    old.reviewed_by, old.reviewed_at
+  ) then
+    raise exception 'approved project_asr_media_review content is immutable';
+  end if;
+  if not exists (
+    select 1 from media_asset asset
+    where asset.id=new.asset_id and asset.video_id=new.video_id
+      and asset.kind='audio' and asset.content_type='audio/wav'
+      and asset.content_sha256=new.media_fingerprint
+  ) then
+    raise exception 'project_asr_media_review requires matching normalized WAV audio asset fingerprint';
+  end if;
+
+  if new.authorization_kind='standing_grant' then
+    if new.standing_grant_id is null or new.review_version <> ('standing-media-v1:' || new.standing_grant_id::text)
+       or new.review_statement->>'listening_status' is distinct from 'not_listened'
+       or new.reviewed_by is not null or new.reviewed_at is not null then
+      raise exception 'standing ASR authorization does not assert human listening';
+    end if;
+    if new.status='approved' and (tg_op='INSERT' or old.status <> 'approved') then
+      select * into grant_row from project_asr_standing_grant
+      where id=new.standing_grant_id and project_id=new.project_id for update;
+      if not found or grant_row.status <> 'active' then
+        raise exception 'standing ASR review requires active project grant';
+      end if;
+    end if;
+  elsif new.authorization_kind <> 'listened' or new.standing_grant_id is not null then
+    raise exception 'project ASR review authorization kind is invalid';
+  end if;
+
+  if new.status = 'approved' then
+    if new.authorization_kind='listened' then
+      if new.reviewed_by is null then
+        raise exception 'approved project_asr_media_review requires reviewed_by';
+      end if;
+      new.reviewed_at := coalesce(new.reviewed_at, clock_timestamp());
+    end if;
+    new.revoked_by := null;
+    new.revoked_at := null;
+  elsif new.status = 'revoked' then
+    if new.revoked_by is null then
+      raise exception 'revoked project_asr_media_review requires revoked_by';
+    end if;
+    new.revoked_at := coalesce(new.revoked_at, clock_timestamp());
+    if tg_op = 'INSERT' or old.status = 'draft' then
+      new.reviewed_by := null;
+      new.reviewed_at := null;
+    end if;
+  elsif tg_op = 'INSERT' or old.status = 'draft' then
+    new.reviewed_by := null;
+    new.reviewed_at := null;
+    new.revoked_by := null;
+    new.revoked_at := null;
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+
+create or replace function enforce_project_asr_execution_job_approval()
+returns trigger language plpgsql as $$
+declare
+  review_row project_asr_media_review%rowtype;
+  grant_row project_asr_standing_grant%rowtype;
+  new_submission boolean;
+  reconciling_submission boolean;
+begin
+  -- A provider call may have started just before revocation, while the
+  -- response transaction rolled back. Preserve its unknown-cost/audit fact
+  -- without reopening authorization for another HTTP submission.
+  reconciling_submission := false;
+  if tg_op='UPDATE' then
+    reconciling_submission := old.status='submitting'
+      and new.status='submitting' and old.submission_count=0 and new.submission_count=1
+      and new.error_code='project_asr_reconciliation_required'
+      and new.task_cost_id is not null and new.provider_task_ref is null
+      and (new.task_key,new.project_id,new.video_id,new.media_review_id,
+           new.reviewed_asset_id,new.review_version,new.media_fingerprint,
+           new.asset_manifest_fingerprint,new.provider,new.model_id,
+           new.model_revision,new.engine_version,new.source_fingerprint,
+           new.cost_currency,new.poll_count)
+          is not distinct from
+          (old.task_key,old.project_id,old.video_id,old.media_review_id,
+           old.reviewed_asset_id,old.review_version,old.media_fingerprint,
+           old.asset_manifest_fingerprint,old.provider,old.model_id,
+           old.model_revision,old.engine_version,old.source_fingerprint,
+           old.cost_currency,old.poll_count);
+  end if;
+  if new.status in ('submitting', 'submitted', 'running', 'completed')
+     and not reconciling_submission then
+    select * into review_row from project_asr_media_review
+      where id=new.media_review_id and project_id=new.project_id and video_id=new.video_id
+      for update;
+    if not found or review_row.status <> 'approved'
+       or review_row.review_version <> new.review_version
+       or review_row.media_fingerprint <> new.media_fingerprint
+       or review_row.media_fingerprint <> new.source_fingerprint
+       or review_row.asset_manifest_fingerprint <> new.asset_manifest_fingerprint
+       or review_row.asset_id <> new.reviewed_asset_id then
+      raise exception 'project_asr_execution_job requires current approved project media review';
+    end if;
+    if review_row.authorization_kind='standing_grant' then
+      new_submission := new.status='submitting' or
+        (tg_op='INSERT' and new.status in ('submitted','running','completed')) or
+        (tg_op='UPDATE' and old.status not in ('submitting','submitted','running')
+         and new.status in ('submitted','running','completed'));
+      -- The grant row lock serializes a first submit with revocation. A
+      -- previously submitted task may still poll and settle after revocation.
+      select * into grant_row from project_asr_standing_grant
+      where id=review_row.standing_grant_id and project_id=new.project_id for update;
+      if not found or grant_row.provider <> new.provider
+         or grant_row.source_scope <> 'accepted_available_public_video'
+         or (new_submission and grant_row.status <> 'active') then
+        raise exception 'project_asr_execution_job requires matching active standing grant for new submission';
+      end if;
+    elsif review_row.authorization_kind <> 'listened' then
+      raise exception 'project_asr_execution_job authorization kind is invalid';
+    end if;
+    if not exists (
+      select 1 from project_video_inclusion inclusion_row
+      join source_video video_row on video_row.id=inclusion_row.video_id
+      where inclusion_row.project_id=new.project_id and inclusion_row.video_id=new.video_id
+        and inclusion_row.status='accepted' and video_row.availability_status='available'
+    ) then
+      raise exception 'project_asr_execution_job requires accepted available project video';
+    end if;
+  end if;
+  if tg_op = 'UPDATE' and old.project_id is distinct from new.project_id then
+    raise exception 'project_asr_execution_job project_id is immutable';
+  end if;
+  if new.task_cost_id is not null and not exists (
+    select 1 from project_research_task_cost cost
+    where cost.id=new.task_cost_id and cost.project_id=new.project_id and cost.video_id=new.video_id
+      and cost.task_key=new.task_key and cost.task_type='asr_transcription'
+  ) then
+    raise exception 'project_asr_execution_job task cost must be matching local ASR cost';
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+
+comment on table project_asr_standing_grant is
+  'Revocable project-level permission for cloud ASR of accepted available public-video audio; not proof of per-video listening.';
+comment on column project_asr_media_review.authorization_kind is
+  'listened is human per-asset review; standing_grant is a scoped delivery authorization and never proof of listening.';
+
+-- Project-private whole-video analysis receipts are distinct from human Case
+-- reviews and from supplier bills. An estimate is never evidence of payment.
+create table if not exists project_las_analysis_attempt (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  asset_id uuid not null,
+  asset_sha256 text not null check (asset_sha256 ~ '^[0-9a-f]{64}$'),
+  task_key text not null check (char_length(task_key) between 1 and 512),
+  attempt_no integer not null check (attempt_no > 0),
+  provider text not null check (char_length(provider) between 1 and 120),
+  account_scope text not null check (char_length(account_scope) between 1 and 160),
+  cost_currency text not null check (char_length(cost_currency) between 1 and 12),
+  provider_task_ref text check (provider_task_ref is null or char_length(provider_task_ref) between 1 and 512),
+  submit_job_ref text check (submit_job_ref is null or char_length(submit_job_ref) between 1 and 512),
+  status text not null check (status in ('prepared','submitting','submitted','running',
+                                         'completed','failed','cancelled','unknown')),
+  submission_count integer not null default 0 check (submission_count between 0 and 1),
+  authorization_ref text not null check (char_length(authorization_ref) between 1 and 512),
+  authorized_by text not null check (char_length(authorized_by) between 3 and 254),
+  record_mode text not null check (record_mode in ('live_pre_dispatch','historical_backfill')),
+  input_fingerprint text not null check (input_fingerprint ~ '^[0-9a-f]{64}$'),
+  error_code text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (task_key,attempt_no),
+  unique (id,project_id,video_id),
+  unique (provider,provider_task_ref),
+  foreign key (project_id,video_id)
+    references project_video_inclusion(project_id,video_id) on delete restrict,
+  foreign key (asset_id,video_id)
+    references media_asset(id,video_id) on delete restrict,
+  check (status not in ('submitted','running','completed') or
+         (submission_count=1 and provider_task_ref is not null))
+);
+create index if not exists idx_project_las_attempt_project_time
+  on project_las_analysis_attempt(project_id,created_at desc);
+
+create table if not exists project_las_analysis_receipt (
+  id uuid primary key default gen_random_uuid(),
+  attempt_id uuid not null unique,
+  project_id uuid not null,
+  video_id uuid not null,
+  asset_id uuid not null,
+  asset_sha256 text not null check (asset_sha256 ~ '^[0-9a-f]{64}$'),
+  task_key text not null check (char_length(task_key) between 1 and 512),
+  attempt_no integer not null check (attempt_no > 0),
+  provider text not null check (char_length(provider) between 1 and 120),
+  account_scope text not null check (char_length(account_scope) between 1 and 160),
+  provider_task_ref text not null check (char_length(provider_task_ref) between 1 and 512),
+  submit_job_ref text not null check (char_length(submit_job_ref) between 1 and 512),
+  completion_job_ref text not null check (char_length(completion_job_ref) between 1 and 512),
+  model_id text not null check (char_length(model_id) between 1 and 160),
+  operator_id text not null check (char_length(operator_id) between 1 and 160),
+  operator_version text not null check (char_length(operator_version) between 1 and 160),
+  template_id text not null check (char_length(template_id) between 1 and 160),
+  -- Unknown is an open attempt, not an immutable terminal receipt: a late
+  -- provider completion must still be attachable to this same attempt.
+  status text not null check (status in ('completed','failed','cancelled')),
+  business_code integer,
+  result_sha256 text check (result_sha256 is null or result_sha256 ~ '^[0-9a-f]{64}$'),
+  token_usages jsonb not null default '{}'::jsonb check (jsonb_typeof(token_usages)='object'),
+  estimated_cost numeric(14,6) check (estimated_cost >= 0),
+  cost_currency text not null check (char_length(cost_currency) between 1 and 12),
+  pricing_version text check (pricing_version is null or char_length(pricing_version) between 1 and 160),
+  executed_at timestamptz not null,
+  recorded_at timestamptz not null default now(),
+  recorded_by text not null check (char_length(recorded_by) between 3 and 254),
+  binding_basis text not null check (binding_basis in ('reviewed_submission_and_result')),
+  unique (provider,provider_task_ref),
+  unique (task_key,attempt_no),
+  unique (id,project_id,video_id),
+  foreign key (attempt_id,project_id,video_id)
+    references project_las_analysis_attempt(id,project_id,video_id) on delete restrict,
+  foreign key (project_id,video_id)
+    references project_video_inclusion(project_id,video_id) on delete restrict,
+  foreign key (asset_id,video_id)
+    references media_asset(id,video_id) on delete restrict,
+  check (estimated_cost is null or pricing_version is not null),
+  check (status <> 'completed' or (business_code=0 and result_sha256 is not null))
+);
+create index if not exists idx_project_las_receipt_project_time
+  on project_las_analysis_receipt(project_id,executed_at desc);
+
+create or replace function enforce_project_las_attempt_lifecycle()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from media_asset asset where asset.id=new.asset_id
+      and asset.video_id=new.video_id and asset.kind='video'
+      and asset.content_sha256=new.asset_sha256
+  ) then
+    raise exception 'LAS attempt must bind a stored video asset SHA-256';
+  end if;
+  if tg_op='INSERT' then
+    if not exists (
+      select 1 from project_video_inclusion inclusion_row
+      join source_video video on video.id=inclusion_row.video_id
+      where inclusion_row.project_id=new.project_id and inclusion_row.video_id=new.video_id
+        and inclusion_row.status='accepted' and video.availability_status='available'
+    ) then
+      raise exception 'LAS attempt requires an accepted available project video';
+    end if;
+    if new.record_mode='live_pre_dispatch' and
+       (new.status<>'prepared' or new.submission_count<>0 or
+        new.provider_task_ref is not null) then
+      raise exception 'live LAS attempt must be recorded before provider dispatch';
+    end if;
+    return new;
+  end if;
+  if (new.project_id,new.video_id,new.asset_id,new.asset_sha256,new.task_key,
+      new.attempt_no,new.provider,new.account_scope,new.cost_currency,
+      new.authorization_ref,new.authorized_by,
+      new.record_mode,new.input_fingerprint,new.created_at)
+     is distinct from
+     (old.project_id,old.video_id,old.asset_id,old.asset_sha256,old.task_key,
+      old.attempt_no,old.provider,old.account_scope,old.cost_currency,
+      old.authorization_ref,old.authorized_by,
+      old.record_mode,old.input_fingerprint,old.created_at) then
+    raise exception 'LAS attempt identity is immutable';
+  end if;
+  if old.provider_task_ref is not null and
+     new.provider_task_ref is distinct from old.provider_task_ref then
+    raise exception 'LAS provider task reference is immutable';
+  end if;
+  if old.submit_job_ref is not null and
+     new.submit_job_ref is distinct from old.submit_job_ref then
+    raise exception 'LAS submit job reference is immutable';
+  end if;
+  if new.submission_count<old.submission_count or
+     new.submission_count>old.submission_count+1 or
+     (new.submission_count=1 and old.submission_count=0 and
+      (old.status<>'prepared' or new.status<>'submitting')) then
+    raise exception 'LAS submission may be claimed once before HTTP';
+  end if;
+  if old.status in ('completed','failed','cancelled') and new.status<>old.status then
+    raise exception 'terminal LAS attempt cannot restart';
+  end if;
+  if old.status='prepared' and new.status not in ('prepared','submitting','cancelled') or
+     old.status='submitting' and new.status not in ('submitting','submitted','unknown','failed') or
+     old.status='submitted' and new.status not in ('submitted','running','completed','unknown','failed') or
+     old.status='running' and new.status not in ('running','completed','unknown','failed') or
+     old.status='unknown' and new.status not in ('unknown','submitted','running','completed','failed') then
+    raise exception 'LAS attempt state transition is invalid';
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_attempt_lifecycle on project_las_analysis_attempt;
+create trigger trg_project_las_attempt_lifecycle
+before insert or update on project_las_analysis_attempt
+for each row execute function enforce_project_las_attempt_lifecycle();
+
+create or replace function enforce_project_las_receipt_asset()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from media_asset asset
+    where asset.id=new.asset_id and asset.video_id=new.video_id
+      and asset.kind='video' and asset.content_sha256=new.asset_sha256
+  ) then
+    raise exception 'LAS receipt must bind the reviewed video asset SHA-256';
+  end if;
+  if not exists (
+    select 1 from project_las_analysis_attempt attempt
+    where attempt.id=new.attempt_id and attempt.project_id=new.project_id
+      and attempt.video_id=new.video_id and attempt.asset_id=new.asset_id
+      and attempt.asset_sha256=new.asset_sha256 and attempt.task_key=new.task_key
+      and attempt.attempt_no=new.attempt_no and attempt.provider=new.provider
+      and attempt.account_scope=new.account_scope
+      and attempt.cost_currency=new.cost_currency
+      and attempt.provider_task_ref=new.provider_task_ref
+      and attempt.submit_job_ref=new.submit_job_ref and attempt.status=new.status
+  ) then
+    raise exception 'LAS receipt must match its durable provider attempt';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_receipt_asset on project_las_analysis_receipt;
+create trigger trg_project_las_receipt_asset
+before insert on project_las_analysis_receipt
+for each row execute function enforce_project_las_receipt_asset();
+
+create or replace function reject_project_las_receipt_change()
+returns trigger language plpgsql as $$
+begin
+  raise exception 'project_las_analysis_receipt is append-only';
+end;
+$$;
+drop trigger if exists trg_project_las_receipt_no_change on project_las_analysis_receipt;
+create trigger trg_project_las_receipt_no_change
+before update or delete on project_las_analysis_receipt
+for each row execute function reject_project_las_receipt_change();
+drop trigger if exists trg_project_las_attempt_no_delete on project_las_analysis_attempt;
+create trigger trg_project_las_attempt_no_delete
+before delete on project_las_analysis_attempt
+for each row execute function reject_project_las_receipt_change();
+
+-- Only a verified supplier line item may populate an actual charge. A later
+-- correction is another signed item, never an overwrite of the estimate.
+create table if not exists project_las_supplier_bill_item (
+  id uuid primary key default gen_random_uuid(),
+  receipt_id uuid not null,
+  project_id uuid not null,
+  video_id uuid not null,
+  provider text not null check (char_length(provider) between 1 and 120),
+  account_scope text not null check (char_length(account_scope) between 1 and 160),
+  provider_task_ref text not null check (char_length(provider_task_ref) between 1 and 512),
+  supplier_bill_ref text not null check (char_length(supplier_bill_ref) between 1 and 512),
+  supplier_line_ref text not null check (char_length(supplier_line_ref) between 1 and 512),
+  reconciliation_version integer not null check (reconciliation_version > 0),
+  signed_amount numeric(14,6) not null,
+  cost_currency text not null check (char_length(cost_currency) between 1 and 12),
+  reconciliation_status text not null default 'partial'
+    check (reconciliation_status in ('partial','final')),
+  billing_date date not null,
+  billing_timezone text not null check (char_length(billing_timezone) between 1 and 80),
+  evidence_source text not null check (evidence_source in ('volcengine_bill_api','volcengine_bill_export')),
+  supplier_evidence_sha256 text not null check (supplier_evidence_sha256 ~ '^[0-9a-f]{64}$'),
+  verified_by text not null check (char_length(verified_by) between 3 and 254),
+  verified_at timestamptz not null default now(),
+  unique (provider,account_scope,supplier_line_ref),
+  unique (receipt_id,reconciliation_version),
+  foreign key (receipt_id,project_id,video_id)
+    references project_las_analysis_receipt(id,project_id,video_id) on delete restrict
+);
+create index if not exists idx_project_las_bill_project_date
+  on project_las_supplier_bill_item(project_id,billing_date desc);
+create or replace function enforce_project_las_bill_currency()
+returns trigger language plpgsql as $$
+declare latest_version integer;
+begin
+  if not exists (
+    select 1 from project_las_analysis_receipt receipt
+    where receipt.id=new.receipt_id and receipt.project_id=new.project_id
+      and receipt.video_id=new.video_id and receipt.cost_currency=new.cost_currency
+      and receipt.provider=new.provider and receipt.account_scope=new.account_scope
+      and receipt.provider_task_ref=new.provider_task_ref
+    for update
+  ) then
+    raise exception 'LAS supplier bill must match its project receipt, account, task and currency';
+  end if;
+  select coalesce(max(item.reconciliation_version),0) into latest_version
+    from project_las_supplier_bill_item item where item.receipt_id=new.receipt_id;
+  if new.reconciliation_version<>latest_version+1 then
+    raise exception 'LAS supplier bill reconciliation version must be sequential';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_bill_currency on project_las_supplier_bill_item;
+create trigger trg_project_las_bill_currency
+before insert on project_las_supplier_bill_item
+for each row execute function enforce_project_las_bill_currency();
+drop trigger if exists trg_project_las_bill_no_change on project_las_supplier_bill_item;
+create trigger trg_project_las_bill_no_change
+before update or delete on project_las_supplier_bill_item
+for each row execute function reject_project_las_receipt_change();
+-- Project-local whole-video review is an authorization for one exact stored
+-- object and one LAS analysis purpose, never a reusable global approval.
+create table if not exists project_las_video_review (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  asset_id uuid not null,
+  asset_sha256 text not null check (asset_sha256 ~ '^[0-9a-f]{64}$'),
+  asset_manifest_fingerprint text not null check (asset_manifest_fingerprint ~ '^[0-9a-f]{64}$'),
+  delivery_origin text not null check (char_length(delivery_origin) between 1 and 160),
+  review_version text not null check (char_length(review_version) between 1 and 80),
+  operator_id text not null default 'las_video_understanding'
+    check (operator_id='las_video_understanding'),
+  template_id text not null default 'omni_video_audio_captioning@v1'
+    check (template_id='omni_video_audio_captioning@v1'),
+  model_id text not null default 'doubao-seed-2-0-lite-260428'
+    check (model_id='doubao-seed-2-0-lite-260428'),
+  review_statement jsonb not null check (
+    jsonb_typeof(review_statement)='object' and pg_column_size(review_statement)<=8192
+  ),
+  status text not null default 'draft' check (status in ('draft','approved','revoked')),
+  reviewed_by text check (reviewed_by is null or
+    (char_length(reviewed_by) between 3 and 254 and reviewed_by=lower(reviewed_by))),
+  reviewed_at timestamptz,
+  revoked_by text check (revoked_by is null or
+    (char_length(revoked_by) between 3 and 254 and revoked_by=lower(revoked_by))),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (id,project_id,video_id,asset_id),
+  unique (project_id,asset_id,review_version),
+  foreign key (project_id,video_id)
+    references project_video_inclusion(project_id,video_id) on delete restrict,
+  foreign key (asset_id,video_id)
+    references media_asset(id,video_id) on delete restrict,
+  check (
+    (status='draft' and reviewed_by is null and reviewed_at is null
+      and revoked_by is null and revoked_at is null) or
+    (status='approved' and reviewed_by is not null and reviewed_at is not null
+      and revoked_by is null and revoked_at is null) or
+    (status='revoked' and revoked_by is not null and revoked_at is not null)
+  )
+);
+create index if not exists idx_project_las_review_active
+  on project_las_video_review(project_id,video_id,reviewed_at desc)
+  where status='approved';
+
+create or replace function enforce_project_las_video_review()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from media_asset asset where asset.id=new.asset_id
+      and asset.video_id=new.video_id and asset.kind='video'
+      and asset.content_sha256=new.asset_sha256
+  ) then
+    raise exception 'LAS review requires matching stored video asset';
+  end if;
+  if tg_op='INSERT' then
+    if new.status<>'draft' then
+      raise exception 'LAS review must begin as draft';
+    end if;
+  else
+    if (new.project_id,new.video_id,new.asset_id,new.asset_sha256,
+        new.asset_manifest_fingerprint,new.delivery_origin,new.review_version,
+        new.operator_id,new.template_id,new.model_id,
+        new.review_statement,new.created_at)
+       is distinct from
+       (old.project_id,old.video_id,old.asset_id,old.asset_sha256,
+        old.asset_manifest_fingerprint,old.delivery_origin,old.review_version,
+        old.operator_id,old.template_id,old.model_id,
+        old.review_statement,old.created_at)
+       then
+      raise exception 'LAS review content is immutable';
+    end if;
+    if old.status='approved' and new.status not in ('approved','revoked') or
+       old.status='revoked' or
+       old.status='draft' and new.status not in ('draft','approved','revoked') then
+      raise exception 'LAS review state transition is invalid';
+    end if;
+    if old.status='approved' and
+       (new.reviewed_by,new.reviewed_at) is distinct from
+       (old.reviewed_by,old.reviewed_at) then
+      raise exception 'approved LAS review identity is immutable';
+    end if;
+  end if;
+  if new.status='approved' then
+    if new.reviewed_by is null or
+       char_length(btrim(coalesce(new.review_statement->>'consent_statement',''))) < 8 then
+      raise exception 'LAS approval requires human identity and statement';
+    end if;
+    new.reviewed_at := coalesce(new.reviewed_at,clock_timestamp());
+  elsif new.status='revoked' then
+    if new.revoked_by is null then
+      raise exception 'LAS revocation requires human identity';
+    end if;
+    new.revoked_at := coalesce(new.revoked_at,clock_timestamp());
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_video_review on project_las_video_review;
+create trigger trg_project_las_video_review
+before insert or update on project_las_video_review
+for each row execute function enforce_project_las_video_review();
+drop trigger if exists trg_project_las_video_review_no_delete on project_las_video_review;
+create trigger trg_project_las_video_review_no_delete
+before delete on project_las_video_review
+for each row execute function reject_project_las_receipt_change();
+
+alter table project_las_analysis_attempt
+  add column if not exists video_review_id uuid;
+alter table project_las_analysis_attempt
+  add column if not exists provider_task_recorded_at timestamptz;
+alter table project_las_analysis_attempt
+  add column if not exists requested_by text
+  check (requested_by is null or
+    (char_length(requested_by) between 3 and 254 and requested_by=lower(requested_by)));
+-- 040 could hold pre-review live attempts. Never dispatch those after this
+-- migration: cancel unsubmitted work and quarantine any claimed/provider task
+-- for manual reconciliation without claiming a reviewed completion.
+update project_las_analysis_attempt
+   set status=case when status='prepared' then 'cancelled' else 'unknown' end,
+       error_code='legacy_live_unreviewed_requires_manual_reconciliation'
+ where record_mode='live_pre_dispatch' and video_review_id is null
+   and status in ('prepared','submitting','submitted','running');
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_attempt_review_fk;
+alter table project_las_analysis_attempt
+  add constraint project_las_attempt_review_fk
+  foreign key (video_review_id,project_id,video_id,asset_id)
+  references project_las_video_review(id,project_id,video_id,asset_id) on delete restrict;
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_live_review_required;
+alter table project_las_analysis_attempt
+  add constraint project_las_live_review_required
+  check (record_mode<>'live_pre_dispatch' or video_review_id is not null or
+         status in ('cancelled','failed','completed','unknown')) not valid;
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_live_provider_required;
+alter table project_las_analysis_attempt
+  add constraint project_las_live_provider_required
+  check (record_mode<>'live_pre_dispatch' or provider='volcengine_las' or
+         (video_review_id is null and status in ('cancelled','failed','completed','unknown')))
+  not valid;
+
+create or replace function enforce_project_las_live_review_binding()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' and new.video_review_id is distinct from old.video_review_id then
+    raise exception 'LAS attempt review identity is immutable';
+  end if;
+  if new.record_mode='live_pre_dispatch' and
+     (tg_op='INSERT' or old.status='prepared' and new.status='submitting') then
+    if not exists (
+      select 1 from project_las_video_review review
+      where review.id=new.video_review_id and review.project_id=new.project_id
+        and review.video_id=new.video_id and review.asset_id=new.asset_id
+        and review.asset_sha256=new.asset_sha256 and review.status='approved'
+        and new.authorization_ref=review.id::text
+        and new.authorized_by=review.reviewed_by
+      for update of review
+    ) then
+      raise exception 'live LAS attempt requires current project video review';
+    end if;
+    if not exists (
+      select 1 from project_video_inclusion inclusion_row
+      join source_video source_row on source_row.id=inclusion_row.video_id
+      join research_project project_row on project_row.id=inclusion_row.project_id
+      join research_organization org_row on org_row.id=project_row.organization_id
+      where inclusion_row.project_id=new.project_id and inclusion_row.video_id=new.video_id
+        and inclusion_row.status='accepted' and source_row.availability_status='available'
+        and project_row.status='active' and org_row.status='active'
+      for update of inclusion_row,source_row,project_row,org_row
+    ) then
+      raise exception 'live LAS attempt requires active project and available video';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_live_review_binding on project_las_analysis_attempt;
+create trigger trg_project_las_live_review_binding
+before insert or update on project_las_analysis_attempt
+for each row execute function enforce_project_las_live_review_binding();
+
+create or replace function enforce_project_las_provider_task_time()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' then
+    if old.provider_task_recorded_at is not null and
+       new.provider_task_recorded_at is distinct from old.provider_task_recorded_at then
+      raise exception 'LAS provider task time is immutable';
+    end if;
+    if old.provider_task_ref is null and new.provider_task_ref is not null and
+       new.record_mode='live_pre_dispatch' then
+      new.provider_task_recorded_at := clock_timestamp();
+    end if;
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_provider_task_time on project_las_analysis_attempt;
+create trigger trg_project_las_provider_task_time
+before insert or update on project_las_analysis_attempt
+for each row execute function enforce_project_las_provider_task_time();
+
+create or replace function enforce_project_las_request_actor()
+returns trigger language plpgsql as $$
+begin
+  if new.record_mode='live_pre_dispatch' and tg_op='INSERT' and
+     (new.requested_by is null or not exists (
+       select 1 from (
+         select distinct on (actor_id) actor_id,role,status,effective_until
+         from research_project_member
+         where project_id=new.project_id and actor_id=new.requested_by
+           and effective_from<=now()
+         order by actor_id,effective_from desc
+       ) latest
+       where latest.status='active' and latest.role in ('owner','admin')
+         and (latest.effective_until is null or latest.effective_until>now())
+     )) then
+    raise exception 'live LAS request requires authenticated project manager';
+  end if;
+  if tg_op='UPDATE' and new.requested_by is distinct from old.requested_by then
+    raise exception 'LAS paid request identity is immutable';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_request_actor on project_las_analysis_attempt;
+create trigger trg_project_las_request_actor
+before insert or update on project_las_analysis_attempt
+for each row execute function enforce_project_las_request_actor();
+
+create or replace function enforce_project_las_live_receipt_contract()
+returns trigger language plpgsql as $$
+begin
+  if exists (
+    select 1 from project_las_analysis_attempt attempt
+    where attempt.id=new.attempt_id and attempt.record_mode='live_pre_dispatch'
+  ) and not exists (
+    select 1 from project_las_analysis_attempt attempt
+    join project_las_video_review review on review.id=attempt.video_review_id
+    where attempt.id=new.attempt_id and attempt.project_id=new.project_id
+      and attempt.video_id=new.video_id and attempt.asset_id=new.asset_id
+      and new.model_id=review.model_id and new.operator_id=review.operator_id
+      and new.operator_version='v1' and new.template_id=review.template_id
+  ) then
+    raise exception 'live LAS receipt must match reviewed provider contract';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_live_receipt_contract on project_las_analysis_receipt;
+create trigger trg_project_las_live_receipt_contract
+before insert on project_las_analysis_receipt
+for each row execute function enforce_project_las_live_receipt_contract();
+
+-- Provider summaries are private machine observations, not signed human Case
+-- reviews. Receipts and supplier bill items remain separate immutable facts.
+create table if not exists project_las_analysis_result (
+  id uuid primary key default gen_random_uuid(),
+  receipt_id uuid not null unique,
+  project_id uuid not null,
+  video_id uuid not null,
+  final_summary text not null check (char_length(final_summary) between 1 and 250000),
+  summary_sha256 text not null check (summary_sha256 ~ '^[0-9a-f]{64}$'),
+  provenance text not null default 'provider_machine_only'
+    check (provenance='provider_machine_only'),
+  created_at timestamptz not null default now(),
+  foreign key (receipt_id,project_id,video_id)
+    references project_las_analysis_receipt(id,project_id,video_id) on delete restrict
+);
+create or replace function enforce_project_las_result_binding()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from project_las_analysis_receipt receipt
+    where receipt.id=new.receipt_id and receipt.project_id=new.project_id
+      and receipt.video_id=new.video_id and receipt.status='completed'
+  ) or new.summary_sha256 <> encode(sha256(convert_to(new.final_summary,'UTF8')),'hex') then
+    raise exception 'LAS machine summary must match completed private receipt';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_result_binding on project_las_analysis_result;
+create trigger trg_project_las_result_binding
+before insert on project_las_analysis_result
+for each row execute function enforce_project_las_result_binding();
+drop trigger if exists trg_project_las_result_no_change on project_las_analysis_result;
+create trigger trg_project_las_result_no_change
+before update or delete on project_las_analysis_result
+for each row execute function reject_project_las_receipt_change();
+-- 041 approvals bound a database media reference, not immutable S3 bytes.
+-- Keep those historical records for display/reconciliation, but never turn
+-- them into a new paid submission. A non-null S3 VersionId is required for
+-- every new live attempt after this migration.
+-- The release runner owns the transaction covering this migration and its
+-- schema_migrations ledger row. Never commit inside this file: that would
+-- split the schema change from its ledger entry. Hold the attempt table lock
+-- until that outer transaction commits. If an old Worker has durably claimed
+-- a request but has not resolved its Submit transaction, abort.
+lock table project_las_analysis_attempt in access exclusive mode;
+alter table project_las_video_review
+  add column if not exists binding_scheme text not null default 'legacy_key_v1';
+alter table project_las_video_review
+  add column if not exists object_version_id text;
+alter table project_las_video_review
+  alter column binding_scheme set default 'versioned_bytes_v2';
+alter table project_las_video_review
+  drop constraint if exists project_las_review_binding_scheme_valid;
+alter table project_las_video_review
+  add constraint project_las_review_binding_scheme_valid check (
+    binding_scheme in ('legacy_key_v1','versioned_bytes_v2') and
+    (binding_scheme='legacy_key_v1' and object_version_id is null or
+     binding_scheme='versioned_bytes_v2' and object_version_id is not null and
+     char_length(object_version_id) between 1 and 512 and
+     object_version_id=btrim(object_version_id) and
+     lower(object_version_id)<>'null')
+  );
+
+alter table project_las_analysis_attempt
+  add column if not exists object_version_id text;
+alter table project_las_analysis_receipt
+  add column if not exists object_version_id text;
+
+do $$
+begin
+  if exists (
+    select 1 from project_las_analysis_attempt
+     where record_mode='live_pre_dispatch' and status='submitting'
+       and object_version_id is null
+  ) then
+    raise exception 'unresolved legacy LAS Submit claim blocks version cutover';
+  end if;
+end;
+$$;
+
+-- An old prepared request has not reached the provider. It cannot inherit a
+-- byte-level authorization after the fact. Claimed/submitted/unknown rows
+-- are deliberately left untouched so Poll and manual reconciliation remain
+-- tied to their original task IDs and may still produce legacy receipts.
+update project_las_analysis_attempt
+   set status='cancelled',error_code='legacy_object_version_unbound'
+ where record_mode='live_pre_dispatch' and object_version_id is null
+   and status='prepared';
+
+create or replace function enforce_project_las_review_version_binding()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' and
+     (new.binding_scheme,new.object_version_id) is distinct from
+     (old.binding_scheme,old.object_version_id) then
+    raise exception 'LAS review byte version is immutable';
+  end if;
+  if tg_op='INSERT' and new.binding_scheme<>'versioned_bytes_v2' then
+    raise exception 'new LAS review requires versioned bytes';
+  end if;
+  if new.status='approved' and
+     (new.binding_scheme<>'versioned_bytes_v2' or
+      new.object_version_id is null) and
+     (tg_op='INSERT' or old.status<>'approved') then
+    raise exception 'new LAS approval requires versioned bytes';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_review_version_binding on project_las_video_review;
+create trigger trg_project_las_review_version_binding
+before insert or update on project_las_video_review
+for each row execute function enforce_project_las_review_version_binding();
+
+create or replace function enforce_project_las_attempt_version_binding()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' and new.object_version_id is distinct from old.object_version_id then
+    raise exception 'LAS attempt byte version is immutable';
+  end if;
+  if new.record_mode='live_pre_dispatch' and
+     (tg_op='INSERT' or old.status='prepared' and new.status='submitting') and
+     not exists (
+       select 1 from project_las_video_review review
+       where review.id=new.video_review_id and review.status='approved'
+         and review.binding_scheme='versioned_bytes_v2'
+         and review.object_version_id is not null
+         and review.object_version_id=new.object_version_id
+     ) then
+    raise exception 'new live LAS attempt requires matching reviewed object version';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_attempt_version_binding on project_las_analysis_attempt;
+create trigger trg_project_las_attempt_version_binding
+before insert or update on project_las_analysis_attempt
+for each row execute function enforce_project_las_attempt_version_binding();
+
+create or replace function enforce_project_las_receipt_version_binding()
+returns trigger language plpgsql as $$
+declare
+  attempt_row project_las_analysis_attempt%rowtype;
+begin
+  select * into attempt_row from project_las_analysis_attempt where id=new.attempt_id;
+  if not found or new.object_version_id is distinct from attempt_row.object_version_id then
+    raise exception 'LAS receipt byte version must match its attempt';
+  end if;
+  -- A pre-042 submitted task is allowed to settle against its original ID,
+  -- but is explicitly labelled legacy/unproven rather than inventing a
+  -- VersionId. All 042 live attempts have a concrete version by the trigger.
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_receipt_version_binding on project_las_analysis_receipt;
+create trigger trg_project_las_receipt_version_binding
+before insert on project_las_analysis_receipt
+for each row execute function enforce_project_las_receipt_version_binding();
+
+-- Cloud processing permission and human whole-video review are different facts.
+-- Machine-first permission binds one project, immutable video version and LAS
+-- purpose; it never fills project_las_video_review or implies human viewing.
+lock table project_las_analysis_attempt in access exclusive mode;
+
+create table if not exists project_las_video_authorization (
+  id uuid primary key default gen_random_uuid(),
+  project_id uuid not null,
+  video_id uuid not null,
+  asset_id uuid not null,
+  asset_sha256 text not null check (asset_sha256 ~ '^[0-9a-f]{64}$'),
+  asset_manifest_fingerprint text not null
+    check (asset_manifest_fingerprint ~ '^[0-9a-f]{64}$'),
+  delivery_origin text not null check (char_length(delivery_origin) between 1 and 160),
+  object_version_id text not null check (char_length(object_version_id) between 1 and 512
+    and object_version_id=btrim(object_version_id) and lower(object_version_id)<>'null'),
+  authorization_version text not null check (authorization_version='las-machine-v1'),
+  operator_id text not null default 'las_video_understanding'
+    check (operator_id='las_video_understanding'),
+  template_id text not null default 'omni_video_audio_captioning@v1'
+    check (template_id='omni_video_audio_captioning@v1'),
+  model_id text not null default 'doubao-seed-2-0-lite-260428'
+    check (model_id='doubao-seed-2-0-lite-260428'),
+  consent_statement jsonb not null check (
+    jsonb_typeof(consent_statement)='object' and pg_column_size(consent_statement)<=8192
+  ),
+  status text not null default 'draft' check (status in ('draft','authorized','revoked')),
+  authorized_by text check (authorized_by is null or
+    (char_length(authorized_by) between 3 and 254 and authorized_by=lower(authorized_by))),
+  authorized_at timestamptz,
+  revoked_by text check (revoked_by is null or
+    (char_length(revoked_by) between 3 and 254 and revoked_by=lower(revoked_by))),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (id,project_id,video_id,asset_id),
+  foreign key (project_id,video_id)
+    references project_video_inclusion(project_id,video_id) on delete restrict,
+  foreign key (asset_id,video_id)
+    references media_asset(id,video_id) on delete restrict,
+  check (
+    (status='draft' and authorized_by is null and authorized_at is null
+      and revoked_by is null and revoked_at is null) or
+    (status='authorized' and authorized_by is not null and authorized_at is not null
+      and revoked_by is null and revoked_at is null) or
+    (status='revoked' and revoked_by is not null and revoked_at is not null)
+  )
+);
+create index if not exists idx_project_las_authorization_active
+  on project_las_video_authorization(project_id,video_id,authorized_at desc)
+  where status='authorized';
+create unique index if not exists uq_project_las_authorization_active_asset
+  on project_las_video_authorization(project_id,asset_id)
+  where status='authorized';
+
+create or replace function enforce_project_las_video_authorization()
+returns trigger language plpgsql as $$
+begin
+  if not exists (
+    select 1 from media_asset asset where asset.id=new.asset_id
+      and asset.video_id=new.video_id and asset.kind='video'
+      and asset.content_sha256=new.asset_sha256
+  ) then
+    raise exception 'LAS authorization requires matching stored video asset';
+  end if;
+  if tg_op='INSERT' then
+    if new.status<>'draft' then
+      raise exception 'LAS authorization must begin as draft';
+    end if;
+  else
+    if (new.project_id,new.video_id,new.asset_id,new.asset_sha256,
+        new.asset_manifest_fingerprint,new.delivery_origin,new.object_version_id,
+        new.authorization_version,new.operator_id,new.template_id,new.model_id,
+        new.consent_statement,new.created_at)
+       is distinct from
+       (old.project_id,old.video_id,old.asset_id,old.asset_sha256,
+        old.asset_manifest_fingerprint,old.delivery_origin,old.object_version_id,
+        old.authorization_version,old.operator_id,old.template_id,old.model_id,
+        old.consent_statement,old.created_at) then
+      raise exception 'LAS authorization content is immutable';
+    end if;
+    if old.status='authorized' and new.status not in ('authorized','revoked') or
+       old.status='revoked' or
+       old.status='draft' and new.status not in ('draft','authorized','revoked') then
+      raise exception 'LAS authorization state transition is invalid';
+    end if;
+    if old.status='authorized' and
+       (new.authorized_by,new.authorized_at) is distinct from
+       (old.authorized_by,old.authorized_at) then
+      raise exception 'LAS authorization identity is immutable';
+    end if;
+  end if;
+  if new.status='authorized' then
+    if new.authorized_by is null or
+       char_length(btrim(coalesce(new.consent_statement->>'cloud_consent',''))) < 8 or
+       new.consent_statement->>'human_review_status' is distinct from 'not_asserted' then
+      raise exception 'LAS machine-first permission requires consent without review claim';
+    end if;
+    new.authorized_at := coalesce(new.authorized_at,clock_timestamp());
+  elsif new.status='revoked' then
+    if new.revoked_by is null then
+      raise exception 'LAS authorization revocation requires identity';
+    end if;
+    new.revoked_at := coalesce(new.revoked_at,clock_timestamp());
+  end if;
+  new.updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_video_authorization on project_las_video_authorization;
+create trigger trg_project_las_video_authorization
+before insert or update on project_las_video_authorization
+for each row execute function enforce_project_las_video_authorization();
+drop trigger if exists trg_project_las_video_authorization_no_delete on project_las_video_authorization;
+create trigger trg_project_las_video_authorization_no_delete
+before delete on project_las_video_authorization
+for each row execute function reject_project_las_receipt_change();
+
+alter table project_las_analysis_attempt
+  add column if not exists video_authorization_id uuid;
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_attempt_authorization_fk;
+alter table project_las_analysis_attempt
+  add constraint project_las_attempt_authorization_fk
+  foreign key (video_authorization_id,project_id,video_id,asset_id)
+  references project_las_video_authorization(id,project_id,video_id,asset_id)
+  on delete restrict;
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_one_permission_source;
+alter table project_las_analysis_attempt
+  add constraint project_las_one_permission_source
+  check (video_review_id is null or video_authorization_id is null);
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_live_review_required;
+alter table project_las_analysis_attempt
+  drop constraint if exists project_las_live_permission_required;
+alter table project_las_analysis_attempt
+  add constraint project_las_live_permission_required
+  check (record_mode<>'live_pre_dispatch' or
+         num_nonnulls(video_review_id,video_authorization_id)=1 or
+         status in ('cancelled','failed','completed','unknown')) not valid;
+
+create or replace function enforce_project_las_authorization_attempt_identity()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' and
+     new.video_authorization_id is distinct from old.video_authorization_id then
+    raise exception 'LAS attempt authorization identity is immutable';
+  end if;
+  return new;
+end;
+$$;
+drop trigger if exists trg_project_las_authorization_attempt_identity on project_las_analysis_attempt;
+create trigger trg_project_las_authorization_attempt_identity
+before insert or update on project_las_analysis_attempt
+for each row execute function enforce_project_las_authorization_attempt_identity();
+
+create or replace function enforce_project_las_live_review_binding()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' and new.video_review_id is distinct from old.video_review_id then
+    raise exception 'LAS attempt review identity is immutable';
+  end if;
+  if new.record_mode='live_pre_dispatch' and
+     (tg_op='INSERT' or old.status='prepared' and new.status='submitting') then
+    if new.video_authorization_id is not null then
+      if not exists (
+        select 1 from project_las_video_authorization permission_row
+        where permission_row.id=new.video_authorization_id
+          and permission_row.project_id=new.project_id
+          and permission_row.video_id=new.video_id
+          and permission_row.asset_id=new.asset_id
+          and permission_row.asset_sha256=new.asset_sha256
+          and permission_row.status='authorized'
+          and new.authorization_ref=permission_row.id::text
+          and new.authorized_by=permission_row.authorized_by
+        for update of permission_row
+      ) then
+        raise exception 'live LAS attempt requires current project video authorization';
+      end if;
+    elsif not exists (
+      select 1 from project_las_video_review review
+      where review.id=new.video_review_id and review.project_id=new.project_id
+        and review.video_id=new.video_id and review.asset_id=new.asset_id
+        and review.asset_sha256=new.asset_sha256 and review.status='approved'
+        and new.authorization_ref=review.id::text
+        and new.authorized_by=review.reviewed_by
+      for update of review
+    ) then
+      raise exception 'live LAS attempt requires current project video review';
+    end if;
+    if not exists (
+      select 1 from project_video_inclusion inclusion_row
+      join source_video source_row on source_row.id=inclusion_row.video_id
+      join research_project project_row on project_row.id=inclusion_row.project_id
+      join research_organization org_row on org_row.id=project_row.organization_id
+      where inclusion_row.project_id=new.project_id and inclusion_row.video_id=new.video_id
+        and inclusion_row.status='accepted' and source_row.availability_status='available'
+        and project_row.status='active' and org_row.status='active'
+      for update of inclusion_row,source_row,project_row,org_row
+    ) then
+      raise exception 'live LAS attempt requires active project and available video';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+create or replace function enforce_project_las_attempt_version_binding()
+returns trigger language plpgsql as $$
+begin
+  if tg_op='UPDATE' and new.object_version_id is distinct from old.object_version_id then
+    raise exception 'LAS attempt byte version is immutable';
+  end if;
+  if new.record_mode='live_pre_dispatch' and
+     (tg_op='INSERT' or old.status='prepared' and new.status='submitting') then
+    if new.video_authorization_id is not null then
+      if not exists (
+        select 1 from project_las_video_authorization permission_row
+        where permission_row.id=new.video_authorization_id
+          and permission_row.status='authorized'
+          and permission_row.object_version_id=new.object_version_id
+      ) then
+        raise exception 'new live LAS attempt requires matching authorized object version';
+      end if;
+    elsif not exists (
+      select 1 from project_las_video_review review
+      where review.id=new.video_review_id and review.status='approved'
+        and review.binding_scheme='versioned_bytes_v2'
+        and review.object_version_id is not null
+        and review.object_version_id=new.object_version_id
+    ) then
+      raise exception 'new live LAS attempt requires matching reviewed object version';
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+alter table project_las_analysis_receipt
+  drop constraint if exists project_las_analysis_receipt_binding_basis_check;
+alter table project_las_analysis_receipt
+  add constraint project_las_analysis_receipt_binding_basis_check
+  check (binding_basis in ('reviewed_submission_and_result',
+                          'authorized_machine_first_and_result'));
+
+create or replace function enforce_project_las_live_receipt_contract()
+returns trigger language plpgsql as $$
+begin
+  if exists (
+    select 1 from project_las_analysis_attempt attempt
+    where attempt.id=new.attempt_id and attempt.record_mode='live_pre_dispatch'
+  ) and not exists (
+    select 1 from project_las_analysis_attempt attempt
+    left join project_las_video_review review on review.id=attempt.video_review_id
+    left join project_las_video_authorization permission_row
+      on permission_row.id=attempt.video_authorization_id
+    where attempt.id=new.attempt_id and attempt.project_id=new.project_id
+      and attempt.video_id=new.video_id and attempt.asset_id=new.asset_id
+      and new.operator_version='v1'
+      and (
+        (attempt.video_review_id is not null and new.model_id=review.model_id
+         and new.operator_id=review.operator_id and new.template_id=review.template_id
+         and new.binding_basis='reviewed_submission_and_result') or
+        (attempt.video_authorization_id is not null
+         and new.model_id=permission_row.model_id
+         and new.operator_id=permission_row.operator_id
+         and new.template_id=permission_row.template_id
+         and new.binding_basis='authorized_machine_first_and_result')
+      )
+  ) then
+    raise exception 'live LAS receipt must match its permission and provider contract';
+  end if;
+  return new;
+end;
+$$;

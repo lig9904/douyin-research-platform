@@ -13,6 +13,7 @@ import VideoLibrary from './VideoLibrary'
 import AccountLibrary from './AccountLibrary'
 import ProjectAccountMatrix from './ProjectAccountMatrix'
 import ProjectCollaboration from './ProjectCollaboration'
+import ProjectConcepts from './ProjectConcepts'
 import DecisionLoop from './DecisionLoop'
 import HotspotLibrary from './HotspotLibrary'
 import ResearchBriefs from './ResearchBriefs'
@@ -20,8 +21,10 @@ import DailyBriefing from './DailyBriefing'
 import AppShell, { type ResearchView } from './AppShell'
 import GlobalSearch from './src/components/GlobalSearch'
 import OperationsOverview from './src/components/OperationsOverview'
+import ProjectCostOverview from './src/components/ProjectCostOverview'
 import PlatformIcon from './src/components/PlatformIcon'
-import { supplierDailySpendFootnote } from './src/dailySpendDisplay'
+import { formatPlayInteractionRate } from './src/playInteractionRate'
+import { canonicalSupplierDailySpendRows, formatSupplierDailyAmount, supplierDailySpendFootnote } from './src/dailySpendDisplay'
 import {
   ProjectScopeProvider,
   type ProjectRosterItem,
@@ -46,8 +49,8 @@ type BlackhorseItem = {
   like_count?: number | null
   comment_count?: number | null
   share_count?: number | null
+  share_source_conflict?: boolean | null
   author_follower_count?: number | null
-  follower_efficiency?: number | null
   sources?: string[]
   source_count?: number
   research_level?: number
@@ -164,11 +167,11 @@ function apiCostFootnote(costs?: Overview['api_costs'], records?: number) {
 function supplierDailySpendSummary(spend?: Overview['supplier_daily_spend']) {
   if (!spend || spend.status !== 'available') return '未同步'
   if (!spend.today.length) return '当前账期暂无累计'
-  return spend.today.map((item) => {
+  return canonicalSupplierDailySpendRows(spend.today).map((item) => {
     const amount = item.total_cost
     return amount === null || amount === undefined
       ? `${item.provider} · ${item.scope_label} 待核验`
-      : `${item.provider} · ${item.scope_label} ${item.cost_currency} ${Number(amount).toFixed(3)}`
+      : `${item.provider} · ${item.scope_label} ${item.cost_currency} ${formatSupplierDailyAmount(amount)}`
   }).join('；')
 }
 
@@ -321,7 +324,7 @@ function App() {
 
   const scopeContext = { scope, projects, legacyAdmin, loading: scopeLoading, error: scopeError, chooseScope }
   const noScope = !scope
-  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs' && view !== 'accounts' && view !== 'collaboration' && view !== 'decisions'
+  const projectViewBlocked = scope?.mode === 'project' && view !== 'videos' && view !== 'briefs' && view !== 'accounts' && view !== 'collaboration' && view !== 'concepts' && view !== 'decisions' && view !== 'cost'
 
   if (noScope || projectViewBlocked) {
     const message = scopeLoading
@@ -329,7 +332,7 @@ function App() {
       : scopeError
         ? '项目范围暂时无法确认，系统不会回退加载全局历史数据。'
         : projectViewBlocked
-          ? '当前项目仅接通“视频库”“研究任务”“项目账号矩阵”和“项目协作”。其它全局页面尚未完成项目隔离，已停止加载。'
+          ? '当前项目仅接通“视频库”“研究任务”“项目账号矩阵”“项目协作”“选题草稿”“行动复盘”和“运行与成本”。其它全局页面尚未完成项目隔离，已停止加载。'
           : '请先在右上角选择一个研究项目。'
     return (
       <ProjectScopeProvider value={scopeContext}>
@@ -376,6 +379,9 @@ function App() {
   if (view === 'collaboration' && scope.mode === 'project') {
     return <ProjectScopeProvider value={scopeContext}><ProjectCollaboration key={scope.projectId} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
   }
+  if (view === 'concepts' && scope.mode === 'project') {
+    return <ProjectScopeProvider value={scopeContext}><ProjectConcepts key={scope.projectId} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
+  }
   if (view === 'decisions' && scope.mode === 'project') {
     return <ProjectScopeProvider value={scopeContext}><DecisionLoop key={scope.projectId} scope={scope} onNavigate={setView} /></ProjectScopeProvider>
   }
@@ -411,9 +417,11 @@ function App() {
         activeView="cost"
         onNavigate={(next) => setView(next)}
         title="运行与成本"
-        subtitle="Admin / Developer · 只读业务运行账本"
+        subtitle={scope.mode === 'project' ? '本项目每日执行费用 · 只读账本' : 'Admin / Developer · 只读业务运行账本'}
       >
-        <OperationsOverview platforms={data?.platforms || []} />
+        {scope.mode === 'project'
+          ? <ProjectCostOverview key={scope.projectId} projectId={scope.projectId} />
+          : <OperationsOverview platforms={data?.platforms || []} />}
       </AppShell>
       </ProjectScopeProvider>
     )
@@ -522,7 +530,7 @@ function App() {
                         <th>点赞</th>
                         <th>评论</th>
                         <th>分享</th>
-                        <th>互动/粉丝</th>
+                        <th><Tooltip title="点赞、评论、分享三项齐全且播放量大于零时计算；合并字段可能来自不同采集时间。">互动/播放（合并估算）</Tooltip></th>
                         <th>优先级</th>
                       </tr>
                     </thead>
@@ -551,8 +559,10 @@ function App() {
                           </td>
                           <td>{formatCount(item.like_count)}</td>
                           <td>{formatCount(item.comment_count)}</td>
-                          <td>{formatCount(item.share_count)}</td>
-                          <td>{item.follower_efficiency == null ? '—' : `${Number(item.follower_efficiency).toFixed(1)}%`}</td>
+                          <td>{item.share_source_conflict
+                            ? <Tooltip title="视频详情与独立统计的分享数明显不一致；请到视频库查看两种来源及时间。">{formatCount(item.share_count)} · 待核</Tooltip>
+                            : formatCount(item.share_count)}</td>
+                          <td>{formatPlayInteractionRate(item)}</td>
                           <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
                               {Math.round(Number(item.priority || 0))}

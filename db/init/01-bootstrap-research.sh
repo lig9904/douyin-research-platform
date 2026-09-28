@@ -32,7 +32,7 @@ EOSQL
 
 echo "[bootstrap] applying /bootstrap/schema.sql to $RESEARCH_DB_NAME"
 
-PGPASSWORD="$RESEARCH_DB_PASSWORD" psql -v ON_ERROR_STOP=1 \
+PGPASSWORD="$RESEARCH_DB_PASSWORD" psql -v ON_ERROR_STOP=1 --single-transaction \
   --username "$RESEARCH_DB_USER" \
   --dbname "$RESEARCH_DB_NAME" \
   --file /bootstrap/schema.sql

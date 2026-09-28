@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Alert, Button, Modal, Pagination, Select, Spin, Table, Tag } from 'antd'
 import { backend } from '../../backend'
 import { taskCostSummaryText, taskCostText } from '../operationsCostDisplay'
+import { canonicalSupplierDailySpendRows, hasSupplierDailySpendRecord, supplierDailySpendPeriodText } from '../dailySpendDisplay'
 import PlatformIcon from './PlatformIcon'
 
 type Platform = { key: string; name: string; enabled: boolean }
@@ -12,6 +13,11 @@ type Operations = {
   supplier_daily_spend: {
     status: 'available' | 'not_synced'; message?: string | null
     today: SupplierDailySpend[]; records: SupplierDailySpend[]
+  }
+  volc_billing_sync_gaps?: {
+    status: 'available' | 'not_configured'; pending_count: number | null; resolved_count: number | null
+    pending_dates: { account_scope: string; billing_date: string; attempt_count: number; last_attempt_at?: string | null; next_attempt_after?: string | null; last_result_code?: string | null }[]
+    message?: string | null
   }
   api_calls: { id: string; provider: string; platform: string; endpoint_key: string; status: string; http_status?: number | null; cached: boolean; estimated_cost?: number | null; actual_cost?: number | null; cost_currency: string; cost_basis: string; price_source?: string | null; pricing_version?: string | null; http_attempt_count?: number | null; unknown_attempt_count?: number | null; cost_status: 'estimated' | 'reconciled' | 'known_zero' | 'unknown'; billing_status: 'estimated' | 'unknown' | 'known_zero'; started_at: string }[]
   run_summary: { total_runs?: number; running_runs?: number; failed_runs?: number }
@@ -64,8 +70,12 @@ function supplierAmount(row: SupplierDailySpend) {
     : `${value(row.total_cost)} ${row.cost_currency}`
 }
 
-function supplierPeriod(row: SupplierDailySpend) {
-  return row.period_status === 'current_accumulating' ? '当前账期累计' : '历史末次累计（未终账）'
+function billGapResultText(code?: string | null) {
+  const labels: Record<string, string> = {
+    bill_unavailable: '供应商账单尚不可用', snapshot_rejected: '账单未通过校验', scope_conflict: '账单范围冲突，需人工核对',
+    execution_failed: '同步任务失败', snapshot_written: '已有采集快照', already_final: '已终账',
+  }
+  return code ? labels[code] || '待核验' : '尚未尝试'
 }
 
 export default function OperationsOverview({ platforms }: { platforms: Platform[] }) {
@@ -140,17 +150,36 @@ export default function OperationsOverview({ platforms }: { platforms: Platform[
         <div className="card"><span>已记账任务</span><strong>{value(data?.task_total)}</strong><small>任务列表按创建时间分页</small></div>
       </div>
       <section className="card operations-section"><h2>供应商每日实际费用</h2>
-        <p className="operations-supplier-note">按供应商声明的账户或产品范围展示，不按页面的平台筛选；不同范围和币种不合并。当前账期是累计值，最终以供应商结算页为准。</p>
+        <p className="operations-supplier-note">按供应商声明的账户或产品范围展示，不按页面的平台筛选；不同范围和币种不合并。应付、已付以供应商账单字段为准；显示 0 元不代表没有调用或折后计费值。当前账期尚可能补账，最终以供应商结算页为准。</p>
+        {!data?.volc_billing_sync_gaps || data.volc_billing_sync_gaps.status !== 'available' ? (
+          <Alert type="warning" showIcon message="火山日账缺口状态不可用" description={data?.volc_billing_sync_gaps?.message || '尚未取得缺口跟踪状态；不能把未同步日期记作零费用。'} />
+        ) : <>
+          <p className="operations-supplier-note">火山账户日账待核 {data.volc_billing_sync_gaps.pending_count} 天 · 已取得有效快照 {data.volc_billing_sync_gaps.resolved_count} 天。待核日期没有可确认金额，不计为零；已取得快照也不等于已终账。</p>
+          {data.volc_billing_sync_gaps.message && <Alert type="info" showIcon message={data.volc_billing_sync_gaps.message} />}
+          {(data.volc_billing_sync_gaps.pending_count || 0) > 0 && <>
+            <Alert type="warning" showIcon message={`有 ${data.volc_billing_sync_gaps.pending_count} 个火山账期待核`} description="这些日期的实际费用尚不能确认；请检查同步任务与供应商账单，勿用本地报价估算或 0 元替代。" />
+            <Table size="small" rowKey={(row) => `${row.account_scope}-${row.billing_date}`} pagination={false} dataSource={data.volc_billing_sync_gaps.pending_dates} columns={[
+              { title: '待核日期', dataIndex: 'billing_date' },
+              { title: '账单账户', dataIndex: 'account_scope' },
+              { title: '核对状态', render: (_, row) => billGapResultText(row.last_result_code) },
+              { title: '尝试次数', dataIndex: 'attempt_count' },
+              { title: '上次尝试', render: (_, row) => time(row.last_attempt_at) },
+              { title: '下次可重试', render: (_, row) => time(row.next_attempt_after) },
+            ]} />
+            {(data.volc_billing_sync_gaps.pending_count || 0) > data.volc_billing_sync_gaps.pending_dates.length && <p className="operations-supplier-note">只展示最近 {data.volc_billing_sync_gaps.pending_dates.length} 个待核账期；待核总数以上方统计为准。</p>}
+          </>}
+        </>}
         {data?.supplier_daily_spend.status !== 'available' ? (
           <Alert type="warning" showIcon message="供应商日费用未同步" description={data?.supplier_daily_spend.message || '暂无可显示的实际费用；不会用 0 替代。'} />
         ) : <>
           {data.supplier_daily_spend.today.some((row) => row.freshness_status === 'stale') && <Alert type="warning" showIcon message="供应商当日费用可能过期" description="最近同步时间超过 2 小时，请检查供应商费用同步任务。" />}
-          <Table size="small" rowKey={(row) => `${row.provider}-${row.account_scope}-${row.bill_scope_key}-${row.billing_date}-${row.cost_currency}`} pagination={false} dataSource={data.supplier_daily_spend.records} columns={[
+          {!hasSupplierDailySpendRecord(data.supplier_daily_spend.today, 'volcengine-billing', 'account_total') && <Alert type="warning" showIcon message="当前账期无火山账户日账" description="历史账期、产品明细或其他供应商记录不等于火山付款账户的当日日总额；未出账项目也不能记成零。" />}
+          <Table size="small" rowKey={(row) => `${row.provider}-${row.account_scope}-${row.bill_scope_key}-${row.billing_date}-${row.cost_currency}`} pagination={false} dataSource={canonicalSupplierDailySpendRows(data.supplier_daily_spend.records)} columns={[
             { title: '账期日期', dataIndex: 'billing_date' },
             { title: '供应商 / 账单范围', render: (_, row) => `${row.provider} · ${row.account_scope} · ${row.scope_label}` },
             { title: '供应商当日金额', render: (_, row) => supplierAmount(row) },
             { title: '调用次数', render: (_, row) => row.total_requests === null || row.total_requests === undefined ? '次数待供应商核验' : `${value(row.total_requests)}（付费 ${row.paid_requests === null || row.paid_requests === undefined ? '待核验' : value(row.paid_requests)}）` },
-            { title: '账期状态', render: (_, row) => <><Tag color={row.period_status === 'current_accumulating' ? 'blue' : 'default'}>{supplierPeriod(row)}</Tag><Tag color={row.source_warning ? 'warning' : row.billing_finality === 'final' ? 'green' : 'default'}>{row.source_warning ? '供应商警告' : row.billing_finality === 'final' ? '已终账' : '未终账'}</Tag></> },
+            { title: '账期状态', render: (_, row) => <><Tag color={row.period_status === 'current_accumulating' ? 'blue' : 'default'}>{supplierDailySpendPeriodText(row)}</Tag><Tag color={row.source_warning ? 'warning' : row.billing_finality === 'final' ? 'green' : 'default'}>{row.source_warning ? '供应商警告' : row.billing_finality === 'final' ? '已终账' : '未终账'}</Tag></> },
             { title: '供应商时区', dataIndex: 'billing_timezone' },
             { title: '最后同步', render: (_, row) => <span>{time(row.fetched_at)}{row.period_status === 'prior_snapshot' ? <Tag>采集快照</Tag> : row.freshness_status === 'stale' ? <Tag color="warning">可能过期</Tag> : <Tag color="green">已同步</Tag>}</span> },
           ]} />

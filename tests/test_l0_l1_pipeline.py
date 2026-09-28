@@ -63,6 +63,10 @@ def obs(
 def clear_db() -> None:
     assert DSN
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute("""delete from project_video_inclusion where project_id in
+                       (select id from research_project where slug='profile-raw-project')""")
+        cur.execute("delete from research_project where slug='profile-raw-project'")
+        cur.execute("delete from research_organization where slug='profile-raw-org'")
         for table in (
             "video_score",
             "pipeline_run_item",
@@ -189,3 +193,85 @@ def test_l1_does_not_create_analysis_runs() -> None:
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute("select count(*) from analysis_run")
         assert cur.fetchone()[0] == 0
+
+
+def test_verified_profile_snapshot_is_raw_bound_and_idempotent() -> None:
+    assert DSN
+    clear_db()
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """insert into source_account(platform,platform_account_id,nickname)
+               values ('douyin','sec-profile','旧昵称') returning id"""
+        )
+        account_id = cur.fetchone()[0]
+        cur.execute(
+            """insert into research_organization(slug,name)
+               values ('profile-raw-org','资料组织') returning id"""
+        )
+        organization_id = cur.fetchone()[0]
+        cur.execute(
+            """insert into research_project(organization_id,slug,name,status)
+               values (%s,'profile-raw-project','资料项目','active') returning id""",
+            (organization_id,),
+        )
+        project_id = cur.fetchone()[0]
+        cur.execute(
+            """insert into research_project_member(project_id,actor_id,role)
+               values (%s,'profile-owner@example.com','owner')""", (project_id,),
+        )
+        video_platform_id = "7658347686323555610"
+        cur.execute(
+            """insert into source_video(platform,platform_video_id,account_id)
+               values ('douyin',%s,%s) returning id""",
+            (video_platform_id, account_id),
+        )
+        video_id = cur.fetchone()[0]
+        cur.execute(
+            """insert into project_video_inclusion(project_id,video_id,source_type,status)
+               values (%s,%s,'manual','accepted')""", (project_id, video_id),
+        )
+        cur.execute(
+            """insert into external_api_response(
+                 provider,platform,endpoint_key,request_fingerprint,http_status,
+                 response_code,response_body)
+               values ('tikhub','douyin','douyin.app.user_profile','profile-fp',
+                 200,'200',%s::jsonb) returning id""",
+            ('{"code":200,"data":{"user":{"sec_uid":"sec-profile",'
+             '"follower_count":1755,"nickname":"新昵称"}}}',),
+        )
+        raw_id = cur.fetchone()[0]
+    account = AccountRef(
+        provider="tikhub", platform="douyin", platform_account_id="sec-profile",
+        sec_user_id="sec-profile", follower_count=1755,
+        raw_ref=f"external_api_response:{raw_id}",
+    )
+    store = L0L1Store(DSN)
+    assert store.ingest_verified_account_profile(
+        account, endpoint_key="douyin.app.user_profile",
+        project_id=project_id, video_platform_id=video_platform_id,
+        actor="profile-owner@example.com",
+    ) == (account_id, True)
+    assert store.ingest_verified_account_profile(
+        account, endpoint_key="douyin.app.user_profile",
+        project_id=project_id, video_platform_id=video_platform_id,
+        actor="profile-owner@example.com",
+    ) == (account_id, False)
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            """select count(*),max(follower_count),
+                      max(raw_metrics->>'raw_ref')
+               from account_metric_snapshot
+               where observation_key like 'account-profile:%%'"""
+        )
+        assert cur.fetchone() == (1, 1755, account.raw_ref)
+    with pytest.raises(ValueError, match="differs from raw response"):
+        store.ingest_verified_account_profile(
+            AccountRef(
+                provider="tikhub", platform="douyin", platform_account_id="sec-profile",
+                sec_user_id="sec-profile", follower_count=9000,
+                raw_ref=f"external_api_response:{raw_id}",
+            ), endpoint_key="douyin.app.user_profile",
+            project_id=project_id, video_platform_id=video_platform_id,
+            actor="profile-owner@example.com",
+        )
+    clear_db()

@@ -22,7 +22,8 @@ def test_media_worker_release_has_pinned_dependency_lock():
     metadata = SCRIPT.with_suffix(".script.yaml").read_text()
     commit = re.search(r"douyin-research-platform@([0-9a-f]{40})", SCRIPT.read_text()).group(1)
     assert f"douyin-research-platform@{commit}" in lock
-    assert lock.startswith("# workspace-dependencies-mode: manual\n# py: 3.14\n")
+    assert lock.startswith("# py: 3.14\n")
+    assert "workspace-dependencies-mode: manual" not in lock
     assert "lock: '!inline f/content_research/collectors/ingest_video_media.script.lock'" in metadata
     assert "psycopg==3.3.6" in lock
     assert "wmill==1.815.0" in lock
@@ -47,7 +48,7 @@ def test_only_video_identity_is_a_public_argument():
     with pytest.raises(TypeError):
         module.main(video_id=str(uuid4()), db={"host": "attacker.test"})
     assert "WM_END_USER_EMAIL" not in SCRIPT.read_text()
-    assert "fd2694729c784a0f2e34b2c0a4d6746da57813fe" in SCRIPT.read_text()
+    assert "5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180" in SCRIPT.read_text()
 
 
 def test_invalid_video_is_rejected_before_loading_secrets(monkeypatch):

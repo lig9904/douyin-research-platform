@@ -197,7 +197,7 @@ cmd_test() {
     -c "DROP DATABASE IF EXISTS ${test_database} WITH (FORCE)" \
     -c "CREATE DATABASE ${test_database} OWNER ${research_user}" >/dev/null
   compose exec -T postgres bash -c \
-    'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec psql -v ON_ERROR_STOP=1 -U "$RESEARCH_DB_USER" -d douyin_research_test -f /bootstrap/schema.sql' \
+    'PGPASSWORD="$RESEARCH_DB_PASSWORD" exec psql -v ON_ERROR_STOP=1 --single-transaction -U "$RESEARCH_DB_USER" -d douyin_research_test -f /bootstrap/schema.sql' \
     >/dev/null
   for migration_path in "$ROOT_DIR"/db/migrations/*.sql; do
     compose exec -T postgres bash -c \

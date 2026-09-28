@@ -15,13 +15,20 @@ import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import L3ReviewPanel from './src/components/L3ReviewPanel'
 import ASRMediaReviewPanel from './src/components/ASRMediaReviewPanel'
+import ProjectASRMediaReviewPanel from './src/components/ProjectASRMediaReviewPanel'
+import ProjectL3ReviewPanel from './src/components/ProjectL3ReviewPanel'
 import VideoMediaPreview from './src/components/VideoMediaPreview'
+import ProjectVideoMediaPreview, { type VideoSeekRequest } from './src/components/ProjectVideoMediaPreview'
+import ProjectLASVideoReviewPanel from './src/components/ProjectLASVideoReviewPanel'
 import ASRTranscriptPanel, { type ASRTranscript } from './src/components/ASRTranscriptPanel'
 import MetricTimeline from './src/components/MetricTimeline'
 import RawRecordPanel from './src/components/RawRecordPanel'
 import PlatformIcon from './src/components/PlatformIcon'
 import ProjectVideoEvidence from './ProjectVideoEvidence'
-import type { ProjectScope } from './src/projectScope'
+import ProjectCaseReviewPanel from './ProjectCaseReviewPanel'
+import ProjectVideoComparison from './ProjectVideoComparison'
+import { useProjectScope, type ProjectScope } from './src/projectScope'
+import { formatPlayInteractionRate } from './src/playInteractionRate'
 import {
   getResearchUserState,
   mutateResearchState,
@@ -56,13 +63,21 @@ type VideoItem = {
   collect_count?: number | null
   author_follower_count?: number | null
   metric_captured_at?: string | null
-  metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'other' | null
+  metric_source_kind?: 'merged' | 'billboard' | 'detail' | 'statistics' | 'other' | null
   metric_provenance?: Record<string, { source_kind: string; captured_at: string }>
+  share_source_comparison?: {
+    detail: number
+    detail_at: string
+    statistics: number
+    statistics_at: string
+  } | null
+  share_source_conflict?: boolean | null
   priority: number | null
-  follower_efficiency?: number | null
   sources: string[]
   source_count: number
   collection_count: number | null
+  project_inclusion_status?: 'candidate' | 'shortlisted' | 'accepted' | 'rejected' | null
+  project_case_review_status?: 'partial' | 'complete' | 'insufficient' | null
   evidence?: {
     source_type: string
     source_key?: string | null
@@ -75,6 +90,15 @@ type VideoItem = {
     like_count?: number | null
     published_at?: string | null
   }[]
+  comment_features?: {
+    feature_version: string
+    calculated_at: string
+    sampled_comment_count: number
+    source_observation_count: number
+    eligible_text_count: number | null
+    question_text_count: number
+    duplicate_text_count: number | null
+  } | null
   l3_analysis?: L3Analysis | null
   asr_transcript?: ASRTranscript | null
 }
@@ -122,6 +146,7 @@ type Filters = {
   days: number
   research_level: number
   source_type: string
+  case_review: 'all' | 'pending' | 'complete'
   priority_min: number
   status: string
   play_min: number
@@ -156,6 +181,38 @@ function formatCount(v?: number | null) {
   if (v >= 100000000) return `${(v / 100000000).toFixed(1)}亿`
   if (v >= 10000) return `${(v / 10000).toFixed(1)}万`
   return Number(v).toLocaleString('zh-CN')
+}
+
+function hasVerifiedFollowerCount(item: VideoItem) {
+  return item.metric_provenance?.author_follower_count?.source_kind === 'verified_account_profile'
+}
+
+function formatFollowerCount(v?: number | null, verified = false) {
+  return v === 0 && !verified ? '0 · 待核' : formatCount(v)
+}
+
+const zeroFollowerExplanation = '上游接口返回账号粉丝 0，尚不能据此认定真实为零；请核对账号主页或独立账号接口，以及采集时间。'
+
+function shareSourceExplanation(item: VideoItem) {
+  const comparison = item.share_source_comparison
+  if (!comparison) return '不同接口的分享数可能采用不同口径或采集时间；展开指标历史核对。'
+  return `独立视频统计 ${formatCount(comparison.statistics)}（${formatFullDate(comparison.statistics_at)}）；视频详情 ${formatCount(comparison.detail)}（${formatFullDate(comparison.detail_at)}）。来源差异未厘清，暂不使用分享率或混合互动率比较作品。`
+}
+
+function hasContradictoryZeroPlay(item: VideoItem) {
+  return item.play_count === 0 && [
+    item.like_count, item.comment_count, item.share_count, item.collect_count,
+  ].some(value => typeof value === 'number' && value > 0)
+}
+
+function projectInclusionLabel(status?: VideoItem['project_inclusion_status']) {
+  switch (status) {
+    case 'accepted': return '已接受'
+    case 'shortlisted': return '已预选'
+    case 'candidate': return '待核候选'
+    case 'rejected': return '未采纳'
+    default: return '待核'
+  }
 }
 
 function formatDate(v?: string | null) {
@@ -229,6 +286,7 @@ const initialFilters: Filters = {
   days: 30,
   research_level: -1,
   source_type: 'all',
+  case_review: 'all',
   priority_min: -1,
   status: 'all',
   play_min: -1,
@@ -253,16 +311,27 @@ export default function VideoLibrary({
 }) {
   const isProject = scope.mode === 'project'
   const projectId = isProject ? scope.projectId : undefined
+  const { projects } = useProjectScope()
+  const currentProject = projects.find(item => item.id === projectId)
+  const projectRole = currentProject?.member_role
+  const canReviewProject = projectRole === 'owner' || projectRole === 'admin'
+  const canReviewProjectL3 = canReviewProject && currentProject?.can_review_l3 === true
   const [filters, setFilters] = useState<Filters>(initialFilters)
   const [draft, setDraft] = useState<Filters>(initialFilters)
   const [data, setData] = useState<VideoLibraryData | null>(null)
   const [selectedVideoId, setSelectedVideoId] = useState(initialSelectedVideoId)
+  const [videoSeekRequest, setVideoSeekRequest] = useState<VideoSeekRequest | null>(null)
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
+  const [comparisonIds, setComparisonIds] = useState<string[]>([])
+  const [compareOpen, setCompareOpen] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [writeBusy, setWriteBusy] = useState(false)
   const [writeNotice, setWriteNotice] = useState('')
   const [writeError, setWriteError] = useState('')
+  const activeProjectIdRef = useRef(projectId)
+  const activeVideoPlatformIdRef = useRef('')
+  activeProjectIdRef.current = projectId
   const [userState, setUserState] = useState<ResearchUserState | null>(null)
   const [collectionModalOpen, setCollectionModalOpen] = useState(false)
   const [collectionName, setCollectionName] = useState('')
@@ -303,10 +372,22 @@ export default function VideoLibrary({
   }, [filters, projectId])
 
   useEffect(() => {
+    setComparisonIds([])
+    setCompareOpen(false)
+  }, [filters])
+
+  useEffect(() => {
+    setFilters(initialFilters)
+    setDraft(initialFilters)
     setSelectedVideoId('')
     setSelectedRows(new Set())
+    setComparisonIds([])
+    setCompareOpen(false)
     setData(null)
     setError('')
+    setWriteBusy(false)
+    setWriteNotice('')
+    setWriteError('')
   }, [projectId])
 
   const loadUserState = async () => {
@@ -328,6 +409,7 @@ export default function VideoLibrary({
   ]
 
   const detail = data?.detail && 'id' in data.detail ? (data.detail as VideoItem) : null
+  activeVideoPlatformIdRef.current = detail?.platform_video_id || ''
 
   const totalPages = useMemo(
     () => Math.max(1, Math.ceil((data?.total || 0) / Math.max(1, filters.page_size))),
@@ -338,6 +420,8 @@ export default function VideoLibrary({
     const next = { ...draft, page: 1 }
     setSelectedVideoId('')
     setSelectedRows(new Set())
+    setComparisonIds([])
+    setCompareOpen(false)
     setFilters(next)
   }
 
@@ -345,6 +429,8 @@ export default function VideoLibrary({
     setDraft(initialFilters)
     setSelectedVideoId('')
     setSelectedRows(new Set())
+    setComparisonIds([])
+    setCompareOpen(false)
     setFilters(initialFilters)
   }
 
@@ -353,6 +439,8 @@ export default function VideoLibrary({
     setDraft(next)
     setSelectedVideoId('')
     setSelectedRows(new Set())
+    setComparisonIds([])
+    setCompareOpen(false)
     setFilters(next)
   }
 
@@ -362,10 +450,18 @@ export default function VideoLibrary({
   }
 
   const showAcceptedVideo = (id: string) => {
-    const next = { ...initialFilters, days: 365 }
+    const next = { ...initialFilters }
     setSelectedVideoId(id)
+    setComparisonIds([])
+    setCompareOpen(false)
     setDraft(next)
     setFilters(next)
+  }
+
+  const toggleComparison = (id: string, checked: boolean) => {
+    setComparisonIds(current => checked
+      ? current.length < 2 && !current.includes(id) ? [...current, id] : current
+      : current.filter(value => value !== id))
   }
 
   const toggleRow = (id: string, checked: boolean) => {
@@ -390,6 +486,108 @@ export default function VideoLibrary({
       setWriteError(e instanceof Error ? e.message : String(e))
     } finally {
       setWriteBusy(false)
+    }
+  }
+
+  const refreshProjectAccountProfile = async (videoPlatformId: string) => {
+    if (!projectId || !canReviewProject || !/^\d{15,25}$/.test(videoPlatformId)) return
+    const targetProjectId = projectId
+    let confirmationOpened = false
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      const preview = await backend.refresh_project_account_profile({
+        project_id: targetProjectId,
+        video_platform_id: videoPlatformId,
+        action: 'preview',
+      }) as { eligible?: boolean; maximum_new_calls?: number; estimated_base_price_usd?: number }
+      if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId || preview.eligible !== true) return
+      confirmationOpened = true
+      Modal.confirm({
+        title: '刷新本项目的公开账号资料？',
+        content: `仅核验当前已接受视频的账号；缓存未命中时最多发起 ${preview.maximum_new_calls ?? 1} 次 TikHub 请求。基础价估算 USD ${Number(preview.estimated_base_price_usd ?? 0.001).toFixed(3)}，实际费用以供应商日账为准。不会发送评论、音频或转写。`,
+        okText: '确认付费刷新',
+        cancelText: '取消',
+        onCancel: () => setWriteBusy(false),
+        onOk: async () => {
+          if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId) {
+            setWriteBusy(false)
+            return
+          }
+          setWriteBusy(true)
+          try {
+            const result = await backend.refresh_project_account_profile({
+              project_id: targetProjectId,
+              video_platform_id: videoPlatformId,
+              action: 'execute',
+              confirmation: 'REFRESH_PUBLIC_ACCOUNT_PROFILE_PAID',
+            }) as { external_calls?: number; cached_calls?: number; snapshots_inserted?: number }
+            if (activeProjectIdRef.current !== targetProjectId) return
+            setWriteNotice(`账号资料已刷新：新增请求 ${result.external_calls ?? 0} 次，缓存命中 ${result.cached_calls ?? 0} 次，保存快照 ${result.snapshots_inserted ?? 0} 条；实扣待日账核对。`)
+            await load(filters, selectedVideoId)
+          } catch (e) {
+            if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+          } finally {
+            if (activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
+          }
+        },
+      })
+    } catch (e) {
+      if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (!confirmationOpened && activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
+    }
+  }
+
+  const refreshProjectVideoStatistics = async (videoPlatformId: string) => {
+    if (!projectId || !canReviewProject || !/^\d{15,25}$/.test(videoPlatformId)) return
+    const targetProjectId = projectId
+    let confirmationOpened = false
+    setWriteBusy(true)
+    setWriteError('')
+    setWriteNotice('')
+    try {
+      const preview = await backend.refresh_project_video_statistics({
+        project_id: targetProjectId,
+        video_platform_ids: [videoPlatformId],
+        action: 'preview',
+      }) as { eligible?: boolean; maximum_new_calls?: number; estimated_base_price_usd?: number }
+      if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId || preview.eligible !== true) return
+      confirmationOpened = true
+      Modal.confirm({
+        title: '核验这条视频的公开播放量？',
+        content: `详情接口的 0 播放可能是缺失值。缓存未命中时最多发起 ${preview.maximum_new_calls ?? 1} 次 TikHub 统计请求，基础价估算 USD ${Number(preview.estimated_base_price_usd ?? 0.001).toFixed(3)}；实扣以供应商日账为准。保留原始详情快照，不发送评论、音频或转写。`,
+        okText: '确认付费核验',
+        cancelText: '取消',
+        onCancel: () => setWriteBusy(false),
+        onOk: async () => {
+          if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId) {
+            setWriteBusy(false)
+            return
+          }
+          setWriteBusy(true)
+          try {
+            const result = await backend.refresh_project_video_statistics({
+              project_id: targetProjectId,
+              video_platform_ids: [videoPlatformId],
+              action: 'execute',
+              confirmation: 'REFRESH_PUBLIC_VIDEO_STATISTICS_PAID',
+            }) as { play_counts?: Record<string, number>; external_calls?: number; cached_calls?: number; snapshots_inserted?: number }
+            if (activeProjectIdRef.current !== targetProjectId || activeVideoPlatformIdRef.current !== videoPlatformId) return
+            setWriteNotice(`播放量核验：${result.play_counts?.[videoPlatformId] ?? '未返回'}；新增请求 ${result.external_calls ?? 0} 次、缓存命中 ${result.cached_calls ?? 0} 次、保存快照 ${result.snapshots_inserted ?? 0} 条。实扣待日账核对。`)
+            await load(filters, selectedVideoId)
+          } catch (e) {
+            if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+          } finally {
+            if (activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
+          }
+        },
+      })
+    } catch (e) {
+      if (activeProjectIdRef.current === targetProjectId) setWriteError(e instanceof Error ? e.message : String(e))
+    } finally {
+      if (!confirmationOpened && activeProjectIdRef.current === targetProjectId) setWriteBusy(false)
     }
   }
 
@@ -446,7 +644,7 @@ export default function VideoLibrary({
       activeView="videos"
       onNavigate={onNavigate}
       title="视频库"
-      subtitle={isProject ? `项目范围：${scope.projectName} · 仅显示已明确纳入本项目的视频与安全依据` : '多平台视频资产 / 黑马候选 / 研究流转'}
+      subtitle={isProject ? `项目范围：${scope.projectName} · 含采集候选；逐条核对实际内容后才算研究依据` : '多平台视频资产 / 黑马候选 / 研究流转'}
       mainClassName="video-library-main"
       headerClassName="video-library-topbar"
       actions={
@@ -459,16 +657,15 @@ export default function VideoLibrary({
             onSearch={applyFilters}
             allowClear
           />
-          <Select
+          {isProject ? <span className="project-all-videos-label">项目全部视频</span> : <Select
             value={draft.days}
             onChange={(days) => setDraft({ ...draft, days })}
             options={[
               { value: 7, label: '近7天' },
               { value: 30, label: '近30天' },
               { value: 90, label: '近90天' },
-              ...(isProject ? [{ value: 365, label: '近一年' }] : []),
             ]}
-          />
+          />}
           {!isProject && !!userState?.saved_filters.length && (
             <Select
               placeholder="已保存筛选"
@@ -486,11 +683,11 @@ export default function VideoLibrary({
         </>
       }
     >
-          {projectId ? <ProjectVideoEvidence projectId={projectId} onAccepted={showAcceptedVideo} /> : null}
-          {!isProject && writeNotice && (
+          {projectId ? <ProjectVideoEvidence key={projectId} projectId={projectId} onAccepted={showAcceptedVideo} /> : null}
+          {writeNotice && (
             <Alert type="success" showIcon message={writeNotice} closable onClose={() => setWriteNotice('')} />
           )}
-          {!isProject && writeError && (
+          {writeError && (
             <Alert type="error" showIcon message="写操作失败" description={writeError} closable onClose={() => setWriteError('')} />
           )}
           <section className="platform-strip card">
@@ -583,6 +780,18 @@ export default function VideoLibrary({
                   ]}
                 />
               </label>}
+              {isProject && <label>
+                <span>案例核看</span>
+                <Select aria-label="案例核看筛选"
+                  value={draft.case_review}
+                  onChange={(case_review) => setDraft({ ...draft, case_review })}
+                  options={[
+                    { value: 'all', label: '全部项目视频' },
+                    { value: 'pending', label: '待核案例（已接受）' },
+                    { value: 'complete', label: '完整案例（已接受）' },
+                  ]}
+                />
+              </label>}
 
               <label>
                 <span>播放量</span>
@@ -629,10 +838,10 @@ export default function VideoLibrary({
                 />
               </label>}
               <label className="keyword-filter">
-                <span>关键词搜索</span>
+                <span>关键词或视频 ID</span>
                 <Input
                   value={draft.query}
-                  placeholder="搜索视频标题、账号名称..."
+                  placeholder="搜索标题、账号或精确视频 ID..."
                   onChange={(e) => setDraft({ ...draft, query: e.target.value })}
                   onPressEnter={applyFilters}
                 />
@@ -686,19 +895,21 @@ export default function VideoLibrary({
                   <table className="video-list-table">
                     <thead>
                       <tr>
-                        {!isProject && <th className="check-col" />}
+                        <th className="check-col">{isProject ? '对照' : ''}</th>
                         <th>#</th>
                         <th className="video-info-col">视频信息</th>
                         <th>账号名称</th>
                         <th>平台</th>
                         <th>来源标签</th>
+                        {isProject && <th>项目状态</th>}
+                        {isProject && <th>案例核看</th>}
                         <th>发布时间</th>
                         <th>播放量</th>
                         <th>点赞</th>
                         <th>评论</th>
                         <th>分享</th>
                         <th>粉丝数</th>
-                        <th>互动效率（合并估算）</th>
+                        <th><Tooltip title="点赞、评论、分享三项齐全且播放量大于零时计算；若相近时间的详情/独立统计分享数明显不一致，则暂不计算。合并字段可能来自不同采集时间，不代表完播、增长或平台推荐效果。">互动/播放（合并估算）</Tooltip></th>
                         {!isProject && <th>优先级</th>}
                         {!isProject && <th>研究层级</th>}
                         {!isProject && <th>状态</th>}
@@ -711,12 +922,17 @@ export default function VideoLibrary({
                           className={selectedVideoId === item.id ? 'selected-detail-row' : ''}
                           onClick={() => selectDetail(item.id)}
                         >
-                          {!isProject && <td onClick={(e) => e.stopPropagation()}>
+                          <td onClick={(e) => e.stopPropagation()}>
                               <Checkbox
-                                checked={selectedRows.has(item.id)}
-                                onChange={(e) => toggleRow(item.id, e.target.checked)}
+                                aria-label={isProject ? `对照选择 ${item.title}` : `选择 ${item.title}`}
+                                checked={isProject ? comparisonIds.includes(item.id) : selectedRows.has(item.id)}
+                                disabled={isProject && (item.project_inclusion_status !== 'accepted' ||
+                                  (comparisonIds.length >= 2 && !comparisonIds.includes(item.id)))}
+                                onChange={(e) => isProject
+                                  ? toggleComparison(item.id, e.target.checked)
+                                  : toggleRow(item.id, e.target.checked)}
                               />
-                            </td>}
+                            </td>
                           <td>{(filters.page - 1) * filters.page_size + idx + 1}</td>
                           <td>
                             <div className="video-list-title">
@@ -738,7 +954,9 @@ export default function VideoLibrary({
                               <span className="avatar">{(item.account_name || '?').slice(0, 1)}</span>
                               <div>
                                 <strong>{item.account_name || '未知账号'}</strong>
-                                <small>{formatCount(item.author_follower_count)}</small>
+                                <small>{item.author_follower_count === 0 && !hasVerifiedFollowerCount(item)
+                                  ? <Tooltip title={zeroFollowerExplanation}>{formatFollowerCount(item.author_follower_count)}</Tooltip>
+                                  : formatFollowerCount(item.author_follower_count, hasVerifiedFollowerCount(item))}</small>
                               </div>
                             </div>
                           </td>
@@ -750,17 +968,30 @@ export default function VideoLibrary({
                               ))}
                             </div>
                           </td>
+                          {isProject && <td><Tag color={item.project_inclusion_status === 'accepted'
+                            ? 'green' : item.project_inclusion_status === 'rejected' ? 'default' : 'blue'}>
+                            {projectInclusionLabel(item.project_inclusion_status)}
+                          </Tag></td>}
+                          {isProject && <td>{item.project_inclusion_status === 'accepted'
+                            ? <Tag color={item.project_case_review_status === 'complete' ? 'green'
+                              : item.project_case_review_status === 'insufficient' ? 'red' : 'gold'}>
+                              {item.project_case_review_status === 'complete' ? '完整可分析'
+                                : item.project_case_review_status === 'partial' ? '部分核看'
+                                  : item.project_case_review_status === 'insufficient' ? '证据不足' : '尚未核看'}
+                            </Tag> : '—'}</td>}
                           <td>{formatDate(item.published_at)}</td>
-                          <td>{formatCount(item.play_count)}</td>
+                          <td>{hasContradictoryZeroPlay(item)
+                            ? <Tooltip title="上游返回播放量 0，但已有正向互动；可能是字段缺失或合并时点不一致，不能把 0 当真实播放量。">0 · 待核</Tooltip>
+                            : formatCount(item.play_count)}</td>
                           <td>{formatCount(item.like_count)}</td>
                           <td>{formatCount(item.comment_count)}</td>
-                          <td>{formatCount(item.share_count)}</td>
-                          <td>{formatCount(item.author_follower_count)}</td>
-                          <td>
-                            {item.follower_efficiency == null
-                              ? '—'
-                              : `${Number(item.follower_efficiency).toFixed(1)}%`}
-                          </td>
+                          <td>{item.share_source_conflict
+                            ? <Tooltip title={shareSourceExplanation(item)}>{formatCount(item.share_count)} · 待核</Tooltip>
+                            : formatCount(item.share_count)}</td>
+                          <td>{item.author_follower_count === 0 && !hasVerifiedFollowerCount(item)
+                            ? <Tooltip title={zeroFollowerExplanation}>{formatFollowerCount(item.author_follower_count)}</Tooltip>
+                            : formatFollowerCount(item.author_follower_count, hasVerifiedFollowerCount(item))}</td>
+                          <td>{formatPlayInteractionRate(item)}</td>
                           {!isProject && <td>
                             <span className={`priority ${priorityTone(Number(item.priority || 0))}`}>
                               {priorityText(Number(item.priority || 0))}
@@ -771,13 +1002,20 @@ export default function VideoLibrary({
                         </tr>
                       ))}
                       {!data?.items?.length && (
-                        <tr><td colSpan={isProject ? 13 : 16} className="empty-row">当前筛选下暂无视频</td></tr>
+                        <tr><td colSpan={isProject ? 15 : 16} className="empty-row">当前筛选下暂无视频</td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
 
                 <div className="video-list-footer">
+                  {isProject && <div className="project-compare-actions">
+                    <span>已选 {comparisonIds.length}/2 条已接受视频</span>
+                    <Button type="primary" disabled={comparisonIds.length !== 2}
+                      onClick={() => setCompareOpen(true)}>同屏对照证据</Button>
+                    <Button disabled={!comparisonIds.length}
+                      onClick={() => setComparisonIds([])}>清空</Button>
+                  </div>}
                   {!isProject && <div className="bulk-actions">
                     <span>已选择 {selectedRows.size} 项</span>
                     <Button
@@ -805,10 +1043,17 @@ export default function VideoLibrary({
                       setFilters(next)
                       setDraft({ ...draft, page, page_size })
                       setSelectedRows(new Set())
+                      setComparisonIds([])
+                      setCompareOpen(false)
                     }}
                   />
                 </div>
               </article>
+
+              {projectId && comparisonIds.length === 2 && <ProjectVideoComparison
+                projectId={projectId} videoIds={[comparisonIds[0], comparisonIds[1]]}
+                open={compareOpen} onClose={() => setCompareOpen(false)}
+                onOpenVideo={(id) => { setCompareOpen(false); void selectDetail(id) }} />}
 
               <aside className="video-detail-panel card">
                 {!detail ? (
@@ -820,15 +1065,32 @@ export default function VideoLibrary({
                     </div>
 
                     {!isProject && <VideoMediaPreview key={`video-${detail.id}`} videoId={detail.id} />}
+                    {projectId && detail.platform === 'douyin' &&
+                      ['candidate', 'shortlisted', 'accepted'].includes(detail.project_inclusion_status || '') &&
+                      <ProjectVideoMediaPreview key={`project-video-${projectId}-${detail.id}`}
+                        projectId={projectId} videoId={detail.id} seekRequest={videoSeekRequest} />}
 
                     <h3 className="detail-title">{detail.title}</h3>
+
+                    {isProject && detail.project_inclusion_status !== 'accepted' && <Alert
+                      type="info"
+                      showIcon
+                      message={detail.project_inclusion_status === 'rejected'
+                        ? '本项目未采纳这条视频'
+                        : detail.project_inclusion_status === 'shortlisted'
+                          ? '已预选，尚未确认为项目研究依据'
+                          : detail.project_inclusion_status === 'candidate'
+                            ? '项目候选视频，尚未确认为研究依据'
+                            : '项目依据状态待核，请刷新后再审核'}
+                      description="可查看公开资料和合并指标；只有核对实际内容并明确接受的视频，才能在本项目试听私有音频或提交 ASR/L3 审核。"
+                    />}
 
                     <div className="detail-account-row">
                       <div className="detail-account">
                         <span className="avatar large">{(detail.account_name || '?').slice(0, 1)}</span>
                         <div>
                           <strong>{detail.account_name || '未知账号'}</strong>
-                          <small>{formatCount(detail.author_follower_count)} 粉丝</small>
+                          <small>{formatFollowerCount(detail.author_follower_count, hasVerifiedFollowerCount(detail))} 粉丝</small>
                         </div>
                       </div>
                       {!isProject && <Button
@@ -846,6 +1108,18 @@ export default function VideoLibrary({
                         )}
                       >
                         加入监测
+                      </Button>}
+                      {isProject && canReviewProject && detail.project_inclusion_status === 'accepted' && detail.platform === 'douyin' && <Button
+                        loading={writeBusy}
+                        onClick={() => void refreshProjectAccountProfile(detail.platform_video_id)}
+                      >
+                        刷新公开账号资料
+                      </Button>}
+                      {isProject && canReviewProject && ['candidate', 'shortlisted', 'accepted'].includes(detail.project_inclusion_status || '') && detail.platform === 'douyin' && <Button
+                        loading={writeBusy}
+                        onClick={() => void refreshProjectVideoStatistics(detail.platform_video_id)}
+                      >
+                        核验公开播放量
                       </Button>}
                     </div>
 
@@ -868,19 +1142,33 @@ export default function VideoLibrary({
                         <h4>数据表现</h4>
                         <span>合并数据 · 最近字段更新 {formatFullDate(detail.metric_captured_at)}</span>
                       </div>
+                      {(hasContradictoryZeroPlay(detail) || (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail))) && <Alert
+                        type="warning"
+                        showIcon
+                        message={hasContradictoryZeroPlay(detail)
+                          ? (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail)
+                            ? '播放量与账号粉丝的零值待核' : '播放量为 0，仍需核对')
+                          : '账号粉丝为 0，仍需核对'}
+                        description={hasContradictoryZeroPlay(detail)
+                          ? (detail.author_follower_count === 0 && !hasVerifiedFollowerCount(detail)
+                            ? '播放量为 0 却有正向互动，不能计算互动率或比较传播效果；账号粉丝为 0 且未经独立核验，也不能用于筛选。请核对各自来源。'
+                            : '播放量为 0 却有正向互动，不能计算互动率或比较传播效果；请核对播放量的上游来源。')
+                          : '账号粉丝为 0 且未经独立账号接口核验，须核对账号主页或独立账号接口后再用于筛选。'}
+                      />}
+                      {detail.share_source_conflict && <Alert
+                        type="warning"
+                        showIcon
+                        message="分享数来源差异待核；混合互动率暂停展示"
+                        description={shareSourceExplanation(detail)}
+                      />}
                       <div className="detail-metrics">
                         {[
-                          [formatCount(detail.play_count), '播放量'],
+                          [hasContradictoryZeroPlay(detail) ? '0 · 待核' : formatCount(detail.play_count), '播放量'],
                           [formatCount(detail.like_count), '点赞'],
                           [formatCount(detail.comment_count), '评论'],
-                          [formatCount(detail.share_count), '分享'],
-                          [formatCount(detail.author_follower_count), '账号粉丝'],
-                          [
-                            detail.follower_efficiency == null
-                              ? '—'
-                              : `${Number(detail.follower_efficiency).toFixed(1)}%`,
-                            '互动效率（合并估算）',
-                          ],
+                          [detail.share_source_conflict ? `${formatCount(detail.share_count)} · 待核` : formatCount(detail.share_count), '分享'],
+                          [formatFollowerCount(detail.author_follower_count, hasVerifiedFollowerCount(detail)), '账号粉丝'],
+                          [formatPlayInteractionRate(detail), '互动/播放（合并估算）'],
                           ...(!isProject ? [
                             [priorityText(Number(detail.priority || 0)), '优先级'],
                             [`L${detail.research_level}`, '研究层级'],
@@ -896,11 +1184,11 @@ export default function VideoLibrary({
 
                     <details key={`metric-evidence-${detail.id}`}>
                       <summary>查看合并依据与指标历史</summary>
-                      <p className="muted">播放量、账号粉丝优先采用榜单记录；其余指标采用最新非缺失记录。保留真实零值，各字段时间可能不同。</p>
+                      <p className="muted">播放量优先采用独立视频统计，其次采用榜单；账号粉丝若有 30 天内经身份核验的账号详情则优先采用该值，否则沿用视频合并值。其余指标采用最新非缺失记录。保留上游零值供核查；与正向互动冲突时不能当作真实播放量。各字段时间可能不同。</p>
                       {Object.entries(detail.metric_provenance || {}).map(([field, evidence]) => (
                         <p key={field} className="muted">
                           {({play_count:'播放量', like_count:'点赞', comment_count:'评论', share_count:'分享', collect_count:'收藏', author_follower_count:'账号粉丝'} as Record<string,string>)[field] || field}
-                          ：{evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '详情' : '其他'} · {formatFullDate(evidence.captured_at)}
+                          ：{evidence.source_kind === 'verified_account_profile' ? '账号详情（身份已核验）' : evidence.source_kind === 'statistics' ? '独立视频统计' : evidence.source_kind === 'billboard' ? '榜单' : evidence.source_kind === 'detail' ? '视频详情' : '其他'} · {formatFullDate(evidence.captured_at)}
                         </p>
                       ))}
                       <MetricTimeline videoId={detail.id} projectId={projectId} />
@@ -908,9 +1196,20 @@ export default function VideoLibrary({
 
                     <RawRecordPanel videoId={detail.id} projectId={projectId} />
 
-                    {!isProject && <section className="detail-section l3-analysis-section">
+                    {projectId && <ProjectCaseReviewPanel
+                      key={`${projectId}-${detail.id}`}
+                      projectId={projectId}
+                      videoId={detail.id}
+                      platform={detail.platform}
+                      platformVideoId={detail.platform_video_id}
+                      sourceUrl={detail.source_url}
+                      canWrite={projectRole === 'owner' || projectRole === 'admin' || projectRole === 'researcher'}
+                      isAccepted={detail.project_inclusion_status === 'accepted'}
+                    />}
+
+                    <section className="detail-section l3-analysis-section">
                       <div className="detail-section-head">
-                        <h4>L3 精研结果</h4>
+                        <h4>{isProject ? '本项目 L3 精研结果' : 'L3 精研结果'}</h4>
                         <span>{detail.l3_analysis ? `完成于 ${formatFullDate(detail.l3_analysis.created_at)}` : '尚无已完成结果'}</span>
                       </div>
                       {!detail.l3_analysis ? (
@@ -955,7 +1254,7 @@ export default function VideoLibrary({
                           </p>
                         </div>
                       )}
-                    </section>}
+                    </section>
 
                     {!isProject && <L3ReviewPanel
                       key={detail.id}
@@ -964,7 +1263,22 @@ export default function VideoLibrary({
                     />}
 
                     {!isProject && <ASRMediaReviewPanel key={`media-${detail.id}`} videoId={detail.id} />}
-                    {!isProject && <ASRTranscriptPanel transcript={detail.asr_transcript} />}
+                    {projectId && canReviewProject && detail.project_inclusion_status === 'accepted' && <ProjectASRMediaReviewPanel
+                      key={`project-media-${projectId}-${detail.id}`}
+                      projectId={projectId} videoId={detail.id} />}
+                    {projectId && detail.project_inclusion_status === 'accepted' && <ProjectLASVideoReviewPanel
+                      key={`project-las-${projectId}-${detail.id}`}
+                      projectId={projectId} videoId={detail.id} canManage={canReviewProject}
+                      onSeek={seconds => setVideoSeekRequest(previous => ({ projectId, videoId: detail.id, seconds,
+                        sequence: (previous?.sequence ?? 0) + 1 }))} />}
+                    <ASRTranscriptPanel transcript={detail.asr_transcript} />
+                    {projectId && detail.project_inclusion_status === 'accepted' && canReviewProject && !canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
+                      <p className="project-review-hint">本项目 L3 云端正文审核还需要服务端审核资质；当前账号不可提交。请由工作区管理员核对审核名单，不要借用其他项目的审核记录。</p>}
+                    {projectId && detail.project_inclusion_status === 'accepted' && canReviewProjectL3 && detail.asr_transcript?.transcript_id &&
+                      <ProjectL3ReviewPanel
+                        key={`project-l3-${projectId}-${detail.id}-${detail.asr_transcript.transcript_id}`}
+                        projectId={projectId} videoId={detail.id}
+                        transcriptId={detail.asr_transcript.transcript_id} />}
 
                     <section className="detail-section">
                       <div className="detail-section-head">
@@ -981,6 +1295,27 @@ export default function VideoLibrary({
                         ))}
                         {!detail.evidence?.length && <p className="muted">暂无结构化来源证据</p>}
                       </div>
+                    </section>
+
+                    <section className="detail-section" aria-label="评论样本概况">
+                      <div className="detail-section-head">
+                        <h4>评论样本概况</h4>
+                        <span>{detail.comment_features
+                          ? `${detail.comment_features.feature_version} · 更新于 ${formatFullDate(detail.comment_features.calculated_at)}`
+                          : '尚无 L2 评论特征'}</span>
+                      </div>
+                      {detail.comment_features ? <>
+                        <div className="detail-metrics comment-feature-metrics">
+                          {[
+                            [detail.comment_features.sampled_comment_count, '去重评论样本'],
+                            [detail.comment_features.source_observation_count, '评论观测记录'],
+                            [detail.comment_features.eligible_text_count ?? '—', '可分析文本'],
+                            [detail.comment_features.question_text_count, '含问号文本'],
+                            [detail.comment_features.duplicate_text_count ?? '—', '重复文本'],
+                          ].map(([value, label]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}
+                        </div>
+                        <p className="muted">这是已采集评论的非随机样本，不代表全部评论或目标客群；问号、重复文本等是规则计数，不是情感或购买意向。下方仅展示最多 5 条高赞样本，不能据此推断整体偏好。</p>
+                      </> : <p className="muted">尚无评论特征；下方若有评论，也不能把少量高赞样本当作整体结论。</p>}
                     </section>
 
                     <section className="detail-section">
@@ -1040,7 +1375,7 @@ export default function VideoLibrary({
 
           <div className="video-library-page-note">
             第 {filters.page} / {totalPages} 页 · {isProject
-              ? '项目视图只显示已纳入项目的公开视频事实及安全依据，不展示全局研究状态或模型审核内容'
+              ? '项目视图显示项目关联视频及其状态；只有已接受视频可进入项目私有 ASR/L3 审核，不展示全局模型审核内容'
               : '收藏、专题、监测与筛选均记录实际登录用户'}
           </div>
           {!isProject && <Modal

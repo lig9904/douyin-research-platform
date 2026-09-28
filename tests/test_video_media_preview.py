@@ -43,7 +43,7 @@ def test_preview_reuses_the_fixed_asr_media_review_runtime_lock():
     assert (backend_dir / "video_media_preview.lock").read_text() == (
         backend_dir / "asr_media_review.lock"
     ).read_text()
-    assert "92153f603368a3ab2cb7810924d6d3948857987a" in PATH.read_text()
+    assert "5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180" in PATH.read_text()
     assert (backend_dir / "video_media_preview.yaml").read_text() == "type: inline\nfields: {}\n"
 
 

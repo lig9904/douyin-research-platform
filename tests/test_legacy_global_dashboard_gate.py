@@ -16,6 +16,16 @@ BACKENDS = (
 )
 
 
+def test_dashboard_backends_pin_runtime_wmill_dependency() -> None:
+    """Dynamic imports must survive Windmill's per-script dependency isolation."""
+    for path in ROOT.glob("*.py"):
+        source = path.read_text(encoding="utf-8")
+        if "import wmill" not in source and "from wmill" not in source:
+            continue
+        assert any("wmill==1.815.0" in line for line in source.splitlines()[:12]), path.name
+        assert "wmill==1.815.0" in path.with_suffix(".lock").read_text(encoding="utf-8").splitlines(), path.name
+
+
 def _load(filename: str):
     path = ROOT / filename
     spec = importlib.util.spec_from_file_location(f"legacy_gate_{path.stem}", path)

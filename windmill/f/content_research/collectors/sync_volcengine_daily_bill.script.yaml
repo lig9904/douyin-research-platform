@@ -1,0 +1,26 @@
+summary: Reconcile Volcano payer account/day bill
+description: |
+  Exact YYYY-MM-DD manually reconciles one account day. The scheduled mode
+  persists non-monetary gaps and retries them across rolling windows, with at
+  most ten account/day reads per run. Requires a separate encrypted billing
+  AK/SK and verified payer. An empty or degraded bill cannot become zero.
+lock: '!inline f/content_research/collectors/sync_volcengine_daily_bill.script.lock'
+concurrent_limit: 1
+timeout: 300
+schema:
+  type: object
+  properties:
+    billing_date:
+      type: string
+      description: Supplier date YYYY-MM-DD, or scheduled for bounded backfill.
+    coverage_start_date:
+      type: string
+      default: '2026-09-21'
+      description: Earliest account expense date to reconcile in scheduled mode.
+    db:
+      type: object
+      default: null
+      format: resource-postgresql
+  required:
+    - db
+    - billing_date

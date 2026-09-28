@@ -1,4 +1,7 @@
 # py: ==3.14.*
+#requirements:
+#psycopg[binary]==3.3.6
+#wmill==1.815.0
 from __future__ import annotations
 
 import json
@@ -260,8 +263,36 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
             with latest_metric as (
               select
                 m.video_id, m.play_count, m.like_count, m.comment_count,
-                m.share_count, m.author_follower_count, m.captured_at
+                m.share_count, m.author_follower_count, m.captured_at,
+                coalesce(
+                  detail_share.share_count is not null
+                  and statistics_share.share_count is not null
+                  and abs(extract(epoch from
+                    (detail_share.captured_at - statistics_share.captured_at))) <= 86400
+                  and abs(detail_share.share_count - statistics_share.share_count)
+                    >= greatest(10::numeric,
+                      greatest(detail_share.share_count, statistics_share.share_count) * 0.5),
+                  false) as share_source_conflict
               from merged_video_metric m
+              left join lateral (
+                select sm.share_count, sm.captured_at
+                from metric_snapshot sm
+                where sm.video_id=m.video_id and sm.share_count is not null
+                  and sm.source_endpoint in (
+                    'douyin.app.multi_video_v2', 'douyin.app.multi_video',
+                    'douyin.app.one_video')
+                order by sm.captured_at desc, sm.id desc
+                limit 1
+              ) detail_share on true
+              left join lateral (
+                select sm.share_count, sm.captured_at
+                from metric_snapshot sm
+                where sm.video_id=m.video_id and sm.share_count is not null
+                  and sm.source_endpoint in (
+                    'douyin.app.video_statistics', 'douyin.app.multi_video_statistics')
+                order by sm.captured_at desc, sm.id desc
+                limit 1
+              ) statistics_share on true
             ),
             latest_score as (
               select distinct on (s.video_id)
@@ -286,6 +317,7 @@ def main(db: postgresql, platform: str = "douyin", hours: int = 24):
               a.nickname as account_name,
               coalesce(s.score, v.monitoring_priority, 0)::numeric as priority,
               m.play_count, m.like_count, m.comment_count, m.share_count,
+              m.share_source_conflict,
               m.author_follower_count,
               case when coalesce(m.author_follower_count,0) > 0
                 then round(

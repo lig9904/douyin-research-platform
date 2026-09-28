@@ -22,7 +22,7 @@ def test_review_api_has_no_caller_identity_or_database_fields():
 def test_backend_dependency_lock_matches_source_revision_and_runtime():
     lock = PATH.with_suffix(".lock").read_text()
     source = PATH.read_text()
-    revision = "92153f603368a3ab2cb7810924d6d3948857987a"
+    revision = "5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180"
     assert revision in lock and revision in source
     assert "# py: 3.14" in lock
     assert "wmill==1.815.0" in lock

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -9,9 +10,12 @@ import pytest
 
 from douyin_research.media_processing import (
     MediaProcessingError,
+    MediaSourceUnavailable,
     download_media,
     extract_audio,
     extract_tikhub_video_url,
+    extract_tikhub_video_urls,
+    has_tikhub_video_record,
 )
 
 
@@ -44,6 +48,33 @@ def test_extracts_only_exact_target_from_saved_tikhub_batch_detail() -> None:
     assert extract_tikhub_video_url(_payload(), "wanted-video") == "https://cdn.example.test/wanted?sig=secret"
     with pytest.raises(MediaProcessingError, match="absent"):
         extract_tikhub_video_url(_payload(), "missing-video")
+
+
+def test_extracts_bounded_distinct_candidates_from_exact_video_only() -> None:
+    payload = _payload()
+    selected = payload["data"]["aweme_details"][1]  # type: ignore[index]
+    selected["video"]["play_addr"]["url_list"] = [  # type: ignore[index,union-attr]
+        "https://cdn.example.test/stale?sig=secret",
+        "https://cdn.example.test/stale?sig=secret",
+        *[f"https://cdn.example.test/alternate-{n}" for n in range(12)],
+    ]
+    urls = extract_tikhub_video_urls(payload, "wanted-video")
+    assert len(urls) == 8
+    assert urls[0] == "https://cdn.example.test/stale?sig=secret"
+    assert urls[1] == "https://cdn.example.test/alternate-0"
+    assert all("other" not in url for url in urls)
+
+
+def test_serialized_batch_detail_still_requires_exact_video_id() -> None:
+    payload = _payload()
+    payload["data"]["aweme_details"] = json.dumps(  # type: ignore[index]
+        payload["data"]["aweme_details"]  # type: ignore[index]
+    )
+    assert has_tikhub_video_record(payload, "wanted-video")
+    assert not has_tikhub_video_record(payload, "missing-video")
+    assert extract_tikhub_video_urls(payload, "wanted-video")[0].startswith(
+        "https://cdn.example.test/wanted"
+    )
 
 
 def test_extract_falls_back_to_download_address_for_target_only() -> None:
@@ -93,6 +124,89 @@ def test_download_streams_hashes_and_never_exposes_query(tmp_path: Path) -> None
     assert result.size == len(body)
     assert result.sha256 == hashlib.sha256(body).hexdigest()
     assert (tmp_path / "video.bin").read_bytes() == body
+
+
+def test_unavailable_cdn_status_is_distinct_without_leaking_url(tmp_path: Path) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(403, content=b"signed URL expired")
+    ))
+    try:
+        with pytest.raises(MediaSourceUnavailable) as error:
+            download_media(
+                "https://cdn.example.test/video?sig=private",
+                tmp_path / "video.bin", client=client,
+                allowed_hosts={"example.test"}, resolve_host=_public_resolver,
+            )
+    finally:
+        client.close()
+    assert "private" not in str(error.value)
+    assert not (tmp_path / "video.bin").exists()
+
+
+def test_html_error_page_with_success_status_is_not_saved_as_video(tmp_path: Path) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, content=b"<html>expired</html>",
+                                 headers={"Content-Type": "text/html; charset=utf-8"})
+    ))
+    try:
+        with pytest.raises(MediaSourceUnavailable):
+            download_media(
+                "https://cdn.example.test/video", tmp_path / "video.bin",
+                client=client, allowed_hosts={"example.test"}, resolve_host=_public_resolver,
+            )
+    finally:
+        client.close()
+    assert not (tmp_path / "video.bin").exists()
+
+
+def test_success_status_with_short_body_is_not_published(tmp_path: Path) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, content=b"short", headers={"Content-Length": "100"})
+    ))
+    try:
+        with pytest.raises(MediaProcessingError, match="incomplete"):
+            download_media(
+                "https://cdn.example.test/video", tmp_path / "video.bin",
+                client=client, allowed_hosts={"example.test"}, resolve_host=_public_resolver,
+            )
+    finally:
+        client.close()
+    assert not (tmp_path / "video.bin").exists()
+
+
+@pytest.mark.parametrize(
+    ("content_range", "body", "accepted"),
+    [
+        ("bytes 0-5/6", b"123456", True),
+        ("", b"123456", False),
+        ("bytes 1-5/6", b"12345", False),
+        ("bytes 0-4/6", b"12345", False),
+        ("bytes 0-5/6", b"12345", False),
+    ],
+)
+def test_partial_content_is_accepted_only_if_it_contains_whole_object(
+    tmp_path: Path, content_range: str, body: bytes, accepted: bool,
+) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(206, content=body, headers={"Content-Range": content_range})
+    ))
+    try:
+        if accepted:
+            digest = download_media(
+                "https://cdn.example.test/video", tmp_path / "video.bin",
+                client=client, allowed_hosts={"example.test"}, resolve_host=_public_resolver,
+            )
+            assert digest.size == len(body)
+            assert (tmp_path / "video.bin").read_bytes() == body
+        else:
+            with pytest.raises(MediaProcessingError, match="incomplete"):
+                download_media(
+                    "https://cdn.example.test/video", tmp_path / "video.bin",
+                    client=client, allowed_hosts={"example.test"}, resolve_host=_public_resolver,
+                )
+            assert not (tmp_path / "video.bin").exists()
+    finally:
+        client.close()
 
 
 @pytest.mark.parametrize(

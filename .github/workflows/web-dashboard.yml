@@ -54,6 +54,17 @@ jobs:
       - name: Verify private video preview starts without an external request
         run: node tests/run-video-preview.mjs
 
+      - name: Verify project video preview starts without an external request
+        run: node tests/run-project-video-preview.mjs
+
+      - name: Verify project LAS review requires explicit paid action
+        run: node tests/run-project-las-review.mjs
+
+      - name: Verify project video comparison keeps machine and metric caveats
+        run: |
+          npx esbuild tests/ProjectVideoComparison.test.ts --bundle --platform=node --outfile=/tmp/project-video-comparison-test.cjs --log-level=warning
+          node /tmp/project-video-comparison-test.cjs
+
       - name: Verify subject profile pending-operation recovery
         run: node tests/run-subject-profile.mjs
 

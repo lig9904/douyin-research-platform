@@ -2,13 +2,31 @@
 
 ## 实现与部署状态
 
-入口为 `f/content_research/collectors/ingest_video_media`，依赖固定到媒体服务已合并提交 `fd2694729c784a0f2e34b2c0a4d6746da57813fe`。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
+入口为 `f/content_research/collectors/ingest_video_media`，当前依赖固定到包含单视频及低价批量详情兼容性的版本。仅接受内部视频 UUID；数据库固定从 `f/content_research/research_db` 资源读取，不接受调用者数据库、任意下载 URL、凭据、actor 或审核批准。脚本不发起付费详情刷新、ASR、LLM 调用，不更改桶权限。已持久化的业务失败会转成安全异常，使 Windmill 也标记失败，不以正常返回伪装任务成功。
 
-2026-09-21 已通过浏览器 JumpServer 在测试服务器构建并部署媒体镜像 `douyin-research-media-worker:87eeac7`，两个普通 Worker 均已确认 ffmpeg/ffprobe、Python 3.13.5 及可写临时目录；server/native/postgres 未替换。镜像 ID 为 `sha256:08e0267834a4f76ef1eb33f0fe6a790fe5eddd7dff926e5b0f0712974d549da5`。无网络临时容器实际转换合成音频并验证 pcm_s16le、16000 Hz、单声道通过，不是真实视频链路验收。
+2026-09-21 已通过浏览器 JumpServer 在测试服务器构建并部署媒体镜像，两个普通 Worker 均已确认 ffmpeg/ffprobe、Python 3.13.5 及可写临时目录；server/native/postgres 未替换。镜像版本与 ID 保留在受控部署记录。无网络临时容器实际转换合成音频并验证 pcm_s16le、16000 Hz、单声道通过，不是真实视频链路验收。
 
-主机临时目录 `/srv/douyin-research-test/media-tmp` 绑定到容器 `/srv/research-media-tmp`，findmnt 确认位于 `/dev/sdb1` 的 500G 数据盘。迁移账本已验证至017；迁移前备份 `/srv/douyin-research-test/backups/20260920T190539Z`。备份校验不等于恢复演练通过。
+主机临时目录绑定到容器媒体临时目录，`findmnt` 确认位于 500G 数据盘；实际主机路径与挂载设备保留在受控部署记录。迁移账本已验证至 017；迁移前备份位置留在受控记录。备份校验不等于恢复演练通过。
 
-媒体脚本已创建到 test-research，但首次发布缺少本地锁元数据；本次补齐 Linux x86_64 Python3.13 依赖锁、inline引用及同步hash，需重新发布。实际工作区尚无 `media_storage_config` 与 `automation_worker_identity`，须配置后执行真实媒体任务；ASR/L3新固定配置也尚缺，不得宣称全链路已运行。
+上述是 2026-09-21 的历史部署状态。2026-09-26 测试服回查时，媒体脚本仍固定旧服务版本；随后只更新这一脚本的固定版本并发布，实测结果见下。`media_storage_config`（Secret）与 `automation_worker_identity` 已存在，部署及核验过程未读取其值。普通 Worker 的系统 `python3` 为 3.13.5；实际 Windmill 作业日志显示 Python 3.14 执行，不能将系统默认解释器与脚本运行解释器混为一谈。
+
+### 2026-09-26 测试服实测
+
+- 单脚本发布后，Windmill 发布页展示非空锁，首行 `# py: 3.14`，含 `psycopg==3.3.6`、`psycopg-binary==3.3.6` 与目标核心版本。未同步整个工作区，未新建 CLI 令牌；精确发布版本留在受控测试记录。
+- 对一个已接受案例执行媒体入库：Windmill 作业成功，约 8.9 秒；结果 `reused=false`、`external_paid_calls=0`，流水线状态为 `success`。实际作业日志显示 `Python (3.14)`。
+- 测试库形成且仅形成两条 `media_asset`：MP4 为 4,844,398 字节，WAV 为 641,366 字节；后者指向前者作为父资产。两条都有缓存详情来源。研究台视频库可加载对应“待审核 WAV · 626.3 KB”，这是页面级读取入口的验证，尚不等于用户已完整试听或对象丢失恢复演练。
+- 原参数再次运行成功，约 0.8 秒；返回 `reused=true`、相同两个资产、`external_paid_calls=0`。流水线状态为 `success`，测试库仍只有两条资产记录。重复作业日志未显示重新下载，但尚未通过 CDN 出站观测独立证明零网络传输。
+- 对同项目另一已接受案例做第二例时，两次人工输入了错误的内部 UUID，均在视频存在性预检处拒绝，未开始媒体处理。按平台 ID 重新查询数据库后，使用正确内部 UUID 的作业在 `media_download_failed` 阶段失败；测试库流水线为 `failed`、`external_paid_calls=0`，没有生成该视频的媒体资产。所选单视频详情缓存时间为 2026-09-26 08:49 UTC（北京时间 16:49），失败发生在北京时间约 19:47；缓存 URL 过期是待核假设，不能仅据约 3 小时时差确认 CDN HTTP 状态。应先精确刷新该视频的详情，再重试媒体入库，并保留这次失败审计。
+- 随后创建仅含该视频的单次研究任务。只读预检确认当时仅此一条到期任务；手动调度回显 `due_count=1`、`dispatched_count=1`。项目任务运行为 `success`，单条详情实际调用 1 次、缓存命中 0 次、SDK 重试 0 次、无 ASR/L3；新响应于 11:54:27 UTC 保存。调用账本 `douyin.app.one_video` 本地报价 USD 0.001，`actual_cost` 仍为空，应以 TikHub 日账对账，不把报价当实扣。一次性任务之后为 `paused`、`next_due_at=null`，不会继续自动付费刷新。
+- 新响应入库后立刻重跑媒体作业：约 13.5 秒成功，`reused=false`、`external_paid_calls=0`；流水线的数据库状态与条目均为 `success`、`api_cost=0`。数据库恰有 MP4（4,252,327 字节）及其子 WAV（9,122,408 字节），两者绑定新缓存详情。研究台视频库可加载该条“待审核 WAV · 8908.6 KB”。这证明刷新后的完整媒体链路和页面音频读取入口跑通，但旧请求的实际 CDN 状态码未采集，仍不能断言其失败必由签名过期引起；该长音频也尚未由人完整核听或同意云端转写。
+- 未做这条新音频的人工核听、云端 ASR 或 L3；这些仍需逐条审核后验收。两条新 AI 角色候选也仍仅有公开元数据，不应据此宣称业务指导意见已成立。
+
+### 2026-09-27 低价批量详情的真实媒体验收
+
+- 仓库补充 `douyin.app.multi_video` 精确视频 ID 来源、该字段的 JSON 字符串形态、同一缓存响应内最多 8 个 HTTPS 候选地址；仅对明确的 403/404/410 或代码列明的非媒体 Content-Type 尝试后续地址。逐个候选仍经过公网 DNS、TLS、域名白名单和重定向校验；206 只在 `Content-Range` 覆盖整个文件且实收长度一致时接受。隔离 PostgreSQL 定向测试 60 项通过，对应版本的 GitHub CI 通过。Windmill CLI 官方生成脚本锁并单脚本发布，页面回读确认测试服载入目标版本；未同步整个工作区。
+- 目标是同项目一个尚未接受的**候选**。首次作业如实失败，流水线记录 `media_download_failed`，无资产、无付费接口调用。只读 CDN 探测显示同一持久响应的前两地址返回 403，后两个跳转到此前未纳入 Worker 白名单的 `douyinvod.com` 子域名；该 HTTPS 目标返回 `video/mp4`，声明长度 16,777,016 字节。测试工作区原 Secret 仅将 `douyinvod.com` 加入 `allowed_download_hosts`，其他配置与凭据不在日志、仓库或此文档中展示；回读确认配置生效。
+- 重跑作业完成，流水线为 `success`，`external_paid_calls=0`。视频为 16,777,016 字节，与独立下载的本地原片摘要一致；子音频为 2,218,094 字节。两者绑定同一缓存详情，上传后由 S3 HEAD 确认大小及元数据。再次运行返回 `reused=true`、相同资产、`external_paid_calls=0`。精确资产 ID、完整指纹及作业定位留在受控测试记录；尚未通过网络抓包独立证明复用作业零 CDN 出站。
+- 本次仅验收媒体入库和失败恢复；候选仍非项目已接受案例，尚无人完整音画核看、项目专属云端 ASR/L3 审核或决策卡。显式 HTML/JSON 等非媒体响应已拒绝，但若 CDN 返回无可信长度、无明确 MIME 的损坏二进制，现有恢复逻辑仍可能保留一个后续音频提取失败的部分视频资产；它是已知待加固点，不应宣称任意损坏响应均能自动恢复。
 
 ## 服务端配置
 
@@ -21,9 +39,9 @@ JSON 结构如下，占位字段必须用实际核验的值替换。不要把实
 
 ```json
 {
-  "endpoint": "http://192.168.200.20:9000",
-  "public_endpoint": "https://minio.yudao.cc:6443",
-  "bucket": "douyin-research-media",
+  "endpoint": "http://<verified-internal-s3-host>:9000",
+  "public_endpoint": "https://<verified-public-s3-host>",
+  "bucket": "<verified-private-bucket>",
   "region": "us-east-1",
   "access_key_id": "<existing scoped access key>",
   "secret_access_key": "<existing scoped secret key>",
@@ -31,7 +49,7 @@ JSON 结构如下，占位字段必须用实际核验的值替换。不要把实
   "use_ssl": false,
   "storage_location": "research-media-v1",
   "temp_directory": "<verified absolute worker directory on the 500G disk>",
-  "allowed_download_hosts": ["zjcdn.com", "amemv.com"],
+  "allowed_download_hosts": ["zjcdn.com", "amemv.com", "douyinvod.com"],
   "ffmpeg_binary": "<verified executable path>",
   "max_download_bytes": 2147483648
 }

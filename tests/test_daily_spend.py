@@ -14,6 +14,7 @@ from douyin_research.providers.daily_spend import (
     TIKHUB_DAILY_USAGE_URL,
     fetch_tikhub_daily_usage,
     parse_tikhub_daily_usage,
+    sync_tikhub_daily_spend,
     upsert_supplier_daily_spend,
 )
 
@@ -76,6 +77,8 @@ def test_parses_documented_tikhub_daily_response_without_retaining_payload():
         {"paid_request_per_day": 6},
         {"date": "not-a-date"},
         {"date": "2019-12-31"},
+        {"date": "2020-01-01"},
+        {"date": "2026-09-21"},
         {"date": "2026-09-22"},
     ],
 )
@@ -93,6 +96,54 @@ def test_requires_all_documented_fields_and_provider_timezone():
     payload.pop("time_zone")
     with pytest.raises(DailySpendError):
         parse_tikhub_daily_usage(payload, fetched_at=OBSERVED_AT)
+
+
+def test_live_bill_date_uses_supplier_timezone_and_bounded_rollover():
+    script = _load_sync_script()
+    midnight_utc = datetime(2026, 9, 20, 7, 30, tzinfo=timezone.utc)
+    closing = parse_tikhub_daily_usage(
+        _payload(date="2026-09-19"), fetched_at=midnight_utc,
+    )
+    assert script._sync_status(
+        closing.billing_date, closing.fetched_at, closing.billing_timezone,
+    ) == "rollover_previous_day"
+    current = parse_tikhub_daily_usage(
+        _payload(date="2026-09-20"), fetched_at=midnight_utc,
+    )
+    assert script._sync_status(
+        current.billing_date, current.fetched_at, current.billing_timezone,
+    ) == "completed"
+    with pytest.raises(DailySpendError):
+        parse_tikhub_daily_usage(
+            _payload(date="2026-09-19"),
+            fetched_at=datetime(2026, 9, 20, 9, 0, tzinfo=timezone.utc),
+        )
+    with pytest.raises(DailySpendError):
+        parse_tikhub_daily_usage(
+            _payload(date="2026-09-20"),
+            fetched_at=datetime(2026, 9, 20, 0, 30, tzinfo=timezone.utc),
+        )
+
+
+@pytest.mark.parametrize(
+    "billing_date,accepted_at,rejected_at",
+    [
+        ("2026-03-07", datetime(2026, 3, 8, 9, 30, tzinfo=timezone.utc),
+         datetime(2026, 3, 8, 10, 0, tzinfo=timezone.utc)),
+        ("2026-10-31", datetime(2026, 11, 1, 8, 30, tzinfo=timezone.utc),
+         datetime(2026, 11, 1, 9, 30, tzinfo=timezone.utc)),
+    ],
+)
+def test_rollover_grace_is_two_elapsed_hours_across_dst(
+    billing_date, accepted_at, rejected_at,
+):
+    assert parse_tikhub_daily_usage(
+        _payload(date=billing_date), fetched_at=accepted_at,
+    ).billing_date.isoformat() == billing_date
+    with pytest.raises(DailySpendError, match="daily usage response is invalid"):
+        parse_tikhub_daily_usage(
+            _payload(date=billing_date), fetched_at=rejected_at,
+        )
 
 
 def test_fetch_uses_one_free_rest_request_with_bearer_auth_and_no_retries():
@@ -145,7 +196,10 @@ def test_schema_and_windmill_contract_keep_one_daily_snapshot_not_per_call_alloc
         r'git\+https://github\.com/lig9904/douyin-research-platform@[0-9a-f]{40}"',
         script,
     )
-    assert "@ce8ae1c4c3358e0064daee45a0dd35540025a6e6" in script
+    assert "@5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180" in script
+    assert "@5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180" in Path(
+        "windmill/f/content_research/collectors/sync_daily_spend.script.lock"
+    ).read_text(encoding="utf-8")
     for field in ("bill_scope_key", "scope_kind", "scope_label", "billing_finality"):
         assert f'"{field}"' in script
     assert "supplier daily spend scope migration is not ready" in script
@@ -176,6 +230,28 @@ def test_hourly_schedule_is_explicitly_enabled_after_deployment_preflight():
     assert 'db: "$res:f/content_research/research_db"' in schedule
     assert "account_scope: default" in schedule
     assert "api_key" not in schedule
+
+
+@pytest.mark.skipif(not DSN, reason="isolated TEST_DATABASE_URL required")
+def test_stale_live_bill_is_not_saved_as_a_successful_sync():
+    scope = f"stale-daily-spend-{uuid4()}"
+    client = httpx.Client(transport=httpx.MockTransport(
+        lambda _request: httpx.Response(200, json=_payload(date="2020-01-01"))
+    ))
+    try:
+        with pytest.raises(DailySpendError, match="daily usage response is invalid"):
+            sync_tikhub_daily_spend(
+                DSN, "secret-value", account_scope=scope, client=client,
+                fetched_at=OBSERVED_AT,
+            )
+    finally:
+        client.close()
+    with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "select count(*) from supplier_daily_spend where provider='tikhub' and account_scope=%s",
+            (scope,),
+        )
+        assert cur.fetchone()[0] == 0
 
 
 @pytest.mark.skipif(not DSN, reason="isolated TEST_DATABASE_URL required")

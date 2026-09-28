@@ -1,4 +1,7 @@
 # py: ==3.14.*
+#requirements:
+#psycopg[binary]==3.3.6
+#wmill==1.815.0
 from __future__ import annotations
 
 import json

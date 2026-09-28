@@ -1,4 +1,7 @@
 # py: ==3.14.*
+#requirements:
+#psycopg[binary]==3.3.6
+#wmill==1.815.0
 """Read-only task and cost overview for the dashboard's Admin/Developer view."""
 
 from __future__ import annotations
@@ -126,6 +129,53 @@ def _daily_supplier_spend(cur, days: int) -> dict[str, Any]:
         "records": rows,
         "today": current,
         "message": None if rows else "尚未同步到供应商日费用记录。",
+    }
+
+
+def _volc_billing_sync_gaps(cur) -> dict[str, Any]:
+    """Return non-monetary account-day reconciliation state to admins only.
+
+    An absent migration or an empty queue must never imply zero spend.  Keep
+    the list bounded and omit provider errors, API payloads, and credentials.
+    """
+    cur.execute("select to_regclass('public.volc_billing_sync_gap') as table_name")
+    if cur.fetchone()["table_name"] is None:
+        return {
+            "status": "not_configured", "pending_count": None,
+            "resolved_count": None, "pending_dates": [],
+            "message": "火山日账缺口跟踪尚未部署；不能据此判断已对账或费用为零。",
+        }
+
+    cur.execute(
+        """
+        select count(*) filter (where status = 'pending')::int as pending_count,
+               count(*) filter (where status = 'resolved')::int as resolved_count
+        from volc_billing_sync_gap
+        """
+    )
+    counts = dict(cur.fetchone())
+    pending_dates = _rows(
+        cur,
+        """
+        select account_scope, billing_date, attempt_count, last_attempt_at,
+               next_attempt_after, last_result_code
+        from volc_billing_sync_gap
+        where status = 'pending'
+        order by billing_date desc, account_scope
+        limit 20
+        """,
+        (),
+    )
+    return {
+        "status": "available",
+        "pending_count": counts["pending_count"],
+        "resolved_count": counts["resolved_count"],
+        "pending_dates": pending_dates,
+        "message": (
+            "尚未登记待核账期；不能仅凭空队列认定费用为零。"
+            if counts["pending_count"] == 0 and counts["resolved_count"] == 0
+            else None
+        ),
     }
 
 
@@ -372,6 +422,7 @@ def main(
         # Supplier bills are account-level facts.  Deliberately do not apply the
         # platform selector used by the local call ledger above.
         supplier_daily_spend = _daily_supplier_spend(cur, days)
+        volc_billing_sync_gaps = _volc_billing_sync_gaps(cur)
     return {
         "platform": platform,
         "days": days,
@@ -381,6 +432,7 @@ def main(
         "api_summary": api_summary,
         "api_costs": api_costs,
         "supplier_daily_spend": supplier_daily_spend,
+        "volc_billing_sync_gaps": volc_billing_sync_gaps,
         "api_calls": api_calls,
         "run_summary": run_summary,
         "task_costs": task_costs,

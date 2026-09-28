@@ -254,6 +254,34 @@ def test_video_library_filters_and_detail() -> None:
     assert detail["source_url"] == "https://example.com/video-lib-1"
 
 
+def test_video_library_shows_bounded_comment_feature_summary() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    backend = load_backend()
+    resource = resource_from_dsn(DSN)
+    assert backend.main(resource, selected_video_id=video_id)["detail"]["comment_features"] is None
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """insert into video_comment_feature_snapshot(
+                 video_id,feature_version,evidence_fingerprint,
+                 sampled_comment_count,root_comment_count,sampled_reply_count,
+                 source_observation_count,text_present_count,question_text_count,
+                 like_known_count,reply_known_count,eligible_text_count,
+                 duplicate_text_count,metadata)
+               values(%s,'comment-features-v1.1.0',%s,
+                 2,2,0,3,2,1,2,0,2,0,'{"private":"not for UI"}'::jsonb)""",
+            (video_id, "a" * 64),
+        )
+    summary = backend.main(resource, selected_video_id=video_id)["detail"]["comment_features"]
+    assert summary["feature_version"] == "comment-features-v1.1.0"
+    assert summary["sampled_comment_count"] == 2
+    assert summary["source_observation_count"] == 3
+    assert summary["eligible_text_count"] == 2
+    assert summary["question_text_count"] == 1
+    assert summary["duplicate_text_count"] == 0
+    assert "metadata" not in summary and "evidence_fingerprint" not in summary
+
+
 def test_video_library_numeric_ranges_exclude_null_but_keep_reported_zero() -> None:
     assert DSN
     video_id = clear_and_seed()
@@ -294,6 +322,37 @@ def test_video_library_numeric_ranges_exclude_null_but_keep_reported_zero() -> N
     assert reported_zero["items"][0]["author_follower_count"] == 0
 
 
+def test_video_library_uses_fresh_verified_profile_without_rewriting_video_zero() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    module = load_backend()
+    resource = resource_from_dsn(DSN)
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """update metric_snapshot set author_follower_count=0
+               where video_id=%s""", (video_id,),
+        )
+        conn.execute(
+            """insert into account_metric_snapshot(
+                 account_id,provider,source_endpoint,observation_key,captured_at,
+                 follower_count)
+               select account_id,'tikhub','douyin.app.user_profile',
+                 'account-profile:fixture',now(),1755
+               from source_video where id=%s""", (video_id,),
+        )
+    result = module.main(resource, selected_video_id=video_id,
+                         follower_min=1700, follower_max=1800)
+    assert result["total"] == 1
+    assert result["items"][0]["author_follower_count"] == 1755
+    assert result["detail"]["author_follower_count"] == 1755
+    assert result["detail"]["metric_provenance"]["author_follower_count"]["source_kind"] == "verified_account_profile"
+    with psycopg.connect(DSN) as conn:
+        assert conn.execute(
+            "select author_follower_count from metric_snapshot where video_id=%s",
+            (video_id,),
+        ).fetchone()[0] == 0
+
+
 def test_video_library_query_and_pagination_empty_state() -> None:
     assert DSN
     clear_and_seed()
@@ -311,6 +370,29 @@ def test_video_library_query_and_pagination_empty_state() -> None:
     assert result["total"] == 0
     assert result["items"] == []
     assert result["detail"] == {}
+
+
+def test_video_library_can_find_exact_platform_video_id() -> None:
+    assert DSN
+    video_id = clear_and_seed()
+    module = load_backend()
+
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """update source_video
+               set first_seen_at=now()-interval '40 days',
+                   last_seen_at=now()-interval '40 days'
+               where id=%s""",
+            (video_id,),
+        )
+
+    result = module.main(
+        resource_from_dsn(DSN), platform="douyin", query="video-lib-1",
+    )
+
+    assert result["total"] == 1
+    assert result["items"][0]["id"] == video_id
+    assert module.main(resource_from_dsn(DSN), platform="douyin", query="龙王祭坛")["total"] == 0
 
 
 def test_video_library_all_platform_mode() -> None:

@@ -13,6 +13,18 @@ ROOT = Path(__file__).resolve().parents[1]
 DSN = os.getenv("TEST_DATABASE_URL")
 
 
+def test_schema_bootstrap_runs_in_one_psql_transaction() -> None:
+    bootstrap = (ROOT / "db/init/01-bootstrap-research.sh").read_text(encoding="utf-8")
+    local = (ROOT / "scripts/local-l3-env.sh").read_text(encoding="utf-8")
+
+    assert 'psql -v ON_ERROR_STOP=1 --single-transaction \\' in bootstrap
+    assert '--file /bootstrap/schema.sql' in bootstrap
+    assert (
+        'psql -v ON_ERROR_STOP=1 --single-transaction -U "$RESEARCH_DB_USER" '
+        '-d douyin_research_test -f /bootstrap/schema.sql'
+    ) in local
+
+
 def test_local_migrate_script_uses_research_owner_and_backup_first() -> None:
     source = (ROOT / "scripts/local-l3-env.sh").read_text(encoding="utf-8")
     migrate = source.split("cmd_migrate() {", 1)[1].split(

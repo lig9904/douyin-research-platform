@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -51,4 +52,43 @@ def test_all_windmill_python_script_metadata_reference_their_lock() -> None:
         assert lock.is_file() and lock.stat().st_size > 0, metadata
         relative_lock = lock.relative_to(root).as_posix()
         source = metadata.read_text(encoding="utf-8")
-        assert f"lock: '!inline {relative_lock}'" in source, metadata
+        assert re.search(
+            rf"(?m)^lock: ['\"]!inline\s+{re.escape(relative_lock)}['\"]",
+            source,
+        ), metadata
+
+
+def test_raw_app_python_backends_have_generated_dependency_and_workspace_locks() -> None:
+    """Keep every inline Raw App backend deployable from a reproducible lock.
+
+    Raw App backends are not ``*.script.yaml`` objects, so the generic script
+    metadata check above deliberately cannot see them.  They still execute
+    Python in Windmill and therefore need both the generated per-backend
+    dependency lock and the generated workspace hash reference.  In
+    particular, this covers private-project ASR/L3 endpoints added in 032.
+    """
+    raw_app = ROOT / "windmill/f/content_research/research_dashboard.raw_app"
+    backend_dir = raw_app / "backend"
+    backends = sorted(backend_dir.glob("*.py"))
+    assert backends
+
+    workspace_lock = (ROOT / "windmill/wmill-lock.yaml").read_text(encoding="utf-8")
+    assert re.search(
+        r"^  f/content_research/research_dashboard\.raw_app\+__app_hash: [0-9a-f]{64}$",
+        workspace_lock,
+        flags=re.MULTILINE,
+    )
+
+    for backend in backends:
+        dependency_lock = backend.with_suffix(".lock")
+        assert dependency_lock.is_file() and dependency_lock.stat().st_size > 0, backend
+        assert "# py: 3.14" in dependency_lock.read_text(encoding="utf-8")[:200], dependency_lock
+
+        workspace_key = (
+            "f/content_research/research_dashboard.raw_app+" + backend.name
+        )
+        assert re.search(
+            rf"^  {re.escape(workspace_key)}: [0-9a-f]{{64}}$",
+            workspace_lock,
+            flags=re.MULTILINE,
+        ), backend

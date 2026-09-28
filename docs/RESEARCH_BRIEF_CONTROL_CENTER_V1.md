@@ -2,7 +2,7 @@
 
 日期：2026-09-22；现场更新：2026-09-23
 
-测试服务器现状：迁移 020 已执行；研究台已有 4 个任务（1 个周期任务 active、3 个一次性任务 paused），7 条 success 和 1 条 failed 运行记录。新建的“渔岛”任务搜索返回同名游戏内容，详情 HTTP 400 后失败，现已暂停且不再排队；见 [渔岛业务使用验收与缺口](YUDAO_BUSINESS_ACCEPTANCE_V1.md)。每小时 dispatcher 已启用，旧 `scheduled_research_cycle` 已停用；活动周期任务的下一次到点为 2026-09-23 09:05 UTC（北京时间 17:05）。这证明调度可用，但景区业务使用尚未验收。
+2026-09-23 测试服务器快照：迁移 020 已执行；研究台当时有 4 个任务（1 个周期任务 active、3 个一次性任务 paused），7 条 success 和 1 条 failed 运行记录。新建的“渔岛”任务搜索返回同名游戏内容，详情 HTTP 400 后失败，后续暂停；见 [渔岛业务使用验收与缺口](YUDAO_BUSINESS_ACCEPTANCE_V1.md)。当时每小时 dispatcher 已启用，旧 `scheduled_research_cycle` 已停用。此段是历史快照，不代表当前任务数、计划或业务验收状态。
 
 ## 1. 业务目的
 
@@ -50,8 +50,8 @@ V1 支持抖音三类来源：
   └─ mutate_research_brief（写入白名单 + 登录身份 + 幂等审计）
              ↓
        research_brief
-             ↓ 每小时检查，源代码默认 disabled
-dispatch_due_research_briefs（最多 5 个）
+             ↓ 每分钟检查，源代码默认 disabled
+dispatch_due_research_briefs（每次最多 1 个）
              ↓
 research_brief_cycle(brief_id)
   ├─ run_research_brief：发现 + 详情 + L0/L1
@@ -63,6 +63,7 @@ research_brief_cycle(brief_id)
 ```
 
 执行器使用服务器固定数据库 Resource、自动化身份和 TikHub Secret。单个发现运行最多 2 次未缓存 TikHub 调用、SDK 零重试；关键词和账号原文不会进入 `source_key`，但会作为任务配置保存在受控数据库中。
+调度器每次只派发一个到期任务，以匹配执行器的全局付费调用串行锁；锁被其他任务占用时该任务不领取、下一分钟再试。Windmill CE 的并发限制提示不作为互斥保证，互斥仍由数据库锁承担。每分钟调度不代表每分钟付费：没有到期任务时仅执行只读查询。
 
 ## 5. 状态与协作
 
@@ -102,7 +103,7 @@ research_brief_cycle(brief_id)
 3. 使用管理员账号新建一个小范围草稿，确认未发生外部调用；
 4. 激活一次性任务，核对最多 2 次发现调用、Canonical 合并和任务运行摘要；
 5. 核对评论/媒体按深度停止，且没有 ASR/L3 job；
-6. 启用每小时 dispatcher，并停用旧的固定 `scheduled_research_cycle` 计划，防止两套发现计划重复消费；
+6. 启用每分钟、每次最多派发一个的 dispatcher，并停用旧的固定 `scheduled_research_cycle` 计划，防止两套发现计划重复消费；
 7. 创建一个 6 小时周期任务，确认下一次 `next_due_at` 正确生成；
 8. 通过运行与成本页核对当天 TikHub 账；
 9. 由用户完成“建任务 → 看合并结果 → 看依据 → 必要时人工审核分析”的业务验收。

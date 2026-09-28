@@ -137,11 +137,14 @@ def _candidate(cur, project_id: UUID, video_key: str) -> dict[str, Any] | None:
 
 
 def main(db: postgresql, project_id: str, action: str,
-         video_reference: str, idempotency_key: str | None = None):
+         video_reference: str, idempotency_key: str | None = None,
+         content_review_confirmed: bool = False):
     actor = _actor()
     project = _uuid(project_id, "project_id")
     if action not in {"preview", "accept"}:
         raise ValueError("action is invalid")
+    if action == "accept" and content_review_confirmed is not True:
+        raise ValueError("video content review confirmation is required")
     video_key = _video_key(video_reference)
     key = _uuid(idempotency_key, "idempotency_key") if action == "accept" else None
     try:
@@ -178,14 +181,16 @@ def main(db: postgresql, project_id: str, action: str,
                 """insert into project_video_inclusion
                    (project_id,video_id,source_type,source_ref,status,metadata)
                    values (%s,%s,'manual',%s,'accepted',
-                     jsonb_build_object('last_accepted_by',%s::text,'last_accepted_at',now()))
+                     jsonb_build_object('last_accepted_by',%s::text,'last_accepted_at',now(),
+                       'content_review_confirmed_by',%s::text,'content_review_confirmed_at',now()))
                    on conflict (project_id,video_id) do update
                      set status='accepted', updated_at=now(),
                          metadata=project_video_inclusion.metadata ||
-                           jsonb_build_object('last_accepted_by',%s::text,'last_accepted_at',now())
+                           jsonb_build_object('last_accepted_by',%s::text,'last_accepted_at',now(),
+                             'content_review_confirmed_by',%s::text,'content_review_confirmed_at',now())
                    where project_video_inclusion.status <> 'accepted'
                    returning video_id""",
-                (project, candidate["id"], f"douyin:{video_key}", actor, actor),
+                (project, candidate["id"], f"douyin:{video_key}", actor, actor, actor, actor),
             )
             changed = cur.fetchone() is not None
             outcome = {"changed": changed, "project_id": str(project), "video_id": candidate["id"], "status": "accepted"}

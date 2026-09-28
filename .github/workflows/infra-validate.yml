@@ -291,11 +291,16 @@ jobs:
             up -d postgres
 
           for i in {1..30}; do
-            if docker compose -p l3-review-ci \
+            # pg_isready can succeed while docker-entrypoint-initdb.d is still
+            # running. Wait for the final reviewer grant before injecting
+            # privilege drift in the next step.
+            if [[ "$(docker compose -p l3-review-ci \
               --env-file .env.l3-local \
               -f docker-compose.yml \
               -f docker-compose.l3-local.yml \
-              exec -T postgres pg_isready -h 127.0.0.1 -U postgres -d windmill >/dev/null 2>&1; then
+              exec -T postgres psql -U postgres -d douyin_research -At \
+                -c "select has_table_privilege('l3_local_reviewer', 'public.source_video', 'SELECT')" \
+                2>/dev/null | tr -d '\r')" == t ]]; then
               exit 0
             fi
             sleep 2

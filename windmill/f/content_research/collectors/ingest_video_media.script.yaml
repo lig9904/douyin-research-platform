@@ -3,10 +3,9 @@ description: |
   Reuses persisted TikHub detail data. Private S3 storage and audio runtime are
   configured only through server-side Secrets/configuration. No paid API calls,
   privacy approvals, arbitrary URLs or caller-supplied worker identity.
-concurrent_limit: 2
-concurrency_time_window_s: 0
-timeout: 900
 lock: '!inline f/content_research/collectors/ingest_video_media.script.lock'
+concurrency_time_window_s: 0
+concurrent_limit: 2
 schema:
   type: object
   properties:
@@ -15,3 +14,4 @@ schema:
       description: Existing internal source_video UUID, not a download URL.
   required:
     - video_id
+timeout: 900

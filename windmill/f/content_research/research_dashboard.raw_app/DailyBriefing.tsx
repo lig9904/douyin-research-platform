@@ -3,6 +3,7 @@ import { Alert, Button, Select, Spin, Tag } from 'antd'
 import AppShell, { type ResearchView } from './AppShell'
 import { backend } from './backend'
 import PlatformIcon from './src/components/PlatformIcon'
+import { supplierDailySpendSummaryText } from './src/dailySpendDisplay'
 import './daily-briefing.css'
 
 type BriefingItem = {
@@ -43,6 +44,8 @@ type DailyBriefingData = {
   costs: {
     supplier_daily_spend: {
       provider: string
+      account_scope: string
+      scope_kind: 'account_total' | 'product_subset'
       scope_label: string
       billing_date: string
       cost_currency: string
@@ -100,11 +103,7 @@ function sourceName(value: string) {
 }
 
 function supplierCost(data: DailyBriefingData | null) {
-  const rows = data?.costs.supplier_daily_spend || []
-  if (!rows.length) return '尚未同步供应商日账'
-  return rows.map((row) => (
-    `${row.provider} ${row.billing_date} ${row.cost_currency} ${Number(row.total_cost || 0).toFixed(3)}`
-  )).join('；')
+  return supplierDailySpendSummaryText(data?.costs.supplier_daily_spend || [])
 }
 
 function estimateCost(data: DailyBriefingData | null) {

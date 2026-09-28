@@ -15,9 +15,14 @@
 .subject-profile-reader-note { margin-top: 12px; color: #667b92; border-color: #dce7f3; background: #f8fbff; }
 .subject-profile-history { margin-top: 16px; }
 .subject-profile-history h4 { margin: 0 0 7px; color: #415c58; font-size: 13px; }
-.subject-profile-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 1px; border-top: 1px solid #edf2f0; }
+.subject-profile-history-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 1px; border-top: 1px solid #edf2f0; }
 .subject-profile-history-row strong { display: block; color: #405954; font-size: 12px; }
 .subject-profile-history-row span { display: block; margin-top: 3px; color: #7a8e89; font-size: 11px; overflow-wrap: anywhere; }
+.subject-profile-history-row > div { min-width: 0; flex: 1; }
+.subject-profile-history-row details { margin-top: 8px; }
+.subject-profile-history-row details[open] { padding: 10px 12px; border: 1px solid #e1e9e6; border-radius: 8px; background: #f8fbfa; }
+.subject-profile-history-row summary { cursor: pointer; color: #286b61; font-size: 12px; }
+.subject-profile-review { margin-top: 9px; max-height: 45vh; overflow: auto; overflow-wrap: anywhere; }
 .subject-profile-form { margin-top: 14px; }
 .subject-profile-form .ant-form-item { margin-bottom: 13px; }
 @media (max-width: 600px) {

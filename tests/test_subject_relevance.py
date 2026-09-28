@@ -107,6 +107,8 @@ def test_subject_routes_are_actor_bound_and_ui_closes_project_brief_path() -> No
     assert "manual_override" in writer
     assert "backend.get_project_subjects" in panel
     assert "backend.mutate_project_subject" in panel
+    assert "评论、转写和 L3 分析按项目权限及审核状态到视频库核对" in panel
+    assert "评论、转写和大模型分析仍未在项目链路启用" not in panel
     assert "subject_id: values?.subject_id" in briefs
     assert "请选择研究主体" in briefs
     assert "L1 不是经营效果预测" in briefs

@@ -75,6 +75,36 @@ def test_keyword_search_uses_latest_provider_window_and_exact_local_cutoff(
     assert source.published_after == NOW - timedelta(hours=time_window_hours)
 
 
+def test_exact_video_ids_are_one_time_project_metadata_without_date_cutoff() -> None:
+    first = "7521318904971578681"
+    second = "7653684558261710777"
+    config = make_config(
+        source_type="video_ids", target=f" {first}\n{second} ",
+        time_window_hours=0, max_items=2, depth="metadata",
+        cadence_hours=None, subject_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert config.target == f"{first},{second}"
+    source = discovery_source(config, now=NOW)
+    assert source.kind == "exact_video_ids"
+    assert source.kwargs == {"video_ids": (first, second)}
+    assert source.published_after is None
+    assert first not in source.source_key
+
+    for overrides in (
+        {"subject_id": None}, {"depth": "comments"},
+        {"cadence_hours": 24}, {"time_window_hours": 720},
+        {"max_items": 1}, {"target": f"{first},{first}"},
+    ):
+        values = dict(
+            source_type="video_ids", target=f"{first},{second}",
+            time_window_hours=0, max_items=2, depth="metadata",
+            cadence_hours=None, subject_id="00000000-0000-4000-8000-000000000001",
+        )
+        values.update(overrides)
+        with pytest.raises(ValueError):
+            make_config(**values)
+
+
 def test_brief_validation_keeps_paid_scope_bounded() -> None:
     with pytest.raises(ValueError, match="bounded endpoint"):
         make_config(

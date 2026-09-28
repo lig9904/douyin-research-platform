@@ -1,0 +1,17 @@
+summary: Poll one reviewed project ASR task
+description: Background recovery endpoint. Polls an already-submitted approved
+  project ASR task only; it has no media URL, provider, credential or actor
+  parameters and never submits a new task.
+lock: '!inline f/content_research/project_asr/poll_reviewed_asr.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    project_id:
+      type: string
+    task_key:
+      type: string
+  required:
+    - project_id
+    - task_key
+timeout: 90

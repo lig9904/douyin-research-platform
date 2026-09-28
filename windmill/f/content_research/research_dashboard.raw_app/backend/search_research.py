@@ -1,4 +1,7 @@
 # py: ==3.14.*
+#requirements:
+#psycopg[binary]==3.3.6
+#wmill==1.815.0
 """Read-only, privacy-bounded global search for the research dashboard."""
 
 from __future__ import annotations

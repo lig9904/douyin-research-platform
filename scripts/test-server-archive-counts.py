@@ -27,7 +27,26 @@ TARGETS = {
         'project_decision_card', 'project_decision_card_event',
         'project_publication_record', 'project_publication_metric_observation',
     ),
+    'project_decision_evidence_035': ('project_decision_card_evidence_ref',),
+    'project_case_review_037': ('project_video_case_review',),
+    'project_asr_standing_038': ('project_asr_standing_grant',),
+    'project_las_receipt_040': (
+        'project_las_analysis_attempt', 'project_las_analysis_receipt',
+        'project_las_supplier_bill_item',
+    ),
+    'project_las_live_041': (
+        'project_las_video_review', 'project_las_analysis_result',
+    ),
+    'project_las_machine_043': ('project_las_video_authorization',),
+    'project_creative_044': ('project_creative_concept', 'project_creative_concept_revision'),
+    'volc_billing_gap_045': ('volc_billing_sync_gap',),
     'subject_score_029': ('project_video_subject_score',),
+    'project_private_analysis_032': (
+        'project_asr_media_review', 'project_research_task_cost',
+        'project_asr_execution_job', 'project_transcript',
+        'project_l3_privacy_review', 'project_l3_execution_job',
+        'project_l3_analysis_result',
+    ),
     'windmill': ('workspace', 'usr'),
 }
 
@@ -42,7 +61,7 @@ def counts(lines, tables):
             elif current in tables:
                 found[current] += 1
             continue
-        match = re.fullmatch(r'COPY public\.([a-z_]+) \(.*\) FROM stdin;\r?\n?', line)
+        match = re.fullmatch(r'COPY public\.([a-z0-9_]+) \(.*\) FROM stdin;\r?\n?', line)
         if re.fullmatch(r'COPY .* FROM stdin;\r?\n?', line):
             # Skip every COPY body, including quoted names and other schemas.
             # Its data must never be reinterpreted as a selected table header.

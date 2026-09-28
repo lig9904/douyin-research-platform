@@ -1,0 +1,10 @@
+summary: Dispatch human-reviewed project L3
+description: Schedule-only project batch. Requires an approved project L3 review
+  and an active approved project ASR review; never creates approval or replays a
+  persisted execution job.
+lock: '!inline f/content_research/analysis/dispatch_pending_project_l3.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties: {}
+timeout: 1200

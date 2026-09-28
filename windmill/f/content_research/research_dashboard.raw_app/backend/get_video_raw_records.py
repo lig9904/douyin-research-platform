@@ -1,4 +1,7 @@
 # py: ==3.14.*
+#requirements:
+#psycopg[binary]==3.3.6
+#wmill==1.815.0
 """Read bounded original records for one video inside the authenticated app."""
 
 from __future__ import annotations

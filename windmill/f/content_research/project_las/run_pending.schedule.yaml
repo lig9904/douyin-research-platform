@@ -1,0 +1,7 @@
+summary: Recover reviewed project LAS work every ten minutes
+schedule: "0 7-59/10 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/project_las/run_pending
+is_flow: false
+enabled: false
+args: {}

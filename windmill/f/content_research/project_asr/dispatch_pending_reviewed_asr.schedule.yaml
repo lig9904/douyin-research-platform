@@ -1,0 +1,7 @@
+summary: Dispatch reviewed project ASR every ten minutes
+schedule: "0 3-59/10 * * * *"
+timezone: Etc/UTC
+script_path: f/content_research/project_asr/dispatch_pending_reviewed_asr
+is_flow: false
+enabled: false
+args: {}
