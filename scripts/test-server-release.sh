@@ -481,6 +481,29 @@ verify_subject_profile_contract() {
   [[ -z "$failed" ]] || { printf 'ERROR: subject profile migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
 }
 
+verify_decision_profile_binding_contract() {
+  # 031 binds new adopted cards to one immutable, rights-cleared local profile.
+  local database="${1:-$research_database}" failed
+  failed="$(research_query "$database" "
+    with checks(name, ok) as (values
+      ('031.binding', to_regclass('public.project_decision_card_profile_binding') is not null),
+      ('031.required_column', exists(select 1 from pg_attribute where attrelid=to_regclass('public.project_decision_card') and attname='profile_binding_required_at' and not attisdropped)),
+      ('031.card_scope', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card') and conname='uq_project_decision_card_subject_scope' and contype='u' and convalidated)),
+      ('031.card_fk', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_profile_binding') and contype='f' and convalidated and confrelid=to_regclass('public.project_decision_card') and pg_get_constraintdef(oid) like '%FOREIGN KEY (decision_card_id, project_id, subject_id)%ON DELETE RESTRICT%')),
+      ('031.profile_fk', exists(select 1 from pg_constraint where conrelid=to_regclass('public.project_decision_card_profile_binding') and contype='f' and convalidated and confrelid=to_regclass('public.research_subject_profile_version') and pg_get_constraintdef(oid) like '%FOREIGN KEY (profile_id, project_id)%ON DELETE RESTRICT%')),
+      ('031.requirement_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_profile_requirement()') and encode(sha256(convert_to(prosrc,'UTF8')),'hex')='70a14f246dd385bd9f13a552e12a8cb4d19c5d563a050628a31523a894fc8131')),
+      ('031.binding_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_profile_binding()') and encode(sha256(convert_to(prosrc,'UTF8')),'hex')='43e56096400258ad17c322c8dc7a0d7193a2367f567e95b79c165a1527b5d599')),
+      ('031.deferred_body', exists(select 1 from pg_proc where oid=to_regprocedure('public.enforce_project_decision_card_adopt_profile_binding()') and encode(sha256(convert_to(prosrc,'UTF8')),'hex')='fe67fdeca77c2beb921e5daaf5d4752e246faf15174eb8273ba8f79be7bcc6d9')),
+      ('031.requirement_trigger', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card') and tgname='trg_project_decision_card_profile_requirement' and not tgisinternal and tgenabled in ('O','A') and tgtype=23 and tgfoid=to_regprocedure('public.enforce_project_decision_card_profile_requirement()'))),
+      ('031.deferred_trigger', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card') and tgname='trg_project_decision_card_adopt_profile_binding' and not tgisinternal and tgenabled in ('O','A') and tgtype=21 and tgdeferrable and tginitdeferred and tgfoid=to_regprocedure('public.enforce_project_decision_card_adopt_profile_binding()'))),
+      ('031.immutable_trigger', exists(select 1 from pg_trigger where tgrelid=to_regclass('public.project_decision_card_profile_binding') and tgname='trg_project_decision_card_profile_binding_immutable' and not tgisinternal and tgenabled in ('O','A') and tgtype=31 and tgfoid=to_regprocedure('public.enforce_project_decision_card_profile_binding()'))),
+      ('031.owner', exists(select 1 from pg_tables where schemaname='public' and tablename='project_decision_card_profile_binding' and tableowner=current_user)),
+      ('031.no_nonowner_grants', not exists(select 1 from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace cross join lateral aclexplode(coalesce(relation_row.relacl,acldefault('r',relation_row.relowner))) grant_row where namespace_row.nspname='public' and relation_row.relname='project_decision_card_profile_binding' and grant_row.grantee<>relation_row.relowner))
+    ) select coalesce(string_agg(name, ',' order by name), '') from checks where ok is distinct from true
+  ")"
+  [[ -z "$failed" ]] || { printf 'ERROR: decision profile binding migration contract verification failed: %s\n' "$failed" >&2; exit 1; }
+}
+
 archive_profile_count() {
   # Count only the profile COPY body while discarding every row.  The restore
   # drill compares counts without logging source content or references.
@@ -499,6 +522,26 @@ for line in sys.stdin:
             if found: raise SystemExit("ERROR: duplicate profile COPY section")
             found=True
 if current is not None or not found: raise SystemExit("ERROR: incomplete profile COPY inventory")
+print(count)
+'
+}
+
+archive_decision_binding_count() {
+  compose exec -T postgres pg_restore --data-only -f - | python3 -c '
+import re, sys
+target="project_decision_card_profile_binding"; found=False; current=None; count=0
+for line in sys.stdin:
+    if current is not None:
+        if line.rstrip("\r\n")=="\\.": current=None
+        elif current==target: count += 1
+        continue
+    match=re.fullmatch(r"COPY public\.([a-z_]+) \(.*\) FROM stdin;\r?\n?", line)
+    if re.fullmatch(r"COPY .* FROM stdin;\r?\n?", line):
+        current=match.group(1) if match else "__unselected_copy__"
+        if current==target:
+            if found: raise SystemExit("ERROR: duplicate decision binding COPY section")
+            found=True
+if current is not None or not found: raise SystemExit("ERROR: incomplete decision binding COPY inventory")
 print(count)
 '
 }
@@ -532,10 +575,11 @@ cmd_migrate() {
   verify_decision_loop_contract
   verify_project_subject_score_contract
   verify_subject_profile_contract
+  verify_decision_profile_binding_contract
   printf 'MIGRATED backup=%s\n' "$backup_dir"
 }
 
-cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, and subject profile migration contracts and ledger.'; }
+cmd_verify() { wait_for_postgres; verify_migration_ledger required; verify_contract; verify_project_contract; verify_subject_relevance_contract; verify_decision_loop_contract; verify_project_subject_score_contract; verify_subject_profile_contract; verify_decision_profile_binding_contract; echo 'VERIFIED research, project, subject relevance, decision loop, subject score, subject profile, and decision profile binding migration contracts and ledger.'; }
 
 cmd_restore_drill() (
   [[ "${TEST_SERVER_RESTORE_DRILL:-}" == YES ]] || { echo 'ERROR: set TEST_SERVER_RESTORE_DRILL=YES for this restore drill.' >&2; exit 2; }
@@ -546,6 +590,7 @@ cmd_restore_drill() (
   local decision_contract=legacy_absent decision_source_counts decision_restored_counts
   local subject_score_contract=legacy_absent subject_score_source_counts subject_score_restored_counts
   local subject_profile_contract=legacy_absent subject_profile_source_counts subject_profile_restored_counts
+  local decision_binding_contract=legacy_absent decision_binding_source_counts decision_binding_restored_counts
   local verification archive_manifest_sha globals_inventory_sha archive_created_at archive_verified_at start_epoch completed_at duration_seconds
   local research_created=0 windmill_created=0
   backup_dir="$(cd "$backup_argument" 2>/dev/null && pwd -P)" || { echo 'ERROR: backup directory does not exist.' >&2; exit 2; }
@@ -605,7 +650,7 @@ cmd_restore_drill() (
   research_verified="$(research_query "$RESTORE_DATABASE" "select (to_regclass('public.schema_migrations') is not null)::int || '|' || (to_regclass('public.source_video') is not null)::int || '|' || (to_regclass('public.collection') is not null)::int || '|' || (to_regclass('public.collection_item') is not null)::int || '|' || (to_regclass('public.saved_research_filter') is not null)::int || '|' || (to_regclass('public.research_user_action') is not null)::int || '|' || ((select count(*) from pg_tables where schemaname='public' and tablename in ('source_video','collection','collection_item','saved_research_filter','research_user_action','schema_migrations') and tableowner=current_user)=6)::int")"
   [[ "$research_verified" == '1|1|1|1|1|1|1' ]] || { echo 'ERROR: restored research database owner or key-object verification failed.' >&2; exit 1; }
   verify_migration_ledger prefix "$RESTORE_DATABASE"
-  project_state="$(research_query "$RESTORE_DATABASE" "select (select count(*) from schema_migrations where filename in ('021_project_account_foundation.sql','022_project_task_ownership.sql','023_project_video_read_acl.sql','024_project_account_relation_cursor.sql','025_project_collaboration.sql','026_share_only_accepted_video.sql','027_subject_relevance_gate.sql','028_project_decision_loop.sql','029_project_subject_score.sql','030_subject_profile_version.sql')) || '|' || (select count(*) from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace where namespace_row.nspname='public' and relation_row.relname in ('research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion','effective_account_authorization','idx_project_account_relation_verified_cursor','project_video_share_grant','project_access_event','research_subject_term','project_video_subject_relevance','project_video_subject_relevance_audit','uq_research_subject_term_active','idx_research_subject_term_project_subject','idx_project_video_subject_relevance_gate','idx_project_video_subject_relevance_audit_video','project_decision_card','project_decision_card_event','project_publication_record','project_publication_metric_observation','idx_project_decision_card_project_status','idx_project_decision_card_project_source_video','idx_project_decision_card_event_card_time','idx_project_publication_record_project_date','idx_project_publication_metric_observation_project_date','project_video_subject_score','idx_project_video_subject_score_project_subject_score','idx_project_video_subject_score_project_video','research_subject_profile_version','uq_research_subject_profile_one_approved','idx_research_subject_profile_subject_kind_version')) + (select count(*) from pg_proc function_row join pg_namespace namespace_row on namespace_row.oid=function_row.pronamespace where namespace_row.nspname='public' and function_row.proname in ('project_actor_can_read','project_video_can_read','project_shared_video_can_read','enforce_project_decision_card_accepted_source','enforce_project_decision_card_owner_member','reject_reviewed_project_decision_card_change','reject_project_publication_metric_observation_change','enforce_project_decision_card_review_snapshot','enforce_project_video_subject_score_eligible','reject_project_video_subject_score_change','enforce_research_subject_profile_version','reject_research_subject_profile_version_delete'))")"
+  project_state="$(research_query "$RESTORE_DATABASE" "select (select count(*) from schema_migrations where filename in ('021_project_account_foundation.sql','022_project_task_ownership.sql','023_project_video_read_acl.sql','024_project_account_relation_cursor.sql','025_project_collaboration.sql','026_share_only_accepted_video.sql','027_subject_relevance_gate.sql','028_project_decision_loop.sql','029_project_subject_score.sql','030_subject_profile_version.sql','031_decision_card_profile_binding.sql')) || '|' || (select count(*) from pg_class relation_row join pg_namespace namespace_row on namespace_row.oid=relation_row.relnamespace where namespace_row.nspname='public' and relation_row.relname in ('research_organization','research_project','research_project_member','research_subject','project_account_relation','account_group','account_group_member','account_identity_link','account_authorization','project_video_inclusion','effective_account_authorization','idx_project_account_relation_verified_cursor','project_video_share_grant','project_access_event','research_subject_term','project_video_subject_relevance','project_video_subject_relevance_audit','uq_research_subject_term_active','idx_research_subject_term_project_subject','idx_project_video_subject_relevance_gate','idx_project_video_subject_relevance_audit_video','project_decision_card','project_decision_card_event','project_publication_record','project_publication_metric_observation','idx_project_decision_card_project_status','idx_project_decision_card_project_source_video','idx_project_decision_card_event_card_time','idx_project_publication_record_project_date','idx_project_publication_metric_observation_project_date','project_video_subject_score','idx_project_video_subject_score_project_subject_score','idx_project_video_subject_score_project_video','research_subject_profile_version','uq_research_subject_profile_one_approved','idx_research_subject_profile_subject_kind_version','project_decision_card_profile_binding','uq_project_decision_card_subject_scope','idx_project_decision_card_profile_binding_profile')) + (select count(*) from pg_proc function_row join pg_namespace namespace_row on namespace_row.oid=function_row.pronamespace where namespace_row.nspname='public' and function_row.proname in ('project_actor_can_read','project_video_can_read','project_shared_video_can_read','enforce_project_decision_card_accepted_source','enforce_project_decision_card_owner_member','reject_reviewed_project_decision_card_change','reject_project_publication_metric_observation_change','enforce_project_decision_card_review_snapshot','enforce_project_video_subject_score_eligible','reject_project_video_subject_score_change','enforce_research_subject_profile_version','reject_research_subject_profile_version_delete','enforce_project_decision_card_profile_requirement','enforce_project_decision_card_profile_binding','enforce_project_decision_card_adopt_profile_binding'))")"
   case "$project_state" in
     '0|0') project_contract=legacy_absent; subject_contract=legacy_absent ;;
     '4|14')
@@ -686,8 +731,12 @@ cmd_restore_drill() (
       [[ "$subject_score_source_counts" == "$subject_score_restored_counts" ]] || { echo 'ERROR: subject score restore counts do not match the backup archive.' >&2; exit 1; }
       project_contract=present; subject_contract=present; decision_contract=present; subject_score_contract=present
       ;;
-    '10|48')
-      verify_migration_ledger required "$RESTORE_DATABASE"
+    '10|48'|'11|54')
+      if [[ "$project_state" == '11|54' ]]; then
+        verify_migration_ledger required "$RESTORE_DATABASE"
+      else
+        verify_migration_ledger prefix "$RESTORE_DATABASE"
+      fi
       verify_project_contract "$RESTORE_DATABASE" restored
       verify_subject_relevance_contract "$RESTORE_DATABASE"
       verify_decision_loop_contract "$RESTORE_DATABASE"
@@ -709,6 +758,13 @@ cmd_restore_drill() (
       subject_profile_restored_counts="$(research_query "$RESTORE_DATABASE" "select count(*) from research_subject_profile_version")"
       [[ "$subject_profile_source_counts" == "$subject_profile_restored_counts" ]] || { echo 'ERROR: subject profile restore counts do not match the backup archive.' >&2; exit 1; }
       project_contract=present; subject_contract=present; decision_contract=present; subject_score_contract=present; subject_profile_contract=present
+      if [[ "$project_state" == '11|54' ]]; then
+        verify_decision_profile_binding_contract "$RESTORE_DATABASE"
+        decision_binding_source_counts="$(archive_decision_binding_count < "$backup_dir/research.dump")"
+        decision_binding_restored_counts="$(research_query "$RESTORE_DATABASE" "select count(*) from project_decision_card_profile_binding")"
+        [[ "$decision_binding_source_counts" == "$decision_binding_restored_counts" ]] || { echo 'ERROR: decision profile binding restore counts do not match the backup archive.' >&2; exit 1; }
+        decision_binding_contract=present
+      fi
       ;;
     *) echo 'ERROR: restored project schema and migration ledger are inconsistent.' >&2; exit 1 ;;
   esac
@@ -735,8 +791,8 @@ if result.get("status")!="business_chain_present" or result.get("v1_release_acce
   trap - EXIT
   completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   duration_seconds="$(( $(date +%s) - start_epoch ))"
-  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s\n' \
-    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract"
+  printf 'RESTORE_DRILL_VALID format=test-server-backup-v1 manifest_sha256=%s inventory_sha256=%s archive_created_at_utc=%s archive_verified_at_utc=%s completed_at_utc=%s duration_seconds=%s research_brief_contract=%s project_contract=%s subject_relevance_contract=%s decision_loop_contract=%s subject_score_contract=%s subject_profile_contract=%s decision_binding_contract=%s\n' \
+    "$archive_manifest_sha" "$globals_inventory_sha" "$archive_created_at" "$archive_verified_at" "$completed_at" "$duration_seconds" "$brief_contract" "$project_contract" "$subject_contract" "$decision_contract" "$subject_score_contract" "$subject_profile_contract" "$decision_binding_contract"
 )
 
 case "$command_name" in

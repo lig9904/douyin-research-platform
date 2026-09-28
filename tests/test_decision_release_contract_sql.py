@@ -58,8 +58,16 @@ def test_fresh_schema_has_private_028_contract_and_restore_state() -> None:
                     "insert into schema_migrations(filename, sha256) values (%s, 'test')",
                     (migration.name,),
                 )
-            # Reconstruct the 028 archive, not today's fresh bootstrap: 029
-            # and 030 contribute later tables, indexes, and functions.
+            # Reconstruct the 028 archive, not today's fresh bootstrap: 029-031
+            # contribute later tables, indexes, functions, and card triggers.
+            conn.execute("drop table project_decision_card_profile_binding")
+            conn.execute("drop function enforce_project_decision_card_profile_binding()")
+            conn.execute("drop trigger trg_project_decision_card_adopt_profile_binding on project_decision_card")
+            conn.execute("drop trigger trg_project_decision_card_profile_requirement on project_decision_card")
+            conn.execute("drop function enforce_project_decision_card_adopt_profile_binding()")
+            conn.execute("drop function enforce_project_decision_card_profile_requirement()")
+            conn.execute("alter table project_decision_card drop constraint uq_project_decision_card_subject_scope")
+            conn.execute("alter table project_decision_card drop column profile_binding_required_at")
             conn.execute("drop table research_subject_profile_version")
             conn.execute("drop function enforce_research_subject_profile_version()")
             conn.execute("drop function reject_research_subject_profile_version_delete()")

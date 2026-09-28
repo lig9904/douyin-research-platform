@@ -40,6 +40,7 @@ def test_decision_loop_contract_is_project_local_and_strict() -> None:
     page = (BACKEND.parent / "DecisionLoop.tsx").read_text()
     assert "跨项目共享视频仅供阅读，不能在此建卡" in page
     assert "backend.mutate_project_decision_loop" in page
+    assert "核准档案版本" in page and "profile_id" in page
     assert "行动复盘" in (BACKEND.parent / "AppShell.tsx").read_text()
 
 
@@ -53,28 +54,48 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
     with psycopg.connect(DSN, autocommit=True) as conn:
         conn.execute(sql.SQL("create schema {}").format(sql.Identifier(namespace)))
         try:
-            conn.execute(sql.SQL("set search_path to {}").format(sql.Identifier(namespace)))
+            conn.execute(sql.SQL("set search_path to {}, public").format(sql.Identifier(namespace)))
             conn.execute((ROOT / "db/schema.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/028_project_decision_loop.sql").read_text(), prepare=False)
             conn.execute((ROOT / "db/migrations/028_project_decision_loop.sql").read_text(), prepare=False)
             org = conn.execute("insert into research_organization(slug,name) values('loop-org','闭环组织') returning id").fetchone()[0]
             project = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'loop-a','项目 A','active') returning id", (org,)).fetchone()[0]
             other = conn.execute("insert into research_project(organization_id,slug,name,status) values(%s,'loop-b','项目 B','active') returning id", (org,)).fetchone()[0]
-            conn.execute("insert into research_project_member(project_id,actor_id,role) values(%s,'writer@example.com','researcher'),(%s,'viewer@example.com','viewer'),(%s,'analyst@example.com','analyst'),(%s,'other@example.com','owner')", (project, project, project, other))
+            conn.execute("insert into research_project_member(project_id,actor_id,role) values(%s,'writer@example.com','owner'),(%s,'viewer@example.com','viewer'),(%s,'analyst@example.com','analyst'),(%s,'other@example.com','owner'),(%s,'researcher@example.com','researcher')", (project, project, project, other, project))
             accepted = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','8888888888888888888','本项目已接受') returning id").fetchone()[0]
             shared_only = conn.execute("insert into source_video(platform,platform_video_id,title) values('douyin','9999999999999999999','别的项目公开参考') returning id").fetchone()[0]
             conn.execute("insert into project_video_inclusion(project_id,video_id,source_type,source_ref,status) values(%s,%s,'manual','local','accepted'),(%s,%s,'manual','other','accepted')", (project, accepted, other, shared_only))
+            subject = conn.execute("insert into research_subject(project_id,name,subject_type) values(%s,'测试主体','ip') returning id", (project,)).fetchone()[0]
+            profile = conn.execute(
+                """insert into research_subject_profile_version
+                   (project_id,subject_id,profile_kind,version_no,summary,rights_status,source_reference,source_digest,content_fingerprint)
+                   values (%s,%s,'ip_narrative',1,'{"current_facts":["测试主体已确认"]}'::jsonb,'cleared','internal:test-profile',%s,%s)
+                   returning id""",
+                (project, subject, "a" * 64, "b" * 64),
+            ).fetchone()[0]
+            conn.execute("update research_subject_profile_version set status='approved',approved_by='writer@example.com' where id=%s", (profile,))
             db = {
                 "host": conninfo.get("host") or conn.info.host or "127.0.0.1", "port": int(conninfo.get("port") or conn.info.port or 5432),
                 "user": conninfo.get("user") or conn.info.user, "password": conninfo.get("password", ""), "dbname": conninfo.get("dbname") or conn.info.dbname,
                 "sslmode": conninfo.get("sslmode", "prefer"), "options": f"-c search_path={namespace}",
             }
             monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")
-            payload = {"source_video_id": str(accepted), "subject_id": None, "hypothesis": "短视频开头的真实细节会提升停留", "reference_point": "开头三秒先给现场细节", "adaptation_difference": "我方用自有场景，不复制原视频人物或台词", "owner_actor": "writer@example.com", "decision": "adopt"}
+            payload = {"source_video_id": str(accepted), "subject_id": str(subject), "profile_id": str(profile), "hypothesis": "短视频开头的真实细节会提升停留", "reference_point": "开头三秒先给现场细节", "adaptation_difference": "我方用自有场景，不复制原视频人物或台词", "owner_actor": "writer@example.com", "decision": "adopt"}
             create_key = str(uuid4())
             created = mutate.main(db, str(project), "create_card", payload, create_key)
             assert created["changed"] and created["status"] == "active"
             assert mutate.main(db, str(project), "create_card", payload, create_key)["idempotent_replay"] is True
+            assert conn.execute("select count(*) from project_decision_card_profile_binding where decision_card_id=%s", (created["card_id"],)).fetchone()[0] == 1
+            with pytest.raises(ValueError, match="requires an approved"):
+                mutate.main(db, str(project), "create_card", {**payload, "profile_id": None}, str(uuid4()))
+            with pytest.raises(ValueError, match="current approved"):
+                mutate.main(db, str(project), "create_card", {**payload, "profile_id": str(uuid4())}, str(uuid4()))
+            monkeypatch.setenv("WM_END_USER_EMAIL", "researcher@example.com")
+            with pytest.raises(PermissionError, match="ADOPTION_DENIED"):
+                mutate.main(db, str(project), "create_card", payload, str(uuid4()))
+            observed = mutate.main(db, str(project), "create_card", {**payload, "subject_id": None, "profile_id": None, "decision": "observe", "owner_actor": "researcher@example.com"}, str(uuid4()))
+            assert observed["status"] == "observing"
+            monkeypatch.setenv("WM_END_USER_EMAIL", "writer@example.com")
             second = mutate.main(db, str(project), "create_card", {**payload, "hypothesis": "同一参考也可验证另一条策略假设"}, str(uuid4()))
             assert second["card_id"] != created["card_id"]
             bad = {**payload, "source_video_id": str(shared_only)}
@@ -125,6 +146,14 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             assert reviewed_card["review_observation_version"] == 1
             assert reviewed_card["review_metric_snapshot"]["impressions"] == 1000
             assert reviewed_card["review_metric_snapshot"]["source_reference"] == "internal:daily-sheet-001"
+            assert reviewed_card["profile_binding"]["profile_version_no"] == 1
+            assert reviewed_card["profile_binding"]["profile_current_status"] == "approved"
+            assert len(result["approved_profiles"]) == 1
+            assert result["approved_profiles"][0]["summary"]["current_facts"] == ["测试主体已确认"]
+            assert not ({"source_reference", "source_digest", "approved_by"} & result["approved_profiles"][0].keys())
+            assert not ({"profile_source_digest", "profile_content_fingerprint", "bound_by"} & reviewed_card["profile_binding"].keys())
+            conn.execute("update research_subject_profile_version set status='revoked' where id=%s", (profile,))
+            assert next(card for card in read.main(db, str(project))["cards"] if card["id"] == card_id)["profile_binding"]["profile_current_status"] == "revoked"
             assert result["publications"][0]["daily_observations"][0]["impressions"] == 1100
             with pytest.raises(psycopg.Error, match="immutable"):
                 conn.execute("update project_decision_card set review_conclusion='篡改' where id=%s", (card_id,))
@@ -144,6 +173,9 @@ def test_decision_loop_requires_local_accepted_video_and_audits_outcomes(monkeyp
             monkeypatch.setenv("WM_END_USER_EMAIL", "viewer@example.com")
             with pytest.raises(PermissionError):
                 mutate.main(db, str(project), "set_card_status", {"card_id": card_id, "status": "adopted"}, str(uuid4()))
+            conn.execute("update research_project_member set status='revoked' where project_id=%s and actor_id='viewer@example.com'", (project,))
+            with pytest.raises(PermissionError):
+                read.main(db, str(project))
             monkeypatch.setenv("WM_END_USER_EMAIL", "analyst@example.com")
             with pytest.raises(PermissionError):
                 mutate.main(db, str(project), "set_card_status", {"card_id": card_id, "status": "adopted"}, str(uuid4()))
