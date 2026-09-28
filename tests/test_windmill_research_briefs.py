@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import re
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,6 +12,16 @@ import pytest
 ROOT = Path(__file__).parents[1]
 COLLECTORS = ROOT / "windmill/f/content_research/collectors"
 FLOW = ROOT / "windmill/f/content_research/flows/research_brief_cycle.flow/flow.yaml"
+
+
+def test_research_brief_package_pin_matches_manual_lock() -> None:
+    script = (COLLECTORS / "run_research_brief.py").read_text(encoding="utf-8")
+    lock = (COLLECTORS / "run_research_brief.script.lock").read_text(encoding="utf-8")
+    pattern = r"douyin-research-platform @ git\+https://github\.com/lig9904/douyin-research-platform@([0-9a-f]{40})"
+    script_pin = re.findall(pattern, script)
+    lock_pin = re.findall(pattern, lock)
+    assert len(script_pin) == len(lock_pin) == 1
+    assert script_pin == lock_pin
 
 
 def _load(stem: str):
@@ -126,9 +137,61 @@ def test_runner_summary_rejects_any_automatic_analysis_flag() -> None:
     safe = runner._safe_result(result, uuid4())
     assert safe["external_calls"] == 2
     assert safe["raw_provider_payload_included"] is False
+    project_result = {
+        **result,
+        "new_candidate_count": 0,
+        "scored_videos": 2,
+        "relevant_new_project_count": 2,
+        "subject_scoring_status": "project_subject_l1",
+        "collect_comments": False,
+        "collect_media": False,
+        "review_required": False,
+    }
+    project_id = uuid4()
+    project_safe = runner._safe_result(project_result, uuid4(), project_id=project_id)
+    assert project_safe["new_candidate_count"] == 0
+    assert project_safe["relevant_new_project_count"] == 2
+    assert project_safe["subject_scoring_status"] == "project_subject_l1"
+    project_result["relevant_new_project_count"] = "2"
+    with pytest.raises(RuntimeError, match="project candidate count"):
+        runner._safe_result(project_result, uuid4(), project_id=project_id)
+    project_result["relevant_new_project_count"] = 2
+    project_result["collect_comments"] = True
+    with pytest.raises(RuntimeError, match="project analysis boundary"):
+        runner._safe_result(project_result, uuid4(), project_id=project_id)
+    project_result["collect_comments"] = False
+    project_result.pop("subject_scoring_status")
+    with pytest.raises(RuntimeError, match="project scoring contract"):
+        runner._safe_result(project_result, uuid4(), project_id=project_id)
     result["auto_submit_l3"] = True
     with pytest.raises(RuntimeError, match="analysis boundary"):
         runner._safe_result(result, uuid4())
+
+
+def test_runner_failure_summary_is_allowlisted_and_does_not_leak_message() -> None:
+    runner = _load("run_research_brief")
+    failure = RuntimeError("video=private url=https://private.invalid response=secret")
+    failure.research_failure_summary = {
+        "failure_schema": "provider_failure_v1",
+        "status": "failed",
+        "stage": "detail_enrichment",
+        "item_count": 5,
+        "error_type": "ProviderPermanentError",
+        "http_status": 400,
+        "provider_error_code": "INVALID_PARAMETER",
+        "provider_request_id": "req-safe-400",
+        "ledger_logical_call_id": str(uuid4()),
+        "response_body": "must not escape",
+    }
+
+    safe = runner._safe_failure_summary(failure)
+
+    assert safe["stage"] == "detail_enrichment"
+    assert safe["item_count"] == 5
+    assert safe["http_status"] == 400
+    assert safe["provider_error_code"] == "INVALID_PARAMETER"
+    assert "response_body" not in safe
+    assert "private" not in str(safe)
 
 
 def test_runner_uses_fixed_server_resources_and_zero_retry_core() -> None:
@@ -158,6 +221,7 @@ def test_runner_passes_project_scope_to_live_run(monkeypatch, project_id) -> Non
             "unique_platform_videos": 0,
             "new_candidate_count": 0,
             "scored_videos": 0,
+            "subject_scoring_status": "project_subject_l1" if project_id else "global_l1",
             "provider_call_count": 0,
             "cached_call_count": 0,
             "uncached_call_count": 0,

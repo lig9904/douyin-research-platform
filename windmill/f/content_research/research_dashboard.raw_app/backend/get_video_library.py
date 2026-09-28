@@ -394,7 +394,7 @@ def main(
 
     with _connect(db) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute("set transaction read only")
+            cur.execute("set transaction isolation level repeatable read read only")
             if scoped_project_id is None:
                 try:
                     legacy_allowed = _legacy_reader_allowed(actor, _get_legacy_allowlist())

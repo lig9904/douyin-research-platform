@@ -70,6 +70,18 @@ def test_brief_configuration_is_strict_and_normalized() -> None:
             name="媒体越界", platform="douyin", source_type="keyword", target="文旅",
             time_window_hours=24, max_items=6, depth="media", cadence_hours=None,
         )
+    with pytest.raises(mutate.ResearchBriefError, match="requires subject_id"):
+        mutate._config(
+            name="项目研究", platform="douyin", source_type="keyword", target="文旅",
+            time_window_hours=24, max_items=5, depth="metadata", cadence_hours=None,
+            project_scoped=True,
+        )
+    subject_config = mutate._config(
+        name="项目研究", platform="douyin", source_type="keyword", target="文旅",
+        time_window_hours=24, max_items=5, depth="metadata", cadence_hours=None,
+        project_scoped=True, subject_id="00000000-0000-4000-8000-000000000001",
+    )
+    assert subject_config["subject_id"] == "00000000-0000-4000-8000-000000000001"
 
 
 def test_schema_records_control_plane_and_keeps_analysis_gate_separate() -> None:
@@ -91,6 +103,9 @@ def test_dashboard_exposes_briefs_as_a_first_class_research_view() -> None:
     assert "backend.get_research_briefs" in page
     assert "backend.mutate_research_brief" in page
     assert "project_id: projectId" in page
+    assert "subject_id: values?.subject_id" in page
+    assert "<SubjectRelevancePanel" in page
+    assert "请选择研究主体" in page
     assert "crypto.randomUUID" in page
     assert "确认激活" in page
     assert "ASR 与 L3 始终保留独立人工审核" in page

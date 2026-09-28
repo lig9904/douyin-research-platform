@@ -17,6 +17,7 @@ import {
 import { backend } from './backend'
 import AppShell, { type ResearchView } from './AppShell'
 import type { ProjectScope } from './src/projectScope'
+import SubjectRelevancePanel, { type ProjectSubject } from './SubjectRelevancePanel'
 import './research-briefs.css'
 
 type BriefStatus = 'draft' | 'active' | 'paused'
@@ -36,6 +37,8 @@ type ResearchBrief = {
   next_due_at?: string | null
   last_dispatched_at?: string | null
   updated_at: string
+  subject_id?: string | null
+  subject_gate_status?: 'not_applicable' | 'ready' | 'subject_required'
 }
 
 type BriefRun = {
@@ -56,6 +59,7 @@ type FormValues = {
   max_items: number
   depth: ResearchBrief['depth']
   cadence_hours: 0 | 6 | 12 | 24
+  subject_id?: string
 }
 
 const sourceNames = {
@@ -113,6 +117,8 @@ export default function ResearchBriefs({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [editingId, setEditingId] = useState('')
+  const [projectSubjects, setProjectSubjects] = useState<ProjectSubject[]>([])
+  const [selectedSubjectId, setSelectedSubjectId] = useState('')
   const requestVersion = useRef(0)
   const sourceType = Form.useWatch('source_type', form) || 'keyword'
   const depth = Form.useWatch('depth', form) || 'comments'
@@ -142,6 +148,8 @@ export default function ResearchBriefs({
     setBriefs([])
     setRuns([])
     setEditingId('')
+    setProjectSubjects([])
+    setSelectedSubjectId('')
     form.resetFields()
     if (projectId) form.setFieldValue('depth', 'metadata')
     void load()
@@ -169,6 +177,7 @@ export default function ResearchBriefs({
       max_items: values?.max_items || 5,
       depth: values?.depth || 'metadata',
       cadence_hours: values?.cadence_hours || null,
+      ...(projectId ? { subject_id: values?.subject_id || '' } : {}),
       ...(projectId ? { project_id: projectId } : {}),
     })
   }
@@ -176,6 +185,10 @@ export default function ResearchBriefs({
   const save = async (values: FormValues) => {
     if (projectId && values.depth !== 'metadata') {
       toast.error('项目任务目前只支持元数据采集。')
+      return
+    }
+    if (projectId && !values.subject_id) {
+      toast.error('请先创建或选择研究主体。')
       return
     }
     setSaving(true)
@@ -231,6 +244,7 @@ export default function ResearchBriefs({
 
   const edit = (brief: ResearchBrief) => {
     setEditingId(brief.id)
+    if (brief.subject_id) setSelectedSubjectId(brief.subject_id)
     form.setFieldsValue({
       name: brief.name,
       source_type: brief.source_type,
@@ -239,6 +253,7 @@ export default function ResearchBriefs({
       max_items: brief.max_items,
       depth: brief.depth,
       cadence_hours: brief.cadence_hours || 0,
+      subject_id: brief.subject_id || '',
     })
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -264,6 +279,17 @@ export default function ResearchBriefs({
       />
       {error && <Alert type="error" showIcon message="研究任务加载失败" description={error} />}
 
+      {projectId ? <SubjectRelevancePanel
+        projectId={projectId}
+        selectedSubjectId={selectedSubjectId}
+        onSelectSubject={(id) => {
+          setSelectedSubjectId(id)
+          if (!editingId) form.setFieldValue('subject_id', id)
+        }}
+        onSubjectsChange={setProjectSubjects}
+        onOpenVideoLibrary={() => onNavigate('videos')}
+      /> : null}
+
       <div className="brief-layout">
         <Card className="brief-editor" title={editingId ? '编辑研究任务' : '新建研究任务'}>
           <Form<FormValues>
@@ -275,6 +301,9 @@ export default function ResearchBriefs({
             <Form.Item name="name" label="任务名称" rules={[{ required: true, max: 80 }]}>
               <Input placeholder="例如：神话文旅内容机会" />
             </Form.Item>
+            {projectId ? <Form.Item name="subject_id" label="研究主体" rules={[{ required: true, message: '请选择研究主体' }]} extra="只让“相关”候选进入本项目本主体的 L1 排序与决策队列；待判定、排除项保留在审核区。L1 不是经营效果预测。">
+              <Select placeholder="先在上方创建或选择主体" options={projectSubjects.map((subject) => ({ value: subject.id, label: `${subject.name} · ${subject.subject_type}` }))} />
+            </Form.Item> : null}
             <div className="brief-form-grid">
               <Form.Item name="source_type" label="从哪里找" rules={[{ required: true }]}>
                 <Select
@@ -373,6 +402,7 @@ export default function ResearchBriefs({
                     <strong>{row.name}</strong>
                     <span>{sourceNames[row.source_type]}{row.target ? ` · ${row.target}` : ''}</span>
                     <small>近{row.time_window_hours}小时 · 最多{row.max_items}条 · {depthNames[row.depth]}</small>
+                    {projectId && row.subject_gate_status === 'subject_required' ? <Tag color="warning">需绑定主体后才能激活</Tag> : null}
                   </div>
                 ),
               },

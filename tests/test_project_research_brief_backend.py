@@ -46,7 +46,8 @@ def test_project_brief_backends_fail_closed_and_keep_legacy_explicit() -> None:
     assert '"project_id": project_id' in mutation_source
     assert "RESEARCH_PROJECT_ACCESS_DENIED" in mutation_source
     assert "project_id is not distinct from %s" in mutation_source
-    assert "project_id is null or depth='metadata'" in mutation_source
+    assert "depth='metadata' and subject_id is not null and subject_gate_status='ready'" in mutation_source
+    assert "subject_id is unavailable" in mutation_source
     assert "select role, status, effective_until" in mutation_source
     assert "and (membership.effective_until is null or membership.effective_until > now())" in mutation_source
     assert "research_project_member" in read_source
@@ -86,6 +87,11 @@ def test_project_briefs_use_member_acl_revoke_and_legacy_boundary(monkeypatch: p
                        values (%s,%s,%s,'active')""",
                     (project, actor, role),
                 )
+            subject = conn.execute(
+                """insert into research_subject(project_id,name,subject_type)
+                   values (%s,'渔岛','destination') returning id""",
+                (project,),
+            ).fetchone()[0]
         except Exception:
             conn.execute("set search_path to public")
             conn.execute(sql.SQL("drop schema {} cascade").format(sql.Identifier(schema_name)))
@@ -97,6 +103,7 @@ def test_project_briefs_use_member_acl_revoke_and_legacy_boundary(monkeypatch: p
         created = mutate.main(
             {}, action="create", idempotency_key=str(uuid4()), project_id=str(project),
             name="协作任务", source_type="keyword", target="秦皇岛渔岛", max_items=1,
+            subject_id=str(subject),
         )
         brief_id = created["brief_id"]
 
@@ -104,7 +111,7 @@ def test_project_briefs_use_member_acl_revoke_and_legacy_boundary(monkeypatch: p
         updated = mutate.main(
             {}, action="update", idempotency_key=str(uuid4()), project_id=str(project),
             brief_id=brief_id, name="协作任务更新", source_type="keyword", target="秦皇岛渔岛",
-            max_items=1,
+            max_items=1, subject_id=str(subject),
         )
         assert updated["brief_id"] == brief_id
 

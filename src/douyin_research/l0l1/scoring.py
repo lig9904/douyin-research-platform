@@ -42,10 +42,29 @@ class L1Scorer:
     def __init__(self, dsn: str) -> None:
         self.dsn = dsn
 
-    def score_run(self, run_id: UUID, *, now: datetime | None = None) -> dict[UUID, float]:
+    def score_run(
+        self, run_id: UUID, *, now: datetime | None = None,
+        video_ids: set[UUID] | None = None, project_id: UUID | None = None,
+        subject_id: UUID | None = None,
+    ) -> dict[UUID, float]:
+        if (project_id is None) != (subject_id is None):
+            raise ValueError("subject scoring requires project and subject")
+        run_project_id = self._run_project_id(run_id)
+        if run_project_id is not None:
+            if project_id is None or subject_id is None:
+                raise ValueError("project run scoring requires project and subject")
+            if run_project_id != project_id:
+                raise ValueError("project score scope does not match pipeline run")
+            # A project interpretation is not a global monitoring priority.
+            # It is persisted only in project_video_subject_score; neither
+            # source_video nor the shared video_score table is mutated below.
+        if run_project_id is None and project_id is not None:
+            raise ValueError("global run cannot use project score scope")
         now = now or datetime.now(timezone.utc)
         platform = self._assert_single_platform(run_id)
-        candidates = self._load_candidates(run_id)
+        candidates = self._load_candidates(
+            run_id, video_ids=video_ids, project_id=project_id, subject_id=subject_id,
+        )
         if not candidates:
             return {}
 
@@ -67,6 +86,38 @@ class L1Scorer:
         scores: dict[UUID, float] = {}
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             for c in candidates:
+                if project_id is not None and subject_id is not None:
+                    # Lock the current interpretation in the same transaction
+                    # as the score write. A manual correction that won the
+                    # race before this point makes the candidate ineligible;
+                    # one arriving after this lock is serialized after the
+                    # completed score rather than being silently interleaved.
+                    cur.execute(
+                        """select relevance.decision
+                           from project_video_subject_relevance relevance
+                           join project_video_inclusion inclusion
+                             on inclusion.project_id=relevance.project_id
+                            and inclusion.video_id=relevance.video_id
+                           join research_subject subject
+                             on subject.id=relevance.subject_id
+                            and subject.project_id=relevance.project_id
+                           join source_video video on video.id=relevance.video_id
+                           where relevance.project_id=%s and relevance.subject_id=%s
+                             and relevance.video_id=%s
+                             and inclusion.status in ('candidate', 'shortlisted', 'accepted')
+                             and subject.status='active'
+                             and video.availability_status='available'
+                             and exists (
+                               select 1 from pipeline_run_item item
+                               where item.run_id=%s and item.entity_type='video'
+                                 and item.entity_id=relevance.video_id
+                             )
+                           for share of relevance, inclusion, subject, video""",
+                        (project_id, subject_id, c.video_id, run_id),
+                    )
+                    gate = cur.fetchone()
+                    if gate is None or gate[0] != "relevant":
+                        continue
                 components: dict[str, Any] = {
                     "platform": platform,
                     "raw": raw[c.video_id],
@@ -93,25 +144,58 @@ class L1Scorer:
                     }
                 )
 
-                next_due = _next_due(score, now)
-                cur.execute(
-                    """
-                    insert into video_score(video_id, score_type, score, rule_version, components)
-                    values (%s,'priority',%s,%s,%s)
-                    """,
-                    (c.video_id, score, RULE_VERSION, Jsonb(components)),
-                )
-                cur.execute(
-                    """
-                    update source_video
-                    set research_level=greatest(research_level,1),
-                        monitoring_status='observe',
-                        monitoring_priority=%s,
-                        next_due_at=%s
-                    where id=%s
-                    """,
-                    (score, next_due, c.video_id),
-                )
+                if project_id is not None and subject_id is not None:
+                    components["project_id"] = str(project_id)
+                    components["subject_id"] = str(subject_id)
+                    cur.execute(
+                        """
+                        insert into project_video_subject_score(
+                          project_id, video_id, subject_id, source_run_id,
+                          score_type, score, rule_version, components
+                        ) values (%s,%s,%s,%s,'priority',%s,%s,%s)
+                        on conflict (project_id, video_id, subject_id, source_run_id, score_type)
+                        do nothing
+                        returning score, components, rule_version
+                        """,
+                        (project_id, c.video_id, subject_id, run_id, score, RULE_VERSION, Jsonb(components)),
+                    )
+                    stored = cur.fetchone()
+                    if stored is None:
+                        cur.execute(
+                            """select score, components, rule_version
+                               from project_video_subject_score
+                               where project_id=%s and video_id=%s and subject_id=%s
+                                 and source_run_id=%s and score_type='priority'""",
+                            (project_id, c.video_id, subject_id, run_id),
+                        )
+                        stored = cur.fetchone()
+                    if stored is None or stored[2] != RULE_VERSION or not isinstance(stored[1], dict):
+                        raise RuntimeError("project score replay conflicts with persisted evidence")
+                    persisted_confidence = stored[1].get("data_confidence")
+                    if persisted_confidence not in {"low", "medium", "high"}:
+                        raise RuntimeError("project score replay has invalid persisted confidence")
+                    score = float(stored[0])
+                    confidence = persisted_confidence
+                else:
+                    next_due = _next_due(score, now)
+                    cur.execute(
+                        """
+                        insert into video_score(video_id, score_type, score, rule_version, components)
+                        values (%s,'priority',%s,%s,%s)
+                        """,
+                        (c.video_id, score, RULE_VERSION, Jsonb(components)),
+                    )
+                    cur.execute(
+                        """
+                        update source_video
+                        set research_level=greatest(research_level,1),
+                            monitoring_status='observe',
+                            monitoring_priority=%s,
+                            next_due_at=%s
+                        where id=%s
+                        """,
+                        (score, next_due, c.video_id),
+                    )
                 cur.execute(
                     """
                     update pipeline_run_item
@@ -125,6 +209,14 @@ class L1Scorer:
 
             conn.commit()
         return scores
+
+    def _run_project_id(self, run_id: UUID) -> UUID | None:
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute("select project_id from pipeline_run where id=%s", (run_id,))
+            row = cur.fetchone()
+        if row is None:
+            raise ValueError(f"pipeline_run not found: {run_id}")
+        return row[0]
 
     def _assert_single_platform(self, run_id: UUID) -> str | None:
         sql = """
@@ -153,12 +245,34 @@ class L1Scorer:
             )
         return declared or (observed[0] if observed else None)
 
-    def _load_candidates(self, run_id: UUID) -> list[Candidate]:
+    def _load_candidates(
+        self, run_id: UUID, *, video_ids: set[UUID] | None = None,
+        project_id: UUID | None = None, subject_id: UUID | None = None,
+    ) -> list[Candidate]:
         sql = """
         with vids as (
           select entity_id as video_id
           from pipeline_run_item
           where run_id=%s and entity_type='video'
+            and (%s::uuid[] is null or entity_id=any(%s::uuid[]))
+            and (
+              %s::uuid is null or exists (
+                select 1 from project_video_subject_relevance relevance
+                join project_video_inclusion inclusion
+                  on inclusion.project_id=relevance.project_id
+                 and inclusion.video_id=relevance.video_id
+                join research_subject subject
+                  on subject.id=relevance.subject_id
+                 and subject.project_id=relevance.project_id
+                join source_video scoped_video on scoped_video.id=relevance.video_id
+                where relevance.project_id=%s::uuid and relevance.subject_id=%s::uuid
+                  and relevance.video_id=pipeline_run_item.entity_id
+                  and relevance.decision='relevant'
+                  and inclusion.status in ('candidate','shortlisted','accepted')
+                  and subject.status='active'
+                  and scoped_video.availability_status='available'
+              )
+            )
         ),
         current_metric as (
           select distinct on (m.video_id)
@@ -239,7 +353,11 @@ class L1Scorer:
         order by sv.id
         """
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
-            cur.execute(sql, (run_id, str(run_id)))
+            identifiers = list(video_ids) if video_ids is not None else None
+            cur.execute(
+                sql,
+                (run_id, identifiers, identifiers, project_id, project_id, subject_id, str(run_id)),
+            )
             rows = cur.fetchall()
         return [Candidate(*row) for row in rows]
 

@@ -100,7 +100,7 @@ def main(
         "sslmode": db.get("sslmode", "prefer"),
     }
     with psycopg.connect(**connect_args) as conn, conn.cursor(row_factory=dict_row) as cur:
-        cur.execute("set transaction read only")
+        cur.execute("set transaction isolation level repeatable read read only")
         if scoped_project is not None:
             cur.execute(
                 "select project_video_can_read(%s, %s, %s) as allowed",

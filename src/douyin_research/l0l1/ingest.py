@@ -113,6 +113,18 @@ class L0L1Store:
             )
             conn.commit()
 
+    def platform_video_ids(self, video_ids: Iterable[UUID]) -> set[str]:
+        """Resolve canonical IDs for a scoped, already-ingested candidate set."""
+        identifiers = list(dict.fromkeys(video_ids))
+        if not identifiers:
+            return set()
+        with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
+            cur.execute(
+                "select platform_video_id from source_video where id=any(%s::uuid[])",
+                (identifiers,),
+            )
+            return {str(row[0]) for row in cur.fetchall()}
+
     def ingest(
         self,
         observations: Iterable[VideoObservation],

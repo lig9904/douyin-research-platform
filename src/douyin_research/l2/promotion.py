@@ -104,17 +104,23 @@ class L3PromotionGate:
 
         with psycopg.connect(self.dsn) as conn, conn.cursor() as cur:
             cur.execute(
-                "select platform, status from pipeline_run where id=%s",
+                "select platform, status, project_id from pipeline_run where id=%s",
                 (source_run_id,),
             )
             source = cur.fetchone()
             if source is None:
                 raise ValueError("source pipeline run does not exist")
-            platform, source_status = source
+            platform, source_status, project_id = source
             if platform is None:
                 raise ValueError("source pipeline run must declare a platform")
             if source_status != "success":
                 raise ValueError("source pipeline run must be successful")
+            # Shared priority scores and L3 promotion batches are global. A
+            # project run has a subject-specific interpretation and must wait
+            # for dedicated project score/promotion storage rather than reuse
+            # historical global scores for pending or irrelevant candidates.
+            if project_id is not None:
+                raise ValueError("project pipeline runs require project-specific L3 promotion")
 
             cur.execute(
                 """

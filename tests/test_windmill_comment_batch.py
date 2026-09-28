@@ -29,6 +29,14 @@ def test_comment_worker_release_lock_matches_source():
     assert 'wmill==1.815.0' in lock
 
 
+def test_project_source_is_rejected_before_comment_budget_or_secret_lookup():
+    source = PATH.read_text()
+    assert "select run_type,status,platform,project_id from pipeline_run" in source
+    assert "project discovery batch requires project-specific comment processing" in source
+    preflight = source[source.index("def _preflight"):source.index("def _budget_hook")]
+    assert preflight.index("project discovery batch requires project-specific comment processing") < preflight.index("_prepare_day")
+
+
 def test_only_persisted_batch_id_is_public():
     assert list(inspect.signature(worker.main).parameters) == ["source_run_id"]
     with pytest.raises(TypeError):
@@ -172,3 +180,46 @@ def test_preflight_creates_daily_records_only_for_valid_source(monkeypatch):
             conn.execute("delete from daily_research_quota where quota_key=%s", (key,))
             conn.execute("delete from pipeline_run where id=%s", (source,))
             conn.execute("delete from source_video where id=%s", (video,))
+
+
+@pytest.mark.skipif(not os.getenv("TEST_DATABASE_URL"), reason="isolated PostgreSQL required")
+def test_project_preflight_rejects_before_daily_budget_setup(monkeypatch):
+    dsn = os.environ["TEST_DATABASE_URL"]
+    org, project, source, video = uuid4(), uuid4(), uuid4(), uuid4()
+    key = "project-preflight-" + str(source)
+    settings = SimpleNamespace(quota_key=key, quota_date=date.today())
+    monkeypatch.setattr(worker, "BUDGET_KEY", key)
+    policy_calls: list[str] = []
+    monkeypatch.setattr(
+        worker, "_daily_policy",
+        lambda: policy_calls.append("policy") or dict(max_requests=None, max_cost_usd=None, max_l3_items=3),
+    )
+    try:
+        with psycopg.connect(dsn) as conn:
+            conn.execute(
+                "insert into research_organization(id,slug,name) values (%s,%s,'Project Preflight')",
+                (org, "project-preflight-" + str(org)[:8]),
+            )
+            conn.execute(
+                "insert into research_project(id,organization_id,slug,name) values (%s,%s,%s,'Project Preflight')",
+                (project, org, "project-preflight-" + str(project)[:8]),
+            )
+            conn.execute("insert into source_video(id,platform,platform_video_id) values (%s,'douyin',%s)", (video, str(video)))
+            conn.execute(
+                """insert into pipeline_run(id,run_type,run_version,platform,status,project_id)
+                   values (%s,'l0l1_discovery','test','douyin','success',%s)""",
+                (source, project),
+            )
+            conn.execute("insert into pipeline_run_item(run_id,entity_type,entity_id,stage,outcome) values (%s,'video',%s,'L1','scored')", (source, video))
+        with pytest.raises(ValueError, match="project-specific comment processing"):
+            worker._preflight(dsn, source, settings)
+        assert policy_calls == []
+        with psycopg.connect(dsn) as conn:
+            assert conn.execute("select count(*) from daily_budget where budget_key=%s", (key,)).fetchone()[0] == 0
+            assert conn.execute("select count(*) from daily_research_quota where quota_key=%s", (key,)).fetchone()[0] == 0
+    finally:
+        with psycopg.connect(dsn) as conn:
+            conn.execute("delete from pipeline_run where id=%s", (source,))
+            conn.execute("delete from source_video where id=%s", (video,))
+            conn.execute("delete from research_project where id=%s", (project,))
+            conn.execute("delete from research_organization where id=%s", (org,))

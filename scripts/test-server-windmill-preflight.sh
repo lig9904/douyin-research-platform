@@ -10,16 +10,17 @@ usage() {
   cat <<'EOF'
 Usage:
   scripts/test-server-windmill-preflight.sh \
-    --workspace <workspace-id> --profile <wmill-config-directory> \
+    --workspace <local-cli-profile-name> --profile <wmill-config-directory> \
     --app <path> --script <path> [--script <path> ...] \
     --resource <path> [--resource <path> ...] \
     --secret-variable <path> [--secret-variable <path> ...] \
     --nonsecret-variable <path> [--nonsecret-variable <path> ...] \
     --variable-metadata <value-free-json-file>
 
-All object paths are required explicitly. --profile is an existing, operator-
-provisioned Windmill CLI config directory; this script neither creates nor
-modifies it. The metadata file must contain exactly:
+All object paths are required explicitly. --workspace is the locally configured
+Windmill CLI profile name (which may differ from the remote workspace ID).
+--profile is an existing, operator-provisioned Windmill CLI config directory;
+this script neither creates nor modifies it. The metadata file must contain exactly:
   {"variables":[{"path":"f/example/name","is_secret":true|false}]}
 
 It is a safe metadata attestation, not a variable export: variable values,

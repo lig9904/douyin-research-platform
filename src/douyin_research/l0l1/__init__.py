@@ -18,6 +18,7 @@ from .research_briefs import (
     make_config,
 )
 from .scoring import L1Scorer, RULE_VERSION
+from .subject_relevance import RELEVANCE_RULE_VERSION, RelevanceDecision, SubjectRelevanceStore, SubjectTerms, classify
 
 __all__ = [
     "CommentCollectionSummary",
@@ -34,6 +35,11 @@ __all__ = [
     "L1Scorer",
     "ResearchBriefConfig",
     "RULE_VERSION",
+    "RELEVANCE_RULE_VERSION",
+    "RelevanceDecision",
+    "SubjectRelevanceStore",
+    "SubjectTerms",
+    "classify",
     "config_snapshot",
     "depth_plan",
     "discovery_source",
