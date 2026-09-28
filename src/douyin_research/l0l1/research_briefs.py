@@ -7,6 +7,7 @@ approvals and never submits content to an AI provider.
 from __future__ import annotations
 
 import hashlib
+import re
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -34,10 +35,21 @@ _DETAIL_ENDPOINTS = frozenset({
     "douyin.app.multi_video_v2", "douyin.app.one_video", "douyin.app.multi_video",
     "douyin.app.video_statistics", "douyin.app.multi_video_statistics",
 })
-_SOURCE_TYPES = frozenset({"low_fan", "keyword", "account"})
+_SOURCE_TYPES = frozenset({"low_fan", "keyword", "account", "video_ids"})
 _DEPTHS = frozenset({"metadata", "comments", "media", "review_ready"})
 _WINDOWS = frozenset({24, 72, 168, 720})
 _CADENCES = frozenset({6, 12, 24})
+_EXACT_ID_RE = re.compile(r"[0-9]{15,25}\Z")
+
+
+def exact_video_ids(target: str) -> tuple[str, ...]:
+    if not isinstance(target, str):
+        raise ValueError("exact video IDs are invalid")
+    ids = tuple(re.split(r"[,\s]+", target.strip()))
+    if (not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids)
+            or any(_EXACT_ID_RE.fullmatch(video_id) is None for video_id in ids)):
+        raise ValueError("exact video IDs are invalid")
+    return ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,7 +87,10 @@ def validate_config(config: ResearchBriefConfig) -> ResearchBriefConfig:
         raise ValueError("source_type is invalid")
     if config.depth not in _DEPTHS:
         raise ValueError("depth is invalid")
-    _integer("time_window_hours", config.time_window_hours, _WINDOWS)
+    _integer(
+        "time_window_hours", config.time_window_hours,
+        frozenset({0}) if config.source_type == "video_ids" else _WINDOWS,
+    )
     if config.cadence_hours is not None:
         _integer("cadence_hours", config.cadence_hours, _CADENCES)
     if type(config.max_items) is not int or not 1 <= config.max_items <= 20:
@@ -87,6 +102,12 @@ def validate_config(config: ResearchBriefConfig) -> ResearchBriefConfig:
             raise ValueError("low_fan target must be empty")
         if config.max_items > 5 or config.time_window_hours == 720:
             raise ValueError("low_fan scope exceeds its bounded endpoint")
+    elif config.source_type == "video_ids":
+        if config.subject_id is None or config.depth != "metadata" or config.cadence_hours is not None:
+            raise ValueError("exact video IDs require a one-time project metadata task")
+        ids = exact_video_ids(config.target or "")
+        if config.target != ",".join(ids) or config.max_items != len(ids):
+            raise ValueError("exact video IDs must match the task scope")
     else:
         if not isinstance(config.target, str):
             raise ValueError("target is required")
@@ -115,7 +136,9 @@ def make_config(
     subject_id: str | None = None,
 ) -> ResearchBriefConfig:
     normalized_target = None
-    if source_type != "low_fan" and isinstance(target, str):
+    if source_type == "video_ids" and isinstance(target, str):
+        normalized_target = ",".join(exact_video_ids(target))
+    elif source_type != "low_fan" and isinstance(target, str):
         normalized_target = " ".join(target.strip().split())
     return validate_config(
         ResearchBriefConfig(
@@ -160,6 +183,15 @@ def discovery_source(
         "max_items": config.max_items,
         "published_after": cutoff,
     }
+    if config.source_type == "video_ids":
+        return DiscoverySource(
+            kind="exact_video_ids",
+            kwargs={"video_ids": exact_video_ids(config.target or "")},
+            source_type="brief_video_ids",
+            source_key=source_key,
+            max_items=config.max_items,
+            published_after=None,
+        )
     if config.source_type == "low_fan":
         return DiscoverySource(
             kind="low_fan",
@@ -318,13 +350,60 @@ def _project_active_transport_guard(
             yield
 
 
+@contextmanager
+def _project_exact_video_transport_guard(
+    dsn: str, project_id: UUID, subject_id: UUID, brief_run_id: UUID,
+    expected_ids: tuple[str, ...], requested_ids: tuple[str, ...],
+) -> Iterator[None]:
+    """Authorize a first detail fetch only from a claimed exact-ID brief.
+
+    A claimed one-time brief is already paused.  Its running run and immutable
+    configuration snapshot, rather than the brief status, are the authority.
+    """
+    if (not requested_ids or len(set(requested_ids)) != len(requested_ids)
+            or not set(requested_ids) <= set(expected_ids)):
+        raise PermissionError("exact video request is outside the claimed task")
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            """select run.config_snapshot->>'source_type',
+                      run.config_snapshot->>'target',
+                      run.config_snapshot->>'subject_id'
+               from research_brief_run run
+               join research_brief brief on brief.id=run.brief_id
+               join research_project project on project.id=run.project_id
+               join research_organization organization
+                 on organization.id=project.organization_id
+               join research_subject subject
+                 on subject.id=%s and subject.project_id=project.id
+               where run.id=%s and run.project_id=%s and run.status='running'
+                 and brief.project_id=project.id and brief.status='paused'
+                 and brief.config_version=run.brief_version
+                 and project.status='active' and organization.status='active'
+                 and subject.status='active'
+               for share of run, brief, project, organization, subject""",
+            (subject_id, brief_run_id, project_id),
+        )
+        row = cur.fetchone()
+        if (row is None or row[0] != "video_ids" or row[1] != ",".join(expected_ids)
+                or row[2] != str(subject_id)):
+            raise PermissionError("exact video task is no longer eligible")
+        yield
+
+
 def _project_uncached_guard(
-    dsn: str, project_id: UUID, subject_id: UUID,
+    dsn: str, project_id: UUID, subject_id: UUID, *,
+    brief_run_id: UUID | None = None, exact_ids: tuple[str, ...] = (),
 ) -> Callable[[EndpointSpec, tuple[str, ...] | None], ContextManager[None]]:
     def guard(spec: EndpointSpec, video_ids: tuple[str, ...] | None) -> ContextManager[None]:
         if spec.key in _DETAIL_ENDPOINTS:
             if video_ids is None:
                 raise PermissionError("project detail request is missing exact video IDs")
+            if exact_ids:
+                if brief_run_id is None:
+                    raise PermissionError("exact video task has no claimed run")
+                return _project_exact_video_transport_guard(
+                    dsn, project_id, subject_id, brief_run_id, exact_ids, video_ids,
+                )
             return _project_detail_transport_guard(dsn, project_id, subject_id, video_ids)
         if video_ids is not None:
             raise PermissionError("project video IDs used on a non-detail endpoint")
@@ -335,7 +414,7 @@ def _project_uncached_guard(
 
 def run_live(
     *, dsn: str, api_key: str, config: ResearchBriefConfig, triggered_by: str,
-    project_id: UUID | None = None,
+    project_id: UUID | None = None, brief_run_id: UUID | None = None,
 ) -> dict[str, Any]:
     validate_config(config)
     if not dsn or not api_key or not triggered_by:
@@ -345,6 +424,9 @@ def run_live(
         raise ValueError("project research requires a subject")
     if project_id is not None:
         _ensure_active_project(dsn, project_id, subject_id)
+    exact_ids = exact_video_ids(config.target or "") if config.source_type == "video_ids" else ()
+    if exact_ids and (project_id is None or brief_run_id is None):
+        raise ValueError("exact video task requires a claimed project run")
 
     budget = DailyBudgetGuard(dsn)
     budget.configure(
@@ -372,10 +454,13 @@ def run_live(
             ),
         ),
         uncached_transport_guard=(
-            _project_uncached_guard(dsn, project_id, subject_id)
+            _project_uncached_guard(
+                dsn, project_id, subject_id,
+                brief_run_id=brief_run_id, exact_ids=exact_ids,
+            )
             if project_id is not None and subject_id is not None else None
         ),
-        detail_strategy="batch50",
+        detail_strategy="cost_aware" if exact_ids else "batch50",
     )
     store = L0L1Store(dsn)
     runner = L0L1Runner(
@@ -389,7 +474,7 @@ def run_live(
     try:
         summary = runner.run(
             [discovery_source(config)],
-            enrich_details=True,
+            enrich_details=not exact_ids,
             triggered_by=triggered_by,
             enrich_new_only=True,
             project_id=project_id,

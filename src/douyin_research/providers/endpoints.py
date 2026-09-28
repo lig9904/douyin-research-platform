@@ -79,6 +79,15 @@ ENDPOINTS: dict[str, EndpointSpec] = {
         request_style="query",
         cache_ttl_seconds=20 * 60,
     ),
+    "douyin.app.user_profile": EndpointSpec(
+        key="douyin.app.user_profile",
+        http_method="GET",
+        path="/api/v1/douyin/app/v3/handler_user_profile",
+        sdk_resource="douyin_app_v3",
+        sdk_method="handler_user_profile",
+        request_style="query",
+        cache_ttl_seconds=6 * 60 * 60,
+    ),
     "douyin.app.comments": EndpointSpec(
         key="douyin.app.comments",
         http_method="GET",
@@ -141,6 +150,7 @@ _VERIFIED_PRICES = {
     "douyin.billboard.low_fan": 0.001, "douyin.creator.material": 0.001,
     "douyin.search.video_v2": 0.010, "douyin.app.multi_video_v2": 0.050,
     "douyin.app.user_posts": 0.001, "douyin.app.comments": 0.001,
+    "douyin.app.user_profile": 0.001,
     "douyin.app.comment_replies": 0.001, "douyin.app.one_video": 0.001,
     "douyin.app.multi_video": 0.010, "douyin.app.video_statistics": 0.001,
     "douyin.app.multi_video_statistics": 0.025,

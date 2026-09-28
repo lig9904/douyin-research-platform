@@ -137,3 +137,75 @@ def parse_volcengine_daily_product_bill(
         for (product_code, product_name, currency), (payable, paid, unpaid)
         in sorted(grouped.items())
     )
+
+
+def parse_volcengine_daily_account_bill(
+    payload: Mapping[str, Any],
+    *,
+    billing_date: date,
+    payer_id: int,
+    account_scope: str,
+    fetched_at: datetime | None = None,
+    supplier_final: bool = False,
+) -> SupplierDailySpend:
+    """Accept only the supplier's unfiltered account/day aggregate.
+
+    A missing product row is not synthesized.  GroupTerm=3 must itself return
+    exactly one account row; otherwise this cannot be called an account total.
+    """
+    if isinstance(payer_id, bool) or not isinstance(payer_id, int) or payer_id <= 0:
+        raise ValueError("payer_id must be a positive integer")
+    if account_scope != f"payer:{payer_id}":
+        raise ValueError("account_scope does not match payer_id")
+    if not isinstance(supplier_final, bool):
+        raise ValueError("supplier_final must be a boolean")
+    if not isinstance(payload, Mapping):
+        raise DailySpendError("Volcano account daily bill response is invalid")
+    metadata = payload.get("ResponseMetadata")
+    result = payload.get("Result")
+    if (not isinstance(metadata, Mapping) or metadata.get("Error")
+        or metadata.get("Action") != "ListBillDetail"
+        or metadata.get("Service") != "billing"
+        or not isinstance(result, Mapping)):
+        raise DailySpendError("Volcano account daily bill response is invalid")
+    if result.get("Warning") not in (None, ""):
+        raise DailySpendError("Volcano account daily bill contains a warning")
+    rows = result.get("List")
+    if (type(result.get("Total")) is not int or result["Total"] != 1
+        or not isinstance(rows, list)
+        or len(rows) != 1 or not isinstance(rows[0], Mapping)):
+        raise DailySpendError("Volcano account daily bill is not a single row")
+    row = rows[0]
+    if (str(row.get("PayerID", "")) != str(payer_id)
+        or row.get("BillPeriod") != billing_date.strftime("%Y-%m")
+        or row.get("ExpenseDate") != billing_date.isoformat()
+        or row.get("Product") != "" or row.get("ProductZh") != ""
+        or row.get("Currency") != "CNY"):
+        raise DailySpendError("Volcano account daily bill scope does not match request")
+    observed = fetched_at or datetime.now(timezone.utc)
+    if observed.tzinfo is None:
+        raise ValueError("fetched_at must be timezone-aware")
+    payable = _money(row.get("PayableAmount"))
+    paid = _money(row.get("PaidAmount"))
+    unpaid = _money(row.get("UnpaidAmount"))
+    return SupplierDailySpend(
+        provider=VOLCENGINE_BILLING_PROVIDER,
+        account_scope=account_scope,
+        bill_scope_key="account",
+        scope_kind="account_total",
+        scope_label="付款账户总费用",
+        billing_date=billing_date,
+        cost_currency="CNY",
+        billing_timezone=VOLCENGINE_BILLING_TIMEZONE,
+        total_cost=payable,
+        balance_cost=None,
+        free_credit_cost=None,
+        payable_cost=payable,
+        paid_cost=paid,
+        unpaid_cost=unpaid,
+        total_requests=None,
+        paid_requests=None,
+        billing_finality="final" if supplier_final else "preliminary",
+        source_warning=None,
+        fetched_at=observed.astimezone(timezone.utc),
+    )

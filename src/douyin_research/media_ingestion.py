@@ -19,7 +19,13 @@ from psycopg.types.json import Jsonb
 
 from .l0l1.ingest import L0L1Store
 from .media_assets import MediaAssetStore
-from .media_processing import download_media, extract_audio, extract_tikhub_video_url
+from .media_processing import (
+    MediaSourceUnavailable,
+    download_media,
+    extract_audio,
+    extract_tikhub_video_urls,
+    has_tikhub_video_record,
+)
 from .media_storage import PrivateS3MediaStorage, StoredMediaObject
 
 
@@ -114,21 +120,48 @@ class MediaIngestionService:
                             video_asset.content_sha256, video_asset.content_type), video_file)
                     else:
                         stage = "source_lookup"
-                        response = lock.execute(
+                        # Never fall back to an older CDN address when the newest
+                        # exact-ID detail has no usable media URL. An old signed
+                        # address is more likely to be expired than a safe source.
+                        response_candidates = lock.execute(
                             """select id,response_body from external_api_response
-                            where provider='tikhub' and platform='douyin'
-                              and endpoint_key='douyin.app.multi_video_v2' and response_code='200'
-                              and response_body @> %s
-                            order by requested_at desc,id desc limit 1""",
-                            (Jsonb({"data": {"aweme_details": [{"aweme_id": video["platform_video_id"]}]}}),),
-                        ).fetchone()
+                            where provider='tikhub' and platform='douyin' and response_code='200'
+                              and (
+                                (endpoint_key in ('douyin.app.multi_video_v2','douyin.app.multi_video')
+                                 and response_body @> %s)
+                                or (endpoint_key in ('douyin.app.multi_video_v2','douyin.app.multi_video')
+                                    and jsonb_typeof(response_body #> '{data,aweme_details}')='string'
+                                    and strpos(response_body #>> '{data,aweme_details}', %s)>0)
+                                or (endpoint_key='douyin.app.one_video' and response_body @> %s)
+                              )
+                            order by requested_at desc,id desc""",
+                            (
+                                Jsonb({"data": {"aweme_details": [{"aweme_id": video["platform_video_id"]}]}}),
+                                video["platform_video_id"],
+                                Jsonb({"data": {"aweme_detail": {"aweme_id": video["platform_video_id"]}}}),
+                            ),
+                        )
+                        response = next(
+                            (row for row in response_candidates if has_tikhub_video_record(
+                                row["response_body"], video["platform_video_id"]
+                            )), None,
+                        )
                         if response is None:
                             raise ValueError("cached_media_source_unavailable")
-                        url = extract_tikhub_video_url(response["response_body"], video["platform_video_id"])
+                        urls = extract_tikhub_video_urls(
+                            response["response_body"], video["platform_video_id"]
+                        )
                         stage = "download"
-                        downloaded = downloader(url, video_file,
-                            allowed_hosts=self.config.allowed_download_hosts,
-                            max_bytes=self.config.max_download_bytes)
+                        for url in urls:
+                            try:
+                                downloaded = downloader(url, video_file,
+                                    allowed_hosts=self.config.allowed_download_hosts,
+                                    max_bytes=self.config.max_download_bytes)
+                                break
+                            except MediaSourceUnavailable:
+                                continue
+                        else:
+                            raise MediaSourceUnavailable("media source is unavailable")
                         stage = "video_upload"
                         stored_video = self.storage.upload_file(video_file, content_type="video/mp4")
                         if (downloaded.sha256, downloaded.size) != (stored_video.sha256, stored_video.size):
