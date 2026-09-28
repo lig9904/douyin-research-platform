@@ -12,7 +12,7 @@
 ## 运行与页面核验
 
 - 首次 ASR 手动预览在 Worker 上暴露旧式依赖头没有安装业务包的问题，作业以 `ModuleNotFoundError` 失败且未调用 Provider。随后两个手动预览脚本改为 PEP 723 元数据及完整锁文件。
-- 修正后再次在测试 Worker 运行 ASR 预览，Worker 安装清洁包并成功返回 `status=preview`、`execute=false`、`llm_calls=0`；该作业不是云端 ASR/L3 执行或业务效果验收。L3 预览仍需单独运行验证。
+- 修正后再次在测试 Worker 运行 ASR 预览，Worker 安装清洁包并成功返回 `status=preview`、`execute=false`、`llm_calls=0`。随后独立运行 L3 预览，也返回 `status=preview`、`execute=false`、`llm_calls=0`、`sdk_retries=0`、`adapter_status=blocked_unverified_contract`。这两个作业不是云端 ASR/L3 执行或业务效果验收。
 - 研究台单应用更新后重新打开，项目入口和“运行与成本”页面可见，火山账户有效快照 7 天、待核 0 天；这只是页面回读，不替代项目真实业务链路的回归。
 - 火山日账计划的首次自动运行已成功；次日 18:00 的未来作业在 Windmill 仍排队，其脚本版本与当前活动版本相同，使用清洁包。次日作业的实际完成、延迟出账回补及真实并发失败恢复仍未验收。
 
