@@ -139,6 +139,10 @@ def main(db: postgresql, project_id: str, review_limit: int = 100):
                     coalesce(video.title, video.description, '(无标题)') as title,
                     account.nickname as account_name
                   from project_video_subject_score score
+                  join pipeline_run source_run
+                    on source_run.id=score.source_run_id
+                   and source_run.project_id=score.project_id
+                   and source_run.status='success'
                   join project_video_subject_relevance relevance
                     on relevance.project_id=score.project_id
                    and relevance.subject_id=score.subject_id

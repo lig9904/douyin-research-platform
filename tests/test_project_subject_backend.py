@@ -105,6 +105,8 @@ def test_project_subject_routes_are_member_bound_and_audit_manual_correction(mon
                      '{"data_confidence":"medium"}'::jsonb)""",
                 (project, video, subject, run),
             )
+            assert reader.main({}, project_id=str(project))["top_scores"] == []
+            admin.execute("update pipeline_run set status='success' where id=%s", (run,))
             ranked = reader.main({}, project_id=str(project))
             assert len(ranked["top_scores"]) == 1
             assert ranked["top_scores"][0]["score"] == 72.5
@@ -124,6 +126,14 @@ def test_project_subject_routes_are_member_bound_and_audit_manual_correction(mon
                      '{"data_confidence":"high"}'::jsonb)""",
                 (project, video, subject, next_run),
             )
+            while_running = reader.main({}, project_id=str(project))["top_scores"]
+            assert len(while_running) == 1
+            assert while_running[0]["source_run_id"] == str(run)
+            admin.execute("update pipeline_run set status='failed' where id=%s", (next_run,))
+            while_failed = reader.main({}, project_id=str(project))["top_scores"]
+            assert len(while_failed) == 1
+            assert while_failed[0]["source_run_id"] == str(run)
+            admin.execute("update pipeline_run set status='success' where id=%s", (next_run,))
             latest = reader.main({}, project_id=str(project))["top_scores"]
             assert len(latest) == 1
             assert latest[0]["score"] == 81.0
