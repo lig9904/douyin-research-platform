@@ -28,6 +28,14 @@ class MediaStorageIntegrityError(MediaStorageError):
     """A content-addressed object exists but does not match its declared hash."""
 
 
+class MediaStoragePromotionVerificationError(MediaStorageError):
+    """The conditional write returned a version, but post-write checks failed."""
+
+    def __init__(self, version_id: str | None) -> None:
+        self.version_id = version_id
+        super().__init__("S3 legacy promotion may have written a version; inspect before retry")
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class S3MediaStorageConfig:
     """Explicit S3-compatible configuration; ``repr`` intentionally hides keys."""
@@ -111,6 +119,7 @@ class PrivateS3MediaStorage:
     _CHUNK_SIZE = 1024 * 1024
     _MIN_PRESIGN_SECONDS = 60
     _MAX_PRESIGN_SECONDS = 3600
+    _MAX_LEGACY_PROMOTION_BYTES = 128 * 1024 * 1024
 
     def __init__(
         self,
@@ -203,17 +212,24 @@ class PrivateS3MediaStorage:
         self._validate_existing(confirmed, stored)
         return stored
 
-    def presigned_read_url(self, key: str, *, expires_in: int = 900) -> str:
+    def presigned_read_url(
+        self, key: str, *, expires_in: int = 900, version_id: str | None = None
+    ) -> str:
         if not self._is_canonical_key(key):
             raise ValueError("only content-addressed media keys may be signed")
         if type(expires_in) is not int or not (
             self._MIN_PRESIGN_SECONDS <= expires_in <= self._MAX_PRESIGN_SECONDS
         ):
             raise ValueError("S3 signed-read expiry must be between 60 and 3600 seconds")
+        if version_id is not None and not self._valid_version_id(version_id):
+            raise ValueError("S3 media version ID is invalid")
+        params = {"Bucket": self._config.bucket, "Key": key}
+        if version_id is not None:
+            params["VersionId"] = version_id
         try:
             return self._signing_client.generate_presigned_url(
                 "get_object",
-                Params={"Bucket": self._config.bucket, "Key": key},
+                Params=params,
                 ExpiresIn=expires_in,
                 HttpMethod="GET",
             )
@@ -233,6 +249,222 @@ class PrivateS3MediaStorage:
         if existing is None:
             raise MediaStorageError("S3 media object is missing")
         self._validate_existing(existing, stored)
+
+    def verified_version(
+        self, stored: StoredMediaObject, *, version_id: str | None = None
+    ) -> str:
+        """Read and validate the exact S3 version's bytes before returning its ID."""
+        if (
+            not isinstance(stored, StoredMediaObject)
+            or not self._is_canonical_key(stored.key)
+            or stored.key != self.object_key(stored.sha256)
+            or type(stored.size) is not int
+            or stored.size < 0
+            or _canonical_content_type(stored.content_type) is None
+        ):
+            raise ValueError("invalid content-addressed media reference")
+        if version_id is not None and not self._valid_version_id(version_id):
+            raise ValueError("S3 media version ID is invalid")
+
+        params = {"Bucket": self._config.bucket, "Key": stored.key}
+        if version_id is not None:
+            params["VersionId"] = version_id
+        body = None
+        try:
+            response = self._client.get_object(**params)
+            if not isinstance(response, Mapping):
+                raise MediaStorageIntegrityError("S3 media read returned an invalid response")
+            body = response.get("Body")
+            actual_version = response.get("VersionId")
+            if (
+                not self._valid_version_id(actual_version)
+                or (version_id is not None and actual_version != version_id)
+                or type(response.get("ContentLength")) is not int
+                or response["ContentLength"] != stored.size
+                or _canonical_content_type(response.get("ContentType"))
+                    != _canonical_content_type(stored.content_type)
+            ):
+                raise MediaStorageIntegrityError("S3 media version failed integrity validation")
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in body.iter_chunks(chunk_size=self._CHUNK_SIZE):
+                size += len(chunk)
+                if size > stored.size:
+                    raise MediaStorageIntegrityError("S3 media read exceeds recorded size")
+                digest.update(chunk)
+            if size != stored.size or digest.hexdigest() != stored.sha256:
+                raise MediaStorageIntegrityError("S3 media version failed integrity validation")
+            return actual_version
+        except MediaStorageError:
+            raise
+        except Exception:
+            raise MediaStorageError("S3 media version verification failed") from None
+        finally:
+            if body is not None:
+                try:
+                    body.close()
+                except Exception:
+                    pass
+
+    def promote_legacy_null_version(
+        self, stored: StoredMediaObject, *, expected_etag: str
+    ) -> str:
+        """Explicitly promote one verified legacy ``null`` object to a concrete version.
+
+        This is an operator-only migration primitive, never an upload/read fallback.
+        The caller must freeze bucket versioning configuration and same-key writes:
+        S3 does not atomically bind PutObject to the versioning-status check.
+        A failed write or post-write check has an uncertain outcome: callers must
+        inspect current and historical versions, not retry automatically.
+        """
+        if (
+            not isinstance(stored, StoredMediaObject)
+            or not self._is_canonical_key(stored.key)
+            or stored.key != self.object_key(stored.sha256)
+            or type(stored.size) is not int
+            or not 0 < stored.size <= self._MAX_LEGACY_PROMOTION_BYTES
+            or _canonical_content_type(stored.content_type) is None
+        ):
+            raise ValueError("invalid bounded legacy media reference")
+        if (
+            not isinstance(expected_etag, str)
+            or not expected_etag.strip()
+            or expected_etag != expected_etag.strip()
+        ):
+            raise ValueError("exact legacy ETag is required")
+        try:
+            versioning = self._client.get_bucket_versioning(Bucket=self.bucket)
+        except Exception:
+            raise MediaStorageError("S3 bucket versioning preflight failed") from None
+        if not isinstance(versioning, Mapping) or versioning.get("Status") != "Enabled":
+            raise MediaStorageError("S3 bucket versioning must be enabled before promotion")
+
+        body = None
+        try:
+            source = self._client.get_object(Bucket=self.bucket, Key=stored.key)
+            body = source["Body"]
+            if (
+                source.get("VersionId") not in (None, "null")
+                or source.get("ETag") != expected_etag
+                or type(source.get("ContentLength")) is not int
+                or source["ContentLength"] != stored.size
+                or _canonical_content_type(source.get("ContentType"))
+                    != _canonical_content_type(stored.content_type)
+            ):
+                raise MediaStorageIntegrityError("legacy media identity changed before promotion")
+            chunks = []
+            digest = hashlib.sha256()
+            size = 0
+            for chunk in body.iter_chunks(chunk_size=self._CHUNK_SIZE):
+                size += len(chunk)
+                if size > stored.size:
+                    raise MediaStorageIntegrityError("legacy media exceeds recorded size")
+                chunks.append(chunk)
+                digest.update(chunk)
+            if size != stored.size or digest.hexdigest() != stored.sha256:
+                raise MediaStorageIntegrityError("legacy media bytes changed before promotion")
+            payload = b"".join(chunks)
+            preserved = {
+                name: source[name]
+                for name in (
+                    "CacheControl", "ContentDisposition", "ContentEncoding", "ContentLanguage", "Expires"
+                )
+                if name in source
+            }
+            metadata = source.get("Metadata", {})
+            if not isinstance(metadata, Mapping):
+                raise MediaStorageIntegrityError("legacy media metadata is invalid")
+            self._validate_existing(source, stored)
+            if any(source.get(name) is not None for name in (
+                "ServerSideEncryption", "SSEKMSKeyId", "SSECustomerAlgorithm",
+                "ObjectLockMode", "ObjectLockRetainUntilDate", "ObjectLockLegalHoldStatus",
+                "Expiration",
+            )) or source.get("StorageClass") not in (None, "STANDARD"):
+                raise MediaStorageIntegrityError("legacy media has unsupported object attributes")
+        except MediaStorageError:
+            raise
+        except Exception:
+            raise MediaStorageError("S3 legacy media preflight failed") from None
+        finally:
+            if body is not None:
+                try:
+                    body.close()
+                except Exception:
+                    pass
+
+        def verify_null_version() -> None:
+            old = self._client.get_object(Bucket=self.bucket, Key=stored.key, VersionId="null")
+            old_body = old["Body"]
+            try:
+                if (
+                    old.get("VersionId") not in (None, "null")
+                    or old.get("ContentLength") != stored.size
+                    or _canonical_content_type(old.get("ContentType"))
+                        != _canonical_content_type(stored.content_type)
+                ):
+                    raise MediaStorageIntegrityError("legacy null version headers changed")
+                self._validate_existing(old, stored)
+                old_digest = hashlib.sha256()
+                old_size = 0
+                for chunk in old_body.iter_chunks(chunk_size=self._CHUNK_SIZE):
+                    old_size += len(chunk)
+                    if old_size > stored.size:
+                        raise MediaStorageIntegrityError("legacy null version exceeds recorded size")
+                    old_digest.update(chunk)
+                if old_size != stored.size or old_digest.hexdigest() != stored.sha256:
+                    raise MediaStorageIntegrityError("legacy null version bytes changed")
+            finally:
+                old_body.close()
+
+        def require_no_tags(version_id: str) -> None:
+            tags = self._client.get_object_tagging(
+                Bucket=self.bucket, Key=stored.key, VersionId=version_id
+            )
+            if not isinstance(tags, Mapping) or tags.get("TagSet") != []:
+                raise MediaStorageIntegrityError("legacy media tags require separate preservation")
+
+        try:
+            verify_null_version()
+            require_no_tags("null")
+        except MediaStorageError:
+            raise
+        except Exception:
+            raise MediaStorageError("S3 legacy null version preflight failed") from None
+
+        try:
+            versioning = self._client.get_bucket_versioning(Bucket=self.bucket)
+            if not isinstance(versioning, Mapping) or versioning.get("Status") != "Enabled":
+                raise MediaStorageError("S3 bucket versioning changed before promotion")
+            written = self._client.put_object(
+                Bucket=self.bucket, Key=stored.key, Body=payload,
+                ContentType=source["ContentType"], Metadata=dict(metadata),
+                IfMatch=expected_etag, **preserved,
+            )
+        except MediaStorageError:
+            raise
+        except Exception:
+            raise MediaStorageError("S3 legacy promotion outcome unknown; inspect before retry") from None
+        version_id = written.get("VersionId") if isinstance(written, Mapping) else None
+        try:
+            if not self._valid_version_id(version_id):
+                raise MediaStorageIntegrityError("promotion returned no concrete version")
+            if self.verified_version(stored, version_id=version_id) != version_id:
+                raise MediaStorageIntegrityError("promoted media version mismatch")
+            if self.verified_version(stored) != version_id:
+                raise MediaStorageIntegrityError("promoted media is not the latest version")
+            current_head = self._client.head_object(Bucket=self.bucket, Key=stored.key)
+            self._validate_existing(current_head, stored)
+            if (
+                current_head.get("Metadata") != dict(metadata)
+                or any(current_head.get(name) != value for name, value in preserved.items())
+            ):
+                raise MediaStorageIntegrityError("promoted media metadata changed")
+            verify_null_version()
+            require_no_tags(version_id)
+            require_no_tags("null")
+        except Exception:
+            raise MediaStoragePromotionVerificationError(version_id) from None
+        return version_id
 
     def download_file(self, stored: StoredMediaObject, destination: str | Path) -> None:
         """Recover an uploaded asset for an interrupted extraction, no CDN call."""
@@ -278,6 +510,15 @@ class PrivateS3MediaStorage:
         if match is None or match.group(1) != match.group(2)[:2]:
             return False
         return key == cls.object_key(match.group(2))
+
+    @staticmethod
+    def _valid_version_id(value: object) -> bool:
+        return (
+            isinstance(value, str)
+            and bool(value)
+            and value == value.strip()
+            and value.lower() != "null"
+        )
 
     def _head(self, key: str) -> Mapping[str, Any] | None:
         try:

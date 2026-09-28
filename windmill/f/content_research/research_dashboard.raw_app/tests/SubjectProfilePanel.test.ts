@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { isKnownActionError, pendingSubjectProfileDraftBelongsToActor, readPendingSubjectProfileDraft, savePendingSubjectProfileDraft, subjectProfileIntentHash, subjectProfilePendingDraftStorageKey } from '../SubjectProfilePanel'
+import { isKnownActionError, pendingSubjectProfileDraftBelongsToActor, readPendingSubjectProfileDraft, savePendingSubjectProfileDraft, subjectProfileIntentHash, subjectProfilePendingDraftStorageKey, subjectProfileReviewFields } from '../SubjectProfilePanel'
 
 class MemorySessionStorage {
   private readonly values = new Map<string, string>()
@@ -24,6 +24,16 @@ const payload = {
 }
 void (async () => {
   assert.ok(readFileSync('ResearchBriefs.tsx', 'utf8').includes('key={`${projectId}:${selectedSubjectId}`}'))
+  assert.ok(readFileSync('SubjectProfilePanel.tsx', 'utf8').includes('固定清单原始字节计算'))
+  const preview = subjectProfileReviewFields({
+    id: 'draft-1', profile_kind: 'ip_narrative', version_no: 1, status: 'draft',
+    summary: { current_facts: ['事实甲', '事实乙'] }, rights_status: 'unknown',
+    source_reference: 'controlled-source-1', source_digest: 'a'.repeat(64), content_fingerprint: 'b'.repeat(64),
+  })
+  assert.deepEqual(preview.find(row => row.title === '当前事实')?.values, ['事实甲', '事实乙'])
+  assert.deepEqual(preview.find(row => row.title === '素材与表达权利')?.values, ['尚未核验'])
+  assert.deepEqual(preview.find(row => row.title === '来源引用')?.values, ['controlled-source-1'])
+  assert.deepEqual(preview.find(row => row.title === '来源 SHA-256')?.values, ['a'.repeat(64)])
   assert.equal(isKnownActionError(new Error('PROFILE_NOT_REVOCABLE')), true)
   assert.equal(isKnownActionError(new Error('RESEARCH_ACTION_IDENTITY_REQUIRED')), true)
   assert.equal(isKnownActionError(new Error('network timeout')), false)

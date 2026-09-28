@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -10,7 +11,7 @@ import pytest
 from psycopg.types.json import Jsonb
 
 from douyin_research.media_ingestion import MediaIngestionConfiguration, MediaIngestionService
-from douyin_research.media_processing import MediaDigest
+from douyin_research.media_processing import MediaDigest, MediaProcessingError, MediaSourceUnavailable
 from douyin_research.media_storage import MediaStorageError, PrivateS3MediaStorage, StoredMediaObject
 
 
@@ -107,6 +108,235 @@ def test_media_chain_persists_bound_assets_and_reuses_without_downloading(source
     assert audio.parent_asset_id == video.id
     assert video.source_response_id == audio.source_response_id == response_id
     assert "private-token" not in repr(first)
+
+
+def test_one_video_detail_can_supply_exact_video_without_paid_refresh(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        conn.execute(
+            """update external_api_response
+               set endpoint_key='douyin.app.one_video', response_body=%s
+               where id=%s""",
+            (Jsonb({"data": {"aweme_detail": {"aweme_id": platform_id,
+                "video": {"play_addr": {"url_list": ["https://cdn.example.test/video?token=private-token"]}}}}}),
+             response_id),
+        )
+    result = service.run(video_id, downloader=_download, extractor=_extract)
+    assert result["status"] == "completed"
+    assert result["external_paid_calls"] == 0
+    assert storage.uploads == 2
+    assert service.assets.get(video_id, result["asset_ids"][0]).source_response_id == response_id
+
+
+def test_cost_aware_multi_video_detail_can_supply_media_without_paid_refresh(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            "update external_api_response set endpoint_key='douyin.app.multi_video' where id=%s",
+            (response_id,),
+        )
+    result = service.run(video_id, downloader=_download, extractor=_extract)
+    assert result["status"] == "completed"
+    assert result["external_paid_calls"] == 0
+    assert storage.uploads == 2
+    assert service.assets.get(video_id, result["asset_ids"][0]).source_response_id == response_id
+
+
+def test_serialized_multi_video_detail_can_supply_exact_media(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        detail = [{"aweme_id": "other-video", "video": {
+            "play_addr": {"url_list": ["https://cdn.example.test/other"]}}},
+            {"aweme_id": platform_id, "video": {
+                "play_addr": {"url_list": ["https://cdn.example.test/wanted"]}}}]
+        conn.execute(
+            """update external_api_response
+               set endpoint_key='douyin.app.multi_video', response_body=%s where id=%s""",
+            (Jsonb({"data": {"aweme_details": json.dumps(detail)}}), response_id),
+        )
+    result = service.run(video_id, downloader=_download, extractor=_extract)
+    assert result["status"] == "completed"
+    assert result["external_paid_calls"] == 0
+    assert storage.uploads == 2
+    assert service.assets.get(video_id, result["asset_ids"][0]).source_response_id == response_id
+
+
+def test_multi_video_retries_only_unavailable_url_in_same_saved_response(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        conn.execute(
+            """update external_api_response
+               set endpoint_key='douyin.app.multi_video', response_body=%s where id=%s""",
+            (Jsonb({"data": {"aweme_details": [{"aweme_id": "other-video", "video": {
+                "play_addr": {"url_list": ["https://cdn.example.test/other"]}}},
+                {"aweme_id": platform_id, "video": {"play_addr": {"url_list": [
+                    "https://cdn.example.test/stale?token=private-token",
+                    "https://cdn.example.test/live?token=private-token",
+                ]}}}]}}), response_id),
+        )
+    attempts = []
+
+    def alternate(url, destination, **kwargs):
+        attempts.append(url)
+        if "/stale?" in url:
+            raise MediaSourceUnavailable("media source is unavailable")
+        return _download(url, destination, **kwargs)
+
+    result = service.run(video_id, downloader=alternate, extractor=_extract)
+    assert result["status"] == "completed"
+    assert result["external_paid_calls"] == 0
+    assert len(attempts) == 2
+    assert all("other" not in url for url in attempts)
+    assert storage.uploads == 2
+    assert service.assets.get(video_id, result["asset_ids"][0]).source_response_id == response_id
+    assert "private-token" not in repr(result)
+
+
+def test_media_security_failure_does_not_try_alternate_url(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        conn.execute(
+            """update external_api_response set response_body=%s where id=%s""",
+            (Jsonb({"data": {"aweme_details": [{"aweme_id": platform_id, "video": {
+                "play_addr": {"url_list": ["https://cdn.example.test/unsafe",
+                                             "https://cdn.example.test/alternate"]}}}]}}), response_id),
+        )
+    attempts = []
+
+    def unsafe(url, _destination, **_kwargs):
+        attempts.append(url)
+        raise MediaProcessingError("media URL host is not permitted")
+
+    result = service.run(video_id, downloader=unsafe, extractor=_extract)
+    assert result["status"] == "failed"
+    assert result["error_code"] == "media_download_failed"
+    assert len(attempts) == 1
+    assert storage.uploads == 0
+
+
+def test_all_unavailable_candidates_fail_without_paid_refresh_or_url_leak(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        conn.execute(
+            """update external_api_response
+               set endpoint_key='douyin.app.multi_video', response_body=%s where id=%s""",
+            (Jsonb({"data": {"aweme_details": [{"aweme_id": platform_id, "video": {
+                "play_addr": {"url_list": [
+                    "https://cdn.example.test/stale-a?sig=private-token",
+                    "https://cdn.example.test/stale-b?sig=private-token",
+                ]}}}]}}), response_id),
+        )
+    attempts = []
+
+    def unavailable(url, _destination, **_kwargs):
+        attempts.append(url)
+        raise MediaSourceUnavailable("media source is unavailable")
+
+    result = service.run(video_id, downloader=unavailable, extractor=_extract)
+    assert result["status"] == "failed"
+    assert result["error_code"] == "media_download_failed"
+    assert result["external_paid_calls"] == 0
+    assert len(attempts) == 2
+    assert storage.uploads == 0
+    assert "private-token" not in repr(result)
+    assert list(service.config.temp_directory.iterdir()) == []
+
+
+def test_multi_video_detail_for_other_video_is_not_a_media_source(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """update external_api_response
+               set endpoint_key='douyin.app.multi_video', response_body=%s where id=%s""",
+            (Jsonb({"data": {"aweme_details": [{"aweme_id": "other-video", "video": {
+                "play_addr": {"url_list": ["https://cdn.example.test/other"]}}}]}}), response_id),
+        )
+    result = service.run(video_id, downloader=_download, extractor=_extract)
+    assert result["status"] == "failed"
+    assert result["error_code"] == "media_source_lookup_failed"
+    assert result["external_paid_calls"] == 0
+    assert storage.uploads == 0
+
+
+def test_one_video_detail_for_other_video_is_not_a_media_source(source):
+    service, storage, video_id, response_id = source
+    with psycopg.connect(DSN) as conn:
+        conn.execute(
+            """update external_api_response
+               set endpoint_key='douyin.app.one_video', response_body=%s
+               where id=%s""",
+            (Jsonb({"data": {"aweme_detail": {"aweme_id": "other-video",
+                "video": {"play_addr": {"url_list": ["https://cdn.example.test/other"]}}}}}),
+             response_id),
+        )
+    result = service.run(video_id, downloader=_download, extractor=_extract)
+    assert result["status"] == "failed"
+    assert result["error_code"] == "media_source_lookup_failed"
+    assert result["external_paid_calls"] == 0
+    assert storage.uploads == 0
+
+
+def test_newest_exact_detail_without_media_does_not_use_older_url(source):
+    service, storage, video_id, _ = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        newer_id = conn.execute(
+            """insert into external_api_response(
+                   provider,platform,endpoint_key,response_code,response_body,requested_at)
+               values ('tikhub','douyin','douyin.app.one_video','200',%s,
+                       now() + interval '1 minute') returning id""",
+            (Jsonb({"data": {"aweme_detail": {"aweme_id": platform_id}}}),),
+        ).fetchone()[0]
+    try:
+        result = service.run(video_id, downloader=_download, extractor=_extract)
+        assert result["status"] == "failed"
+        assert result["error_code"] == "media_source_lookup_failed"
+        assert result["external_paid_calls"] == 0
+        assert storage.uploads == 0
+    finally:
+        with psycopg.connect(DSN) as conn:
+            conn.execute("delete from external_api_response where id=%s", (newer_id,))
+
+
+def test_equal_timestamp_uses_newer_exact_detail_id(source):
+    service, _, video_id, older_id = source
+    with psycopg.connect(DSN) as conn:
+        platform_id = conn.execute(
+            "select platform_video_id from source_video where id=%s", (video_id,)
+        ).fetchone()[0]
+        newer_id = conn.execute(
+            """insert into external_api_response(
+                   provider,platform,endpoint_key,response_code,response_body,requested_at)
+               select 'tikhub','douyin','douyin.app.one_video','200',%s,requested_at
+               from external_api_response where id=%s returning id""",
+            (Jsonb({"data": {"aweme_detail": {"aweme_id": platform_id,
+                "video": {"play_addr": {"url_list": ["https://cdn.example.test/newer"]}}}}}),
+             older_id),
+        ).fetchone()[0]
+    try:
+        result = service.run(video_id, downloader=_download, extractor=_extract)
+        assert result["status"] == "completed"
+        assert service.assets.get(video_id, result["asset_ids"][0]).source_response_id == newer_id
+    finally:
+        with psycopg.connect(DSN) as conn:
+            conn.execute("delete from external_api_response where id=%s", (newer_id,))
 
 
 def test_extraction_failure_is_persisted_and_temp_files_cleaned(source):

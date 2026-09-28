@@ -49,7 +49,7 @@ def test_collaboration_page_is_project_only_and_shows_narrow_share_scope() -> No
     shell = (BACKEND.parent / "AppShell.tsx").read_text()
     page = (BACKEND.parent / "ProjectCollaboration.tsx").read_text()
     assert "view === 'collaboration' && scope.mode === 'project'" in app
-    assert "projectMode || item.view !== 'collaboration'" in shell
+    assert "projectMode || !['collaboration', 'concepts'].includes(item.view)" in shell
     assert "backend.get_project_collaboration" in page
     assert "backend.mutate_project_collaboration" in page
     assert "审核正文、原始 Provider 响应、媒体、私有授权和费用" in page

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.14.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@ce8ae1c4c3358e0064daee45a0dd35540025a6e6",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import date, datetime
 from typing import Iterator, TypedDict
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg.conninfo import make_conninfo
@@ -79,6 +81,11 @@ def _preflight(dsn: str) -> None:
         _require_scoped_schema(columns)
 
 
+def _sync_status(billing_date: date, fetched_at: datetime, billing_timezone: str) -> str:
+    supplier_today = fetched_at.astimezone(ZoneInfo(billing_timezone)).date()
+    return "completed" if billing_date == supplier_today else "rollover_previous_day"
+
+
 @contextmanager
 def _single_sync(dsn: str) -> Iterator[None]:
     with psycopg.connect(dsn) as conn, conn.cursor() as cur:
@@ -108,7 +115,7 @@ def main(db: postgresql, account_scope: str = "default") -> dict[str, object]:
         # Keep upstream response details and credentials out of Windmill logs.
         raise RuntimeError("TikHub daily spend synchronization failed") from None
     return {
-        "status": "completed",
+        "status": _sync_status(snapshot.billing_date, snapshot.fetched_at, snapshot.billing_timezone),
         "provider": snapshot.provider,
         "account_scope": snapshot.account_scope,
         "bill_scope_key": snapshot.bill_scope_key,

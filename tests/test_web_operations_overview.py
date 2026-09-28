@@ -4,7 +4,7 @@ import importlib.util
 import os
 import sys
 import types
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -15,9 +15,6 @@ import pytest
 
 
 DSN = os.getenv("TEST_DATABASE_URL")
-pytestmark = pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
-
-
 @pytest.fixture(autouse=True)
 def legacy_admin_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WM_END_USER_EMAIL", "fixture@example.com")
@@ -45,6 +42,7 @@ def _resource() -> dict[str, object]:
     }
 
 
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
 def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
     assert DSN
     video_id, run_id = uuid4(), uuid4()
@@ -167,6 +165,7 @@ def test_operations_is_readonly_bounded_and_hides_sensitive_fields() -> None:
             conn.commit()
 
 
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
 def test_operations_returns_account_daily_spend_without_platform_filtering() -> None:
     """A US supplier day remains a US supplier day, not a Beijing dashboard day."""
     assert DSN
@@ -227,3 +226,68 @@ def test_operations_daily_spend_does_not_turn_missing_sync_data_into_zero() -> N
     assert empty["status"] == "not_synced"
     assert empty["records"] == [] and empty["today"] == []
     assert "0" not in empty["message"]
+
+
+def test_operations_bill_gap_missing_table_and_pending_are_not_zero_cost() -> None:
+    class Cursor:
+        def __init__(self, table_exists: bool):
+            self.table_exists = table_exists
+            self.query = ""
+
+        def execute(self, query, _args=()):
+            self.query = query
+
+        def fetchone(self):
+            if "to_regclass" in self.query:
+                return {"table_name": "volc_billing_sync_gap" if self.table_exists else None}
+            return {"pending_count": 1, "resolved_count": 0}
+
+        def fetchall(self):
+            return [{
+                "account_scope": "payer:123", "billing_date": date(2026, 9, 27),
+                "attempt_count": 2, "last_attempt_at": None,
+                "next_attempt_after": None, "last_result_code": "bill_unavailable",
+            }]
+
+    backend = _backend()
+    missing = backend._volc_billing_sync_gaps(Cursor(False))
+    pending = backend._volc_billing_sync_gaps(Cursor(True))
+    assert missing["status"] == "not_configured"
+    assert missing["pending_count"] is None and missing["pending_dates"] == []
+    assert "不能据此判断已对账或费用为零" in missing["message"]
+    assert pending["pending_count"] == 1 and pending["resolved_count"] == 0
+    assert pending["pending_dates"][0]["billing_date"] == "2026-09-27"
+    assert "amount" not in pending["pending_dates"][0]
+
+
+@pytest.mark.skipif(not DSN, reason="TEST_DATABASE_URL not configured")
+def test_operations_bill_gap_is_admin_only_and_not_platform_filtered(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert DSN
+    scope = f"payer:{uuid4().int % 10**16}"
+    # Place this fixture first in the bounded newest-date view even if the
+    # integration database already contains many real pending account-days.
+    billing_date = date(2099, 1, 1)
+    try:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                insert into volc_billing_sync_gap(
+                  account_scope, billing_date, status, attempt_count, last_result_code
+                ) values (%s, %s, 'pending', 2, 'bill_unavailable')
+                """,
+                (scope, billing_date),
+            )
+            conn.commit()
+        result = _backend().main(_resource(), platform="kuaishou", days=1)
+        gaps = result["volc_billing_sync_gaps"]
+        assert gaps["status"] == "available"
+        assert gaps["pending_count"] >= 1
+        assert any(row["account_scope"] == scope for row in gaps["pending_dates"])
+        assert all("cost" not in row and "error" not in row for row in gaps["pending_dates"])
+        monkeypatch.setenv("WM_END_USER_EMAIL", "outsider@example.com")
+        with pytest.raises(PermissionError, match="LEGACY_ADMIN_ACCESS_REQUIRED"):
+            _backend().main(_resource())
+    finally:
+        with psycopg.connect(DSN) as conn, conn.cursor() as cur:
+            cur.execute("delete from volc_billing_sync_gap where account_scope=%s", (scope,))
+            conn.commit()

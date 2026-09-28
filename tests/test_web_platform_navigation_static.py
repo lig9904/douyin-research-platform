@@ -55,8 +55,10 @@ def test_navigation_only_exposes_working_pages_and_survives_mobile() -> None:
     index_css = read("index.css")
     app = read("App.tsx")
 
-    assert "navItems.filter((item) => item.enabled && (!allowedViews || allowedViews.has(item.view)) && (projectMode || item.view !== 'collaboration'))" in shell
-    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions'])" in shell
+    assert "navItems.filter((item) => item.enabled && (!allowedViews || allowedViews.has(item.view)) && (projectMode || !['collaboration', 'concepts'].includes(item.view)))" in shell
+    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'concepts', 'decisions', 'cost'])" in shell
+    assert "label: '选题草稿', view: 'concepts', enabled: true" in shell
+    assert "<ProjectConcepts key={scope.projectId} scope={scope}" in app
     assert 'aria-label="研究台主导航"' in shell
     assert "label: '运行与成本', view: 'cost', enabled: true" in shell
     assert "成本与预算" not in shell

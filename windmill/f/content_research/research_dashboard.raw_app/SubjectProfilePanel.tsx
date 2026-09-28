@@ -76,6 +76,27 @@ function shortFingerprint(value?: string | null) {
   return value && /^[0-9a-f]{16,}$/i.test(value) ? `${value.slice(0, 12)}…${value.slice(-8)}` : '—'
 }
 
+/** The exact stored draft facts a manager must inspect before approving it. */
+export function subjectProfileReviewFields(profile: SubjectProfile) {
+  return [
+    ...profileFields.map(({ key, title }) => ({ title, values: profile.summary?.[key] || [] }))
+      .filter(({ values }) => values.length > 0),
+    { title: '素材与表达权利', values: [rightsLabels[profile.rights_status]] },
+    { title: '来源引用', values: [profile.source_reference || '—'] },
+    { title: '来源 SHA-256', values: [profile.source_digest || '—'] },
+    { title: '内容指纹', values: [profile.content_fingerprint || '—'] },
+  ]
+}
+
+function profileReview(profile: SubjectProfile) {
+  return <Descriptions size="small" column={1} className="subject-profile-review">
+    {subjectProfileReviewFields(profile).map(({ title, values }) =>
+      <Descriptions.Item key={title} label={title}>
+        {values.length === 1 ? values[0] : <ul className="subject-profile-summary-list">{values.map((value, index) => <li key={`${title}-${index}`}>{value}</li>)}</ul>}
+      </Descriptions.Item>)}
+  </Descriptions>
+}
+
 function splitSummary(value?: string) {
   return (value || '').split(/\r?\n/)
     .map((item) => item.trim().replace(/\s+/g, ' '))
@@ -420,7 +441,7 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
           : '撤销后，该版本不得作为新的研究或分析上下文；已完成历史仍保留版本引用。'
     Modal.confirm({
       title: `${actionName}“${kindLabels[profile.profile_kind]} v${profile.version_no}”？`,
-      content: description,
+      content: action === 'approve' ? <><p>{description}</p>{profileReview(profile)}</> : description,
       okText: `确认${actionName}`,
       cancelText: '取消',
       okButtonProps: action === 'revoke' ? { danger: true } : undefined,
@@ -449,7 +470,7 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
 
       {canManage && historical.length ? <section className="subject-profile-history" aria-label="档案历史">
         <h4>草稿与历史版本</h4>
-        {historical.map((profile) => <article key={profile.id} className="subject-profile-history-row"><div><strong>{kindLabels[profile.profile_kind]} v{profile.version_no}</strong><span>{rightsLabels[profile.rights_status]} · 指纹 {shortFingerprint(profile.content_fingerprint)}</span></div><Space><Tag color={statusColors[profile.status]}>{statusLabels[profile.status]}</Tag>{profile.status === 'draft' ? <><Button size="small" type="primary" onClick={() => confirmLifecycle('approve', profile)}>人工核准</Button><Button size="small" danger onClick={() => confirmLifecycle('revoke', profile)}>撤销草稿</Button></> : null}</Space></article>)}
+        {historical.map((profile) => <article key={profile.id} className="subject-profile-history-row"><div><strong>{kindLabels[profile.profile_kind]} v{profile.version_no}</strong><span>{rightsLabels[profile.rights_status]} · 指纹 {shortFingerprint(profile.content_fingerprint)}</span><details><summary>查看完整草稿与来源</summary>{profileReview(profile)}</details></div><Space><Tag color={statusColors[profile.status]}>{statusLabels[profile.status]}</Tag>{profile.status === 'draft' ? <><Button size="small" type="primary" onClick={() => confirmLifecycle('approve', profile)}>人工核准</Button><Button size="small" danger onClick={() => confirmLifecycle('revoke', profile)}>撤销草稿</Button></> : null}</Space></article>)}
       </section> : null}
 
       {!canManage ? <p className="subject-profile-reader-note">你看到的是已核准的最小摘要；草稿、历史版本和来源引用仅对项目管理者开放。</p> : null}
@@ -457,13 +478,13 @@ export default function SubjectProfilePanel({ projectId, subjectId, subjectName,
 
     <Modal open={modal === 'create'} title="新建主体档案草稿" width={760} onCancel={() => setModal(null)} onOk={() => form.submit()} okText="保存草稿" confirmLoading={saving} destroyOnClose>
       {pendingDraft.current || pendingIntentByAction.current.has('create_draft') ? <Alert type="warning" showIcon message="上一次草稿保存结果待核对" description="已保留幂等键，但不会写入浏览器正文。请先刷新档案历史确认是否已保存；若要重试，须按完全相同内容重新填写，不能另起一次创建。" /> : null}
-      <Alert type="warning" showIcon message="只录入可核验摘要" description="不要粘贴完整剧本、未授权图片/视频、个人信息或凭据。来源摘要必须是对应资料的 SHA-256 指纹。" />
+      <Alert type="warning" showIcon message="只录入可核验摘要" description="不要粘贴完整剧本、未授权图片/视频、个人信息或凭据。来源指纹须对应来源引用指向的单份原件，或列明每份原件指纹的固定清单；系统只校验指纹格式，不读取原件核真，也不据此确认素材权利。" />
       <Form form={form} layout="vertical" onFinish={(values) => { void createDraft(values) }} className="subject-profile-form">
         <Form.Item name="profile_kind" label="档案类型" rules={[{ required: true }]}><Select options={Object.entries(kindLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
         {profileFields.map(({ key, title, hint }) => <Form.Item key={key} name={key} label={title} extra={`${hint}；一行一条，空行忽略，最多 50 条。`}><Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} /></Form.Item>)}
         <Form.Item name="rights_status" label="素材与表达权利状态" rules={[{ required: true }]}><Select options={Object.entries(rightsLabels).map(([value, label]) => ({ value, label }))} /></Form.Item>
-        <Form.Item name="source_reference" label="来源引用" rules={[{ required: true, max: 512 }]} extra="填写受控资料编号或可核对链接；不填写账号密码、Cookie 或原始保密内容。"><Input maxLength={512} /></Form.Item>
-        <Form.Item name="source_digest" label="来源 SHA-256" rules={[{ required: true, pattern: /^[0-9a-fA-F]{64}$/, message: '请输入 64 位十六进制 SHA-256' }]}><Input maxLength={64} /></Form.Item>
+        <Form.Item name="source_reference" label="来源引用" rules={[{ required: true, max: 512 }]} extra="填写可取得并复算的受控原件或固定来源清单编号；多份原件须由清单逐一列明名称与原始字节指纹。不填写凭据或保密正文。"><Input maxLength={512} /></Form.Item>
+        <Form.Item name="source_digest" label="来源 SHA-256" rules={[{ required: true, pattern: /^[0-9a-fA-F]{64}$/, message: '请输入 64 位十六进制 SHA-256' }]} extra="对来源引用所指的原件或固定清单原始字节计算；不能填摘要文字、文件名或未记录算法的组合指纹。"><Input maxLength={64} /></Form.Item>
       </Form>
     </Modal>
   </Card>

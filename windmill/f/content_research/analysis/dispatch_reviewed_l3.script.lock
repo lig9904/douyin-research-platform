@@ -6,7 +6,7 @@ anyio==4.15.1
 boto3==1.43.98
 botocore==1.43.98
 certifi==2026.7.22
-douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@ab1255f97e2a05e226a24e3a47ac8c52398b9296
+douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1

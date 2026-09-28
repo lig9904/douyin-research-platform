@@ -1,6 +1,9 @@
-# py: ==3.14.*
-#requirements:
-#douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@a4c72caa2d68324d802ea8f3bb7fad97d67d0f13
+# /// script
+# requires-python = "==3.14.*"
+# dependencies = [
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180",
+# ]
+# ///
 
 """Preview-only Windmill entry point for a future paid L3 model adapter."""
 

@@ -1,0 +1,12 @@
+summary: Recover one previously submitted LAS video task
+description: Trusted worker Poll uses only the persisted provider task ID;
+  it cannot create a new Submit.
+lock: '!inline f/content_research/project_las/poll_video.script.lock'
+concurrent_limit: 1
+timeout: 180
+schema:
+  type: object
+  properties:
+    attempt_id:
+      type: string
+  required: [attempt_id]

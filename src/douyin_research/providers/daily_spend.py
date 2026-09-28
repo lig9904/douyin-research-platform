@@ -8,9 +8,9 @@ bill to individual API calls.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import math
 
@@ -77,16 +77,24 @@ def _count(value: Any) -> int:
     return value
 
 
-def _billing_date(value: Any, fetched_at: datetime) -> date:
+def _billing_date(value: Any, fetched_at: datetime, billing_timezone: ZoneInfo) -> date:
     if not isinstance(value, str):
         raise DailySpendError("daily usage response is invalid")
     try:
         parsed = date.fromisoformat(value)
     except ValueError as exc:
         raise DailySpendError("daily usage response is invalid") from exc
-    # This is a live daily endpoint, not a historical backfill interface.  A
-    # small future allowance accommodates the supplier's west-coast timezone.
-    if parsed < date(2020, 1, 1) or parsed > fetched_at.date() + timedelta(days=1):
+    # This is a live daily endpoint, not a historical backfill interface.
+    # The supplier's reported timezone, not UTC, determines its current day.
+    # Keep the prior day's closing snapshot only during the first two elapsed
+    # hours after local midnight; the Windmill job reports rollover separately.
+    local_time = fetched_at.astimezone(billing_timezone)
+    today = local_time.date()
+    midnight_utc = datetime.combine(today, time.min, billing_timezone).astimezone(timezone.utc)
+    if parsed != today and not (
+        parsed == today - timedelta(days=1)
+        and fetched_at - midnight_utc < timedelta(hours=2)
+    ):
         raise DailySpendError("daily usage response is invalid")
     return parsed
 
@@ -118,7 +126,7 @@ def parse_tikhub_daily_usage(
     if not isinstance(timezone_name, str) or not timezone_name.strip() or len(timezone_name) > 128:
         raise DailySpendError("daily usage response is invalid")
     try:
-        ZoneInfo(timezone_name)
+        billing_timezone = ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError):
         raise DailySpendError("daily usage response timezone is invalid") from None
     total_requests = _count(data.get("total_request_per_day"))
@@ -131,7 +139,7 @@ def parse_tikhub_daily_usage(
         bill_scope_key="account",
         scope_kind="account_total",
         scope_label="账户总费用",
-        billing_date=_billing_date(data.get("date"), observed_at),
+        billing_date=_billing_date(data.get("date"), observed_at, billing_timezone),
         cost_currency=TIKHUB_CURRENCY,
         billing_timezone=timezone_name.strip(),
         total_cost=_amount(data.get("usage")),
@@ -181,15 +189,7 @@ def fetch_tikhub_daily_usage(
     return parse_tikhub_daily_usage(payload, account_scope=account_scope, fetched_at=fetched_at)
 
 
-def upsert_supplier_daily_spend(dsn: str, snapshot: SupplierDailySpend) -> bool:
-    """Write a daily snapshot, preserving a newer observation if it exists."""
-
-    if snapshot.source_warning:
-        raise DailySpendError("supplier daily spend contains a warning and was not stored")
-
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute(
-            """
+_UPSERT_DAILY_SPEND = """
             insert into supplier_daily_spend (
               provider, account_scope, bill_scope_key, scope_kind, scope_label,
               billing_date, cost_currency, billing_timezone, total_cost,
@@ -212,20 +212,79 @@ def upsert_supplier_daily_spend(dsn: str, snapshot: SupplierDailySpend) -> bool:
               source_warning = excluded.source_warning,
               fetched_at = excluded.fetched_at
             where supplier_daily_spend.fetched_at <= excluded.fetched_at
+              and (supplier_daily_spend.billing_finality <> 'final'
+                   or excluded.billing_finality = 'final')
             returning fetched_at
-            """,
-            (
-                snapshot.provider, snapshot.account_scope, snapshot.bill_scope_key,
-                snapshot.scope_kind, snapshot.scope_label, snapshot.billing_date,
-                snapshot.cost_currency, snapshot.billing_timezone, snapshot.total_cost,
-                snapshot.balance_cost, snapshot.free_credit_cost, snapshot.payable_cost,
-                snapshot.paid_cost, snapshot.unpaid_cost, snapshot.total_requests,
-                snapshot.paid_requests, snapshot.billing_finality,
-                snapshot.source_warning, snapshot.fetched_at,
-            ),
-        )
-        wrote = cur.fetchone() is not None
-    return wrote
+            """
+
+
+def _snapshot_values(snapshot: SupplierDailySpend) -> tuple[Any, ...]:
+    if snapshot.source_warning:
+        raise DailySpendError("supplier daily spend contains a warning and was not stored")
+    return (
+        snapshot.provider, snapshot.account_scope, snapshot.bill_scope_key,
+        snapshot.scope_kind, snapshot.scope_label, snapshot.billing_date,
+        snapshot.cost_currency, snapshot.billing_timezone, snapshot.total_cost,
+        snapshot.balance_cost, snapshot.free_credit_cost, snapshot.payable_cost,
+        snapshot.paid_cost, snapshot.unpaid_cost, snapshot.total_requests,
+        snapshot.paid_requests, snapshot.billing_finality,
+        snapshot.source_warning, snapshot.fetched_at,
+    )
+
+
+def upsert_supplier_daily_spend(dsn: str, snapshot: SupplierDailySpend) -> bool:
+    """Write one snapshot, preserving newer observations and supplier finality."""
+
+    values = _snapshot_values(snapshot)
+    with psycopg.connect(dsn) as conn:
+        return _upsert_supplier_daily_spend_values(conn, values)
+
+
+def upsert_supplier_daily_spend_in_transaction(
+    conn: psycopg.Connection, snapshot: SupplierDailySpend,
+) -> bool:
+    """Write within the caller's transaction so bill and gap resolve together."""
+
+    return _upsert_supplier_daily_spend_values(conn, _snapshot_values(snapshot))
+
+
+def _upsert_supplier_daily_spend_values(
+    conn: psycopg.Connection, values: tuple[Any, ...],
+) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(_UPSERT_DAILY_SPEND, values)
+        return cur.fetchone() is not None
+
+
+def upsert_supplier_daily_spend_batch(
+    dsn: str, snapshots: Sequence[SupplierDailySpend],
+) -> tuple[bool, ...]:
+    """Commit a complete product/day set atomically, or leave it unchanged."""
+
+    if not snapshots:
+        raise ValueError("a non-empty supplier bill batch is required")
+    keys = [(
+        item.provider, item.account_scope, item.bill_scope_key,
+        item.billing_date, item.cost_currency,
+    ) for item in snapshots]
+    if len(keys) != len(set(keys)):
+        raise ValueError("supplier bill batch contains duplicate scopes")
+    scopes = {(
+        item.provider, item.account_scope, item.billing_date, item.fetched_at,
+        item.billing_timezone, item.billing_finality,
+    ) for item in snapshots}
+    if len(scopes) != 1:
+        raise ValueError("supplier bill batch must share one account, day, timezone, finality and fetch time")
+    values = tuple(_snapshot_values(item) for item in snapshots)
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        for _, item_values in sorted(zip(keys, values), key=lambda entry: entry[0]):
+            cur.execute(_UPSERT_DAILY_SPEND, item_values)
+            if cur.fetchone() is None:
+                # An older observation or preliminary replacement of a final
+                # row invalidates the entire product/day snapshot.
+                conn.rollback()
+                return (False,) * len(values)
+    return (True,) * len(values)
 
 
 def sync_tikhub_daily_spend(

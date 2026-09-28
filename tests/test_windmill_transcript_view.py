@@ -24,6 +24,7 @@ def _row(**overrides):
         "text": "已审核的转写正文",
         "truncated": False,
         "quality_status": "usable",
+        "authorization_kind": "listened",
         "asr_provider": "volcengine-doubao-asr",
         "model_id": "bigmodel",
         "model_revision": "2.0",
@@ -47,9 +48,11 @@ def test_public_transcript_contract_preserves_unknown_cost_without_execution_int
     transcript = backend._public_asr_transcript(_row(truncated=True))
 
     assert transcript == {
+        "transcript_id": None,
         "text": "已审核的转写正文",
         "truncated": True,
         "quality_status": "usable",
+        "authorization_kind": "listened",
         "provider": "volcengine-doubao-asr",
         "model_id": "bigmodel",
         "model_revision": "2.0",

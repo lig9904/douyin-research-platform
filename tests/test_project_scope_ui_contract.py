@@ -23,7 +23,16 @@ def test_project_roster_is_required_before_loading_global_home() -> None:
     assert "if (noScope || projectViewBlocked)" in app
     assert "key={scope.mode === 'project' ? scope.projectId : 'legacy-admin'}" in app
     assert "legacyAdmin ? [{ value: 'legacy-admin'" in shell
-    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'decisions'])" in shell
+    assert "new Set<ResearchView>(['videos', 'briefs', 'accounts', 'collaboration', 'concepts', 'decisions', 'cost'])" in shell
+    assert "<ProjectCostOverview key={scope.projectId} projectId={scope.projectId} />" in app
+    cost = _source("src/components/ProjectCostOverview.tsx")
+    assert "backend.get_project_daily_cost({ project_id: requestedProjectId, days: nextDays })" in cost
+    assert "requestNo !== latestRequest.current || currentProjectId.current !== requestedProjectId" in cost
+    assert "loadedReport?.project_id === projectId ? loadedReport : null" in cost
+    assert "未知费用不计为零" in cost
+    assert "row.discovery_run_count" in cost
+    assert "row.comment_run_count" in cost
+    assert "取得并核对供应商分笔账前不能称为实扣" in cost
 
 
 def test_project_video_calls_carry_scope_and_hide_unscoped_review_paths() -> None:
@@ -33,8 +42,14 @@ def test_project_video_calls_carry_scope_and_hide_unscoped_review_paths() -> Non
     assert "...(projectId ? { project_id: projectId } : {})" in library
     assert "project_id: projectId" in metric
     assert "project_id: projectId" in raw
-    for component in ("VideoMediaPreview", "L3ReviewPanel", "ASRMediaReviewPanel", "ASRTranscriptPanel"):
+    for component in ("VideoMediaPreview", "L3ReviewPanel", "ASRMediaReviewPanel"):
         assert f"{{!isProject && <{component}" in library
+    assert "<ASRTranscriptPanel transcript={detail.asr_transcript} />" in library
+    assert "projectId && canReviewProject && detail.project_inclusion_status === 'accepted' && <ProjectASRMediaReviewPanel" in library
+    assert "projectId && detail.project_inclusion_status === 'accepted' && canReviewProjectL3 && detail.asr_transcript?.transcript_id" in library
+    assert "projectInclusionLabel(item.project_inclusion_status)" in library
+    assert "canReviewProjectL3 = canReviewProject && currentProject?.can_review_l3 === true" in library
+    assert "<ProjectL3ReviewPanel" in library
     assert "if (!isProject) void loadUserState()" in library
     assert "{!isProject && <div className=\"bulk-actions\">" in library
     assert "project_inclusion" in raw and "merged_metrics" in raw

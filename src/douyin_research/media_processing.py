@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import json
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -25,6 +27,10 @@ import httpx
 
 class MediaProcessingError(RuntimeError):
     """Safe media-processing failure without a URL, response body, or stderr."""
+
+
+class MediaSourceUnavailable(MediaProcessingError):
+    """One CDN candidate returned a definitive unavailable response."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,16 +52,29 @@ class _VerifiedMediaURL:
 
 
 _REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+_UNAVAILABLE_STATUS_CODES = {403, 404, 410}
+_NON_MEDIA_CONTENT_TYPES = {
+    "application/json", "application/xml", "text/html", "text/plain", "text/xml",
+}
+_COMPLETE_RANGE = re.compile(r"bytes 0-([0-9]+)/([0-9]+)\Z")
+_MAX_MEDIA_URL_CANDIDATES = 8
 _CHUNK_SIZE = 1024 * 1024
 
 
 def extract_tikhub_video_url(payload: Mapping[str, Any], platform_video_id: str) -> str:
+    """Return the first safe-format candidate for compatibility with callers."""
+    return extract_tikhub_video_urls(payload, platform_video_id)[0]
+
+
+def extract_tikhub_video_urls(
+    payload: Mapping[str, Any], platform_video_id: str,
+) -> tuple[str, ...]:
     """Return the selected video's media URL from a saved TikHub detail payload.
 
     A detail response can contain several videos.  The media address is accepted
     only from an object whose own ``aweme_id`` (or ``platform_video_id``) exactly
-    equals ``platform_video_id``.  This intentionally avoids a convenient but
-    unsafe "first video" fallback.
+    equals ``platform_video_id``.  Candidates are bounded and deduplicated so
+    a stale CDN URL can be replaced only from that same persisted video record.
     """
 
     if not isinstance(payload, Mapping):
@@ -64,6 +83,8 @@ def extract_tikhub_video_url(payload: Mapping[str, Any], platform_video_id: str)
         raise ValueError("platform_video_id is required")
     target = platform_video_id.strip()
     matching_record_seen = False
+    candidates: list[str] = []
+    seen: set[str] = set()
     for value in _walk_mappings(payload):
         if not _is_target_video(value, target):
             continue
@@ -79,11 +100,24 @@ def extract_tikhub_video_url(payload: Mapping[str, Any], platform_video_id: str)
             if not isinstance(urls, list):
                 continue
             for url in urls:
-                if isinstance(url, str) and _is_absolute_https_url(url):
-                    return url
+                if (isinstance(url, str) and _is_absolute_https_url(url)
+                        and url not in seen):
+                    candidates.append(url)
+                    seen.add(url)
+                    if len(candidates) == _MAX_MEDIA_URL_CANDIDATES:
+                        return tuple(candidates)
+    if candidates:
+        return tuple(candidates)
     if matching_record_seen:
         raise MediaProcessingError("selected TikHub video has no usable HTTPS media address")
     raise MediaProcessingError("selected TikHub video is absent from the saved detail payload")
+
+
+def has_tikhub_video_record(payload: Mapping[str, Any], platform_video_id: str) -> bool:
+    """Check the exact video identity, including serialized batch-detail lists."""
+    if not isinstance(payload, Mapping) or not platform_video_id:
+        return False
+    return any(_is_target_video(value, platform_video_id) for value in _walk_mappings(payload))
 
 
 # A short alias keeps the integration layer free to use a domain-neutral name.
@@ -156,9 +190,35 @@ def download_media(
                         current_url = next_url
                         redirects += 1
                         continue
-                    if not 200 <= response.status_code < 300:
+                    if response.status_code in _UNAVAILABLE_STATUS_CODES:
+                        raise MediaSourceUnavailable("media source is unavailable")
+                    if response.status_code not in {200, 206}:
                         raise MediaProcessingError("media download request failed")
+                    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                    if content_type in _NON_MEDIA_CONTENT_TYPES:
+                        raise MediaSourceUnavailable("media source is unavailable")
+                    complete_size: int | None = None
+                    if response.status_code == 206:
+                        match = _COMPLETE_RANGE.fullmatch(
+                            response.headers.get("content-range", "")
+                        )
+                        if match is None:
+                            raise MediaProcessingError("media download is incomplete")
+                        end, total = (int(part) for part in match.groups())
+                        if total <= 0 or end != total - 1:
+                            raise MediaProcessingError("media download is incomplete")
+                        complete_size = total
                     result = _write_stream(response, temporary, max_bytes)
+                    if complete_size is not None and result.size != complete_size:
+                        raise MediaProcessingError("media download is incomplete")
+                    content_length = response.headers.get("content-length")
+                    if content_length is not None:
+                        try:
+                            expected_length = int(content_length)
+                        except ValueError:
+                            raise MediaProcessingError("media download is incomplete") from None
+                        if expected_length < 0 or result.size != expected_length:
+                            raise MediaProcessingError("media download is incomplete")
                     # link(2) publishes only if no other caller created the
                     # destination after our preflight check.  Never replace or
                     # delete a racing caller's object.
@@ -270,7 +330,12 @@ def extract_audio(
 def _walk_mappings(value: Any) -> Iterable[Mapping[str, Any]]:
     if isinstance(value, Mapping):
         yield value
-        for child in value.values():
+        for key, child in value.items():
+            if key == "aweme_details" and isinstance(child, str):
+                try:
+                    child = json.loads(child)
+                except (ValueError, TypeError):
+                    continue
             yield from _walk_mappings(child)
     elif isinstance(value, list):
         for child in value:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -184,9 +185,19 @@ def test_preview_flows_are_manual_non_sensitive_and_have_no_secret_lookup() -> N
         assert "media_ref" not in flow
         assert "evidence_bundle" not in flow
 
-    for source in (ASR_SCRIPT.read_text(), L3_SCRIPT.read_text()):
+    for script in (ASR_SCRIPT, L3_SCRIPT):
+        source = script.read_text()
+        assert source.startswith('# /// script\n# requires-python = "==3.14.*"\n')
+        source_refs = re.findall(
+            r"douyin-research-platform @ git\+https://github\.com/[^\s\"]+@[0-9a-f]{40}",
+            source,
+        )
+        assert len(source_refs) == 1
+        assert "#requirements:" not in source
         assert "wmill.get_variable" not in source
         assert "import psycopg" not in source
+        lock = script.with_suffix(".script.lock").read_text()
+        assert lock.count(source_refs[0]) == 1
 
     assert "maximum: 3" in asr_flow
     assert "concurrent_limit: 1" in asr_metadata

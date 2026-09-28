@@ -7,6 +7,7 @@ import pytest
 
 from douyin_research.providers.store import MemoryProviderStore
 from douyin_research.providers.errors import ProviderPermanentError
+from douyin_research.providers.errors import ProviderSchemaError
 from douyin_research.providers.tikhub_provider import TikHubProvider
 from douyin_research.providers.transport import TransportResult
 
@@ -78,6 +79,57 @@ def test_persistent_cache_avoids_second_external_call() -> None:
     assert store.calls[0].metadata["cost_basis"] == "estimated_unit_price"
     assert store.calls[0].metadata["pricing_version"] == "public-tariff-2026-09-20"
     assert store.calls[1].metadata["cost_basis"] == "cache_zero"
+
+
+def test_account_profile_is_identity_bound_cached_and_estimated_not_billed() -> None:
+    class ProfileTransport:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def call(self, spec, kwargs):
+            self.calls.append((spec, kwargs))
+            return TransportResult(
+                payload={"code": 200, "data": {"user": {
+                    "sec_uid": "sec-stable", "nickname": "角色号", "follower_count": 1755,
+                }}}, http_status=200, provider_request_id="profile-1", mode="fake",
+            )
+
+    transport = ProfileTransport()
+    store = MemoryProviderStore()
+    provider = TikHubProvider(transport=transport, store=store)
+    first = provider.fetch_account_profile("sec-stable")
+    second = provider.fetch_account_profile("sec-stable")
+    assert len(transport.calls) == 1
+    spec, kwargs = transport.calls[0]
+    assert spec.path == "/api/v1/douyin/app/v3/handler_user_profile"
+    assert spec.http_method == "GET" and kwargs == {"sec_user_id": "sec-stable"}
+    assert first.items[0].platform_account_id == "sec-stable"
+    assert first.items[0].follower_count == 1755
+    assert first.items[0].raw_ref == "memory:1"
+    assert second.cached is True and second.items[0].follower_count == 1755
+    assert store.calls[0].estimated_cost == pytest.approx(0.001)
+    assert store.calls[0].actual_cost is None
+    assert store.calls[1].estimated_cost == store.calls[1].actual_cost == 0
+
+
+def test_account_profile_rejects_wrong_identity_before_cache_or_snapshot() -> None:
+    class WrongProfileTransport:
+        def call(self, spec, kwargs):
+            return TransportResult(
+                payload={"code": 200, "data": {"user": {
+                    "sec_uid": "someone-else", "follower_count": 9000,
+                }}}, http_status=200, provider_request_id="wrong-profile", mode="fake",
+            )
+
+    store = MemoryProviderStore()
+    provider = TikHubProvider(transport=WrongProfileTransport(), store=store)
+    with pytest.raises(ProviderSchemaError, match="does not match"):
+        provider.fetch_account_profile("sec-stable")
+    assert store.responses == []
+    assert len(store.calls) == 1 and store.calls[0].status == "error"
+    with pytest.raises(ValueError, match="stable nonempty"):
+        provider.fetch_account_profile(" ")
+    assert len(store.calls) == 1
 
 
 def test_batch_detail_quote_is_not_reconciled_spend_and_cache_is_free():

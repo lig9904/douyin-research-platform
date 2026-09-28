@@ -1,0 +1,12 @@
+summary: Submit one reviewed project video to LAS
+description: Trusted worker. The only caller argument is a durable attempt UUID;
+  credentials, storage and account scope come from server-side variables.
+lock: '!inline f/content_research/project_las/dispatch_video.script.lock'
+concurrent_limit: 1
+timeout: 180
+schema:
+  type: object
+  properties:
+    attempt_id:
+      type: string
+  required: [attempt_id]

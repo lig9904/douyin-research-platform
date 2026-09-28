@@ -1,0 +1,9 @@
+summary: Dispatch and recover prepared project LAS videos
+description: Fixed schedule-only batch. Only explicitly prepared project tasks
+  can create a paid Submit; known provider task IDs are polled without replay.
+lock: '!inline f/content_research/project_las/run_pending.script.lock'
+concurrent_limit: 1
+timeout: 1800
+schema:
+  type: object
+  properties: {}

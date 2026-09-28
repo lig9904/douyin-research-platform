@@ -6,7 +6,7 @@
 # ]
 # ///
 
-"""Dispatch a small batch of due briefs; performs no provider calls itself."""
+"""Dispatch one due brief per tick; performs no provider calls itself."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def _due(db: postgresql) -> list[str]:
               )
               and (brief.project_id is null or brief.depth='metadata')
             order by brief.next_due_at, brief.id
-            limit 5
+            limit 1
             """
         )
         return [str(row["id"]) for row in cur.fetchall()]

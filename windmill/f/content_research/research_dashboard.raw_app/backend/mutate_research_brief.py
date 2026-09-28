@@ -39,10 +39,11 @@ class ResearchBriefConflict(RuntimeError):
 
 _ACTOR_RE = re.compile(r"^[^\s@]{1,128}@[^\s@]{1,120}$")
 _ACTIONS = frozenset({"create", "update", "activate", "pause", "archive"})
-_SOURCES = frozenset({"low_fan", "keyword", "account"})
+_SOURCES = frozenset({"low_fan", "keyword", "account", "video_ids"})
 _DEPTHS = frozenset({"metadata", "comments", "media", "review_ready"})
 _WINDOWS = frozenset({24, 72, 168, 720})
 _CADENCES = frozenset({6, 12, 24})
+_EXACT_ID_RE = re.compile(r"[0-9]{15,25}\Z")
 
 
 def _dsn(db: postgresql) -> str:
@@ -169,6 +170,16 @@ def _normalized_text(value: object, *, field: str, maximum: int) -> str:
     return normalized
 
 
+def _exact_ids(value: object) -> tuple[str, ...]:
+    if not isinstance(value, str):
+        raise ResearchBriefError("exact video IDs are invalid")
+    ids = tuple(re.split(r"[,\s]+", value.strip()))
+    if (not 1 <= len(ids) <= 20 or len(set(ids)) != len(ids)
+            or any(_EXACT_ID_RE.fullmatch(video_id) is None for video_id in ids)):
+        raise ResearchBriefError("exact video IDs are invalid")
+    return ids
+
+
 def _config(
     *, name: object, platform: object, source_type: object, target: object,
     time_window_hours: object, max_items: object, depth: object,
@@ -177,7 +188,8 @@ def _config(
     normalized_name = _normalized_text(name, field="name", maximum=80)
     if platform != "douyin" or source_type not in _SOURCES or depth not in _DEPTHS:
         raise ResearchBriefError("brief configuration is invalid")
-    if type(time_window_hours) is not int or time_window_hours not in _WINDOWS:
+    allowed_windows = {0} if source_type == "video_ids" else _WINDOWS
+    if type(time_window_hours) is not int or time_window_hours not in allowed_windows:
         raise ResearchBriefError("time_window_hours is invalid")
     if type(max_items) is not int or not 1 <= max_items <= 20:
         raise ResearchBriefError("max_items is invalid")
@@ -191,7 +203,14 @@ def _config(
         normalized_cadence = cadence_hours
     else:
         raise ResearchBriefError("cadence_hours is invalid")
-    if source_type == "low_fan":
+    if source_type == "video_ids":
+        if not project_scoped or depth != "metadata" or normalized_cadence is not None:
+            raise ResearchBriefError("exact video IDs require a one-time project metadata task")
+        ids = _exact_ids(target)
+        if max_items != len(ids):
+            raise ResearchBriefError("exact video ID count must match max_items")
+        normalized_target = ",".join(ids)
+    elif source_type == "low_fan":
         normalized_target = None
         if max_items > 5 or time_window_hours == 720:
             raise ResearchBriefError("low_fan scope exceeds its bounded endpoint")

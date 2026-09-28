@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.14.*"
 # dependencies = [
-#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@977752f4df600241419da7856a19a91ea84ddfc2",
+#   "douyin-research-platform @ git+https://github.com/lig9904/douyin-research-platform@5b93ffa7681038ecbd355c5ffbbbb3b5cdb53180",
 #   "psycopg[binary]==3.3.6",
 #   "wmill==1.815.0",
 # ]
@@ -352,6 +352,7 @@ def main(brief_id: str) -> dict[str, Any]:
                 config=config,
                 triggered_by=actor,
                 project_id=claim["project_id"],
+                brief_run_id=brief_run_id,
             )
             safe = _safe_result(result, brief_run_id, project_id=claim["project_id"])
             source_run_id = UUID(safe["run_id"])

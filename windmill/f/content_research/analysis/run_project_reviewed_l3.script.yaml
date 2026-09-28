@@ -1,0 +1,13 @@
+summary: Execute one persisted project-private L3 review
+description: Internal worker only. Uses fixed server configuration and may call
+  Ark; it is not exposed to the Raw App and has no schedule.
+lock: '!inline f/content_research/analysis/run_project_reviewed_l3.script.lock'
+concurrent_limit: 1
+schema:
+  type: object
+  properties:
+    review_id:
+      type: string
+  required:
+    - review_id
+timeout: 360

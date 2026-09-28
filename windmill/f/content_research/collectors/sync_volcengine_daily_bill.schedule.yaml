@@ -1,0 +1,10 @@
+summary: Reconcile Volcano payer daily bills and durable gaps
+schedule: "0 0 18 * * *"
+timezone: Asia/Shanghai
+script_path: f/content_research/collectors/sync_volcengine_daily_bill
+is_flow: false
+enabled: false
+args:
+  db: "$res:f/content_research/research_db"
+  billing_date: scheduled
+  coverage_start_date: '2026-09-21'

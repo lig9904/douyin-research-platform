@@ -10,9 +10,10 @@ import hashlib
 import json
 import os
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, TypedDict
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 import psycopg
 from psycopg.rows import dict_row
@@ -42,6 +43,7 @@ _NEXT_CARD_STATUS = {
     "adopted": frozenset({"archived"}),
     "excluded": frozenset({"archived"}),
 }
+_BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def _actor() -> str:
@@ -102,6 +104,12 @@ def _metric(value: object, name: str) -> int | None:
         return None
     if type(value) is not int or value < 0 or value > 9_000_000_000_000_000_000:
         raise ValueError(f"{name} is invalid")
+    return value
+
+
+def _window_days(value: object) -> int:
+    if type(value) is not int or not 1 <= value <= 90:
+        raise ValueError("observation_window_days must be 1–90")
     return value
 
 
@@ -182,7 +190,9 @@ def _card(cur, project: UUID, card_id: object) -> dict[str, Any]:
     card = _uuid(card_id, "card_id")
     cur.execute(
         """select c.id, c.source_video_id, c.hypothesis, c.reference_point, c.adaptation_difference,
-                  c.owner_actor, c.decision, c.status, c.subject_id from project_decision_card c
+                  c.owner_actor, c.decision, c.status, c.subject_id, c.evaluation_metric,
+                  c.created_at
+           from project_decision_card c
            where c.id=%s and c.project_id=%s for update of c""",
         (card, project),
     )
@@ -190,6 +200,12 @@ def _card(cur, project: UUID, card_id: object) -> dict[str, Any]:
     if row is None:
         raise PermissionError("RESEARCH_PROJECT_DECISION_CARD_DENIED")
     return dict(row)
+
+
+def _card_sources_current(cur, project: UUID, card_id: UUID) -> bool:
+    """A continuing action must still have precisely its reviewed evidence."""
+    cur.execute("select project_action_evidence_is_current(%s,%s) as evidence_current", (project, card_id))
+    return bool(cur.fetchone()["evidence_current"])
 
 
 def _record_event(cur, project: UUID, card: UUID, actor: str, action: str,
@@ -203,9 +219,26 @@ def _record_event(cur, project: UUID, card: UUID, actor: str, action: str,
 
 
 def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if set(payload) != {"source_video_id", "subject_id", "profile_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision"}:
+    required = {"source_video_id", "subject_id", "profile_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision", "evaluation_metric", "success_rule", "observation_window_days", "comparison_basis", "confounder_plan"}
+    if not required.issubset(payload) or set(payload) - required - {"evidence_refs"}:
         raise ValueError("create_card payload is invalid")
     video = _uuid(payload["source_video_id"], "source_video_id")
+    raw_refs = payload.get("evidence_refs", [])
+    if not isinstance(raw_refs, list) or len(raw_refs) > 12:
+        raise ValueError("evidence_refs must contain at most 12 videos")
+    evidence_refs: list[tuple[UUID, str, str]] = []
+    seen_videos = {video}
+    for item in raw_refs:
+        if not isinstance(item, dict) or set(item) != {"video_id", "role", "reason"}:
+            raise ValueError("evidence_refs item is invalid")
+        ref_video = _uuid(item["video_id"], "evidence_refs.video_id")
+        if ref_video in seen_videos:
+            raise ValueError("evidence_refs must be unique and differ from the primary video")
+        seen_videos.add(ref_video)
+        ref_role = item["role"]
+        if not isinstance(ref_role, str) or ref_role not in {"comparable", "counterexample"}:
+            raise ValueError("evidence_refs.role is invalid")
+        evidence_refs.append((ref_video, ref_role, _text(item["reason"], "evidence_refs.reason", 500)))
     decision = payload["decision"]
     if decision not in _DECISIONS:
         raise ValueError("decision is invalid")
@@ -238,18 +271,54 @@ def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, A
         "reference_point": _text(payload["reference_point"], "reference_point", 1200),
         "adaptation_difference": _text(payload["adaptation_difference"], "adaptation_difference", 1200),
         "owner_actor": _email(payload["owner_actor"]),
+        "evaluation_metric": _text(payload["evaluation_metric"], "evaluation_metric", 160),
+        "success_rule": _text(payload["success_rule"], "success_rule", 500),
+        "observation_window_days": _window_days(payload["observation_window_days"]),
+        "comparison_basis": _text(payload["comparison_basis"], "comparison_basis", 500),
+        "confounder_plan": _text(payload["confounder_plan"], "confounder_plan", 500),
     }
     if not _active_member(cur, project, values["owner_actor"]):
         raise ValueError("owner_actor must be an active project member")
     cur.execute(
+        """select candidate.video_id
+           from unnest(%s::uuid[]) as candidate(video_id)
+           where not exists (
+             select 1 from project_video_inclusion inclusion_row
+             join source_video source on source.id=inclusion_row.video_id
+             join lateral (
+               select review.status from project_video_case_review review
+               where review.project_id=inclusion_row.project_id
+                 and review.video_id=inclusion_row.video_id
+               order by review.version_no desc limit 1
+             ) latest_review on latest_review.status='complete'
+             where inclusion_row.project_id=%s
+               and inclusion_row.video_id=candidate.video_id
+               and inclusion_row.status='accepted'
+               and source.availability_status='available'
+           ) limit 1""",
+        (list(seen_videos), project),
+    )
+    if cur.fetchone() is not None:
+        raise ValueError("new cards require locally accepted, available videos with current complete case reviews")
+    cur.execute(
         """insert into project_decision_card
            (project_id,source_video_id,subject_id,hypothesis,reference_point,adaptation_difference,
-            owner_actor,decision,status,created_by)
-           values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
+            owner_actor,decision,status,created_by,evaluation_metric,success_rule,
+            observation_window_days,comparison_basis,confounder_plan)
+           values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) returning id""",
         (project, video, subject, values["hypothesis"], values["reference_point"], values["adaptation_difference"],
-         values["owner_actor"], decision, status, actor),
+         values["owner_actor"], decision, status, actor, values["evaluation_metric"],
+         values["success_rule"], values["observation_window_days"],
+         values["comparison_basis"], values["confounder_plan"]),
     )
     card = cur.fetchone()["id"]
+    for position, (ref_video, ref_role, ref_reason) in enumerate(evidence_refs, start=1):
+        cur.execute(
+            """insert into project_decision_card_evidence_ref
+               (project_id,decision_card_id,position,video_id,role,reason)
+               values (%s,%s,%s,%s,%s,%s)""",
+            (project, card, position, ref_video, ref_role, ref_reason),
+        )
     if profile is not None:
         cur.execute(
             """insert into project_decision_card_profile_binding
@@ -257,7 +326,10 @@ def _create_card(cur, project: UUID, actor: str, role: str, payload: dict[str, A
                values (%s,%s,%s,%s,%s)""",
             (project, card, subject, profile, actor),
         )
-    _record_event(cur, project, card, actor, "created", ["subject_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision"], None, status)
+    changed_fields = ["subject_id", "hypothesis", "reference_point", "adaptation_difference", "owner_actor", "decision", "experiment_contract"]
+    if evidence_refs:
+        changed_fields.append("evidence_refs")
+    _record_event(cur, project, card, actor, "created", changed_fields, None, status)
     return {"changed": True, "card_id": str(card), "status": status}
 
 
@@ -270,6 +342,8 @@ def _update_card(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dic
         raise ValueError("a reviewed or archived card is immutable; create a follow-up card for a new cycle")
     if not changes or not set(changes).issubset(_TEXT_FIELDS | {"owner_actor", "subject_id"}):
         raise ValueError("card changes are invalid")
+    if card["evaluation_metric"] is not None and set(changes) != {"owner_actor"}:
+        raise ValueError("a preregistered hypothesis is immutable; create a follow-up card")
     normalized: dict[str, Any] = {}
     for name in _TEXT_FIELDS:
         if name in changes:
@@ -303,6 +377,8 @@ def _set_card_status(cur, project: UUID, actor: str, payload: dict[str, Any]) ->
         raise ValueError("a reviewed or archived card is immutable; create a follow-up card for a new cycle")
     if next_status not in _NEXT_CARD_STATUS.get(card["status"], frozenset()):
         raise ValueError("card status transition is invalid; create a follow-up card for a new cycle")
+    if next_status != "archived" and not _card_sources_current(cur, project, card["id"]):
+        raise ValueError("action evidence changed; archive and create a new reviewed action card")
     if next_status == card["status"]:
         return {"changed": False, "card_id": str(card["id"]), "status": next_status}
     cur.execute("update project_decision_card set status=%s, updated_at=now() where id=%s", (next_status, card["id"]))
@@ -311,14 +387,18 @@ def _set_card_status(cur, project: UUID, actor: str, payload: dict[str, Any]) ->
 
 
 def _record_review(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if set(payload) != {"card_id", "observation_id", "conclusion", "evidence", "next_action"}:
+    if set(payload) != {"card_id", "observation_id", "verdict", "conclusion", "evidence", "next_action"}:
         raise ValueError("record_review payload is invalid")
     card = _card(cur, project, payload["card_id"])
-    if card["status"] in {"reviewed", "archived"}:
-        raise ValueError("a reviewed or archived card cannot be reviewed again")
+    if card["status"] not in {"active", "observing", "adopted"}:
+        raise ValueError("only an active, observing, or adopted card can be reviewed")
+    if card["evaluation_metric"] is None:
+        raise ValueError("legacy card without preregistered criteria cannot be reviewed")
     observation = _uuid(payload["observation_id"], "observation_id")
     cur.execute(
-        """select metric.id, metric.version, metric.metric_date, metric.impressions,
+        """select metric.id, metric.version, metric.metric_date, publication.publication_date,
+                  publication.published_at,
+                  card_contract.observation_window_days, metric.impressions,
                   metric.engagements, metric.likes, metric.comments, metric.shares,
                   metric.follows, metric.conversions, metric.source, metric.measurement_scope,
                   metric.source_reference, metric.source_reported_at, metric.source_version_or_digest,
@@ -336,6 +416,8 @@ def _record_review(cur, project: UUID, actor: str, payload: dict[str, Any]) -> d
            from project_publication_metric_observation metric
            join project_publication_record publication
              on publication.id=metric.publication_id and publication.project_id=metric.project_id
+           join project_decision_card card_contract
+             on card_contract.id=publication.decision_card_id and card_contract.project_id=publication.project_id
            where metric.id=%s and metric.project_id=%s and publication.decision_card_id=%s
              and publication.status='published'
            for key share of metric""",
@@ -344,32 +426,64 @@ def _record_review(cur, project: UUID, actor: str, payload: dict[str, Any]) -> d
     observation_row = cur.fetchone()
     if observation_row is None:
         raise ValueError("an observation for this card's published record is required before review")
+    if observation_row["published_at"] is None:
+        raise ValueError("historical publication without a recorded time cannot prove preregistration")
+    window_end = observation_row["published_at"] + timedelta(days=observation_row["observation_window_days"])
+    if (datetime.now(_BUSINESS_TIMEZONE) < window_end
+            or observation_row["source_reported_at"] < window_end
+            or observation_row["metric_date"] < window_end.astimezone(_BUSINESS_TIMEZONE).date()):
+        raise ValueError("the preregistered observation window is not complete")
+    verdict = payload["verdict"]
+    if verdict not in {"supported", "not_supported", "inconclusive"}:
+        raise ValueError("review verdict is invalid")
     conclusion = _text(payload["conclusion"], "conclusion", 2000)
     evidence = _text(payload["evidence"], "evidence", 1200)
     next_action = _text(payload["next_action"], "next_action", 800)
     cur.execute(
-        """update project_decision_card set status='reviewed', review_conclusion=%s,
+        """update project_decision_card set status='reviewed', review_verdict=%s, review_conclusion=%s,
              review_evidence=%s, next_action=%s, reviewed_by=%s, reviewed_at=now(),
              review_observation_id=%s, review_observation_version=%s,
              review_metric_snapshot=%s, updated_at=now()
            where id=%s""",
-        (conclusion, evidence, next_action, actor, observation_row["id"], observation_row["version"],
+        (verdict, conclusion, evidence, next_action, actor, observation_row["id"], observation_row["version"],
          Jsonb(observation_row["snapshot"]), card["id"]),
     )
-    _record_event(cur, project, card["id"], actor, "reviewed", ["review_conclusion", "review_evidence", "next_action", "status"], card["status"], "reviewed")
+    _record_event(cur, project, card["id"], actor, "reviewed", ["review_verdict", "review_conclusion", "review_evidence", "next_action", "status"], card["status"], "reviewed")
     return {"changed": True, "card_id": str(card["id"]), "status": "reviewed"}
 
 
 def _create_publication(cur, project: UUID, actor: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if set(payload) != {"decision_card_id", "publication_date", "title", "content_reference"}:
+    if set(payload) != {"decision_card_id", "publication_date", "published_at", "title", "content_reference", "platform", "account_reference", "platform_content_id", "content_version", "distribution_mode"}:
         raise ValueError("create_publication payload is invalid")
     card = _card(cur, project, payload["decision_card_id"])
+    if not ((card["decision"] == "adopt" and card["status"] in {"active", "adopted"})
+            or (card["decision"] == "observe" and card["status"] == "observing")):
+        raise ValueError("publication requires an active adopted or observing action")
+    if card["evaluation_metric"] is None:
+        raise ValueError("publication requires a preregistered experiment contract")
+    if not _card_sources_current(cur, project, card["id"]):
+        raise ValueError("action evidence changed; archive and create a new reviewed action card")
+    platform = payload["platform"]
+    if platform not in {"douyin", "xiaohongshu", "kuaishou", "bilibili", "other"}:
+        raise ValueError("platform is invalid")
+    distribution = payload["distribution_mode"]
+    if distribution not in {"organic", "paid", "mixed"}:
+        raise ValueError("distribution_mode is invalid")
+    publication_day = _date(payload["publication_date"], "publication_date")
+    published_at = _timestamp(payload["published_at"], "published_at")
+    if (published_at < card["created_at"] or published_at > datetime.now(_BUSINESS_TIMEZONE)
+            or publication_day != published_at.astimezone(_BUSINESS_TIMEZONE).date()):
+        raise ValueError("published_at must follow preregistration and match publication_date")
     cur.execute(
         """insert into project_publication_record
-           (project_id,decision_card_id,publication_date,title,content_reference,status,created_by)
-           values (%s,%s,%s,%s,%s,'published',%s) returning id""",
-        (project, card["id"], _date(payload["publication_date"], "publication_date"),
-         _text(payload["title"], "title", 160), _text(payload["content_reference"], "content_reference", 512), actor),
+           (project_id,decision_card_id,publication_date,title,content_reference,status,created_by,
+            platform,account_reference,platform_content_id,content_version,distribution_mode,published_at)
+           values (%s,%s,%s,%s,%s,'published',%s,%s,%s,%s,%s,%s,%s) returning id""",
+        (project, card["id"], publication_day,
+         _text(payload["title"], "title", 160), _text(payload["content_reference"], "content_reference", 512), actor,
+         platform, _text(payload["account_reference"], "account_reference", 160),
+         _text(payload["platform_content_id"], "platform_content_id", 160),
+         _text(payload["content_version"], "content_version", 160), distribution, published_at),
     )
     return {"changed": True, "publication_id": str(cur.fetchone()["id"]), "status": "published"}
 
@@ -392,7 +506,7 @@ def _record_daily_metric(cur, project: UUID, actor: str, payload: dict[str, Any]
         raise PermissionError("RESEARCH_PROJECT_PUBLICATION_DENIED")
     if metric_day < record["publication_date"]:
         raise ValueError("metric_date cannot precede publication_date")
-    if metric_day > datetime.now(timezone.utc).date():
+    if metric_day > datetime.now(_BUSINESS_TIMEZONE).date():
         raise ValueError("metric_date cannot be in the future")
     values = {name: _metric(metrics[name], name) for name in _METRIC_FIELDS}
     if all(value is None for value in values.values()):
@@ -403,6 +517,8 @@ def _record_daily_metric(cur, project: UUID, actor: str, payload: dict[str, Any]
     scope = _text(payload["measurement_scope"], "measurement_scope", 300)
     source_reference = _text(payload["source_reference"], "source_reference", 512)
     source_reported_at = _timestamp(payload["source_reported_at"], "source_reported_at")
+    if source_reported_at > datetime.now(_BUSINESS_TIMEZONE):
+        raise ValueError("source_reported_at cannot be in the future")
     source_version_or_digest = _text(payload["source_version_or_digest"], "source_version_or_digest", 256)
     cur.execute(
         """select coalesce(max(version),0)+1 as next_version

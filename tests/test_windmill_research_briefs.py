@@ -4,6 +4,7 @@ import importlib.util
 import inspect
 import re
 import sys
+from types import ModuleType
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -52,11 +53,12 @@ def test_dispatcher_has_no_public_input_or_provider_secret() -> None:
     dispatch = _load("dispatch_due_research_briefs")
     source = inspect.getsource(dispatch)
     assert not inspect.signature(dispatch.main).parameters
-    assert "limit 5" in source.lower()
+    assert "limit 1" in source.lower()
     assert "run_flow_async" in source
     assert "tikhub_api_key" not in source
     assert "httpx" not in source
     schedule = (COLLECTORS / "dispatch_due_research_briefs.schedule.yaml").read_text()
+    assert "schedule: '0 * * * * *'" in schedule
     assert "enabled: false" in schedule
 
 
@@ -69,22 +71,21 @@ def test_scoped_dispatch_only_selects_active_project_and_organization() -> None:
     assert "project.status='active' and organization.status='active'" in source
 
 
-def test_dispatcher_keeps_legacy_due_briefs_but_excludes_paused_project_fixture(monkeypatch) -> None:
+def test_dispatcher_selects_one_due_legacy_brief_and_excludes_paused_project_fixture(monkeypatch) -> None:
     dispatch = _load("dispatch_due_research_briefs")
     legacy_id = uuid4()
-    active_project_id = uuid4()
 
     class Cursor:
         def execute(self, statement: str, _params=None) -> None:
             if statement.strip().lower().startswith("select brief.id"):
-                # The fake database only returns rows that satisfy the asserted
-                # SQL predicate: legacy and active-project briefs.  A paused
+                # The fake database returns the first due brief only. A paused
                 # project brief is deliberately absent.
                 assert "brief.project_id is null" in statement
                 assert "project.status='active' and organization.status='active'" in statement
+                assert "limit 1" in statement.lower()
 
         def fetchall(self):
-            return [{"id": legacy_id}, {"id": active_project_id}]
+            return [{"id": legacy_id}]
 
         def __enter__(self):
             return self
@@ -103,9 +104,7 @@ def test_dispatcher_keeps_legacy_due_briefs_but_excludes_paused_project_fixture(
             return None
 
     monkeypatch.setattr(dispatch.psycopg, "connect", lambda **_kwargs: Connection())
-    assert dispatch._due({"host": "db", "port": 5432, "user": "u", "password": "p", "dbname": "d", "sslmode": "prefer"}) == [
-        str(legacy_id), str(active_project_id)
-    ]
+    assert dispatch._due({"host": "db", "port": 5432, "user": "u", "password": "p", "dbname": "d", "sslmode": "prefer"}) == [str(legacy_id)]
 
 
 def test_dispatcher_failure_category_does_not_leak_exception_message() -> None:
@@ -113,6 +112,28 @@ def test_dispatcher_failure_category_does_not_leak_exception_message() -> None:
     failure = dispatch._safe_failure("query", ValueError("password=do-not-leak"))
     assert str(failure) == "research brief dispatch query failed [ValueError]"
     assert "do-not-leak" not in str(failure)
+
+
+def test_dispatcher_starts_only_the_selected_due_brief(monkeypatch) -> None:
+    dispatch = _load("dispatch_due_research_briefs")
+    selected_id = str(uuid4())
+    calls = []
+    fake_wmill = ModuleType("wmill")
+
+    def run_flow_async(*, path, args, do_not_track_in_parent):
+        calls.append((path, args, do_not_track_in_parent))
+        return "job-1"
+
+    fake_wmill.run_flow_async = run_flow_async
+    monkeypatch.setitem(sys.modules, "wmill", fake_wmill)
+    monkeypatch.setattr(dispatch, "_resource", lambda: {"host": "db"})
+    monkeypatch.setattr(dispatch, "_due", lambda _db: [selected_id])
+
+    assert dispatch.main() == {
+        "status": "dispatched", "due_count": 1, "dispatched_count": 1,
+        "job_ids": ["job-1"], "external_calls": 0, "llm_calls": 0,
+    }
+    assert calls == [(dispatch.FLOW_PATH, {"brief_id": selected_id}, False)]
 
 
 def test_runner_summary_rejects_any_automatic_analysis_flag() -> None:

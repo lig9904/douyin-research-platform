@@ -1,0 +1,24 @@
+.project-concepts-content { max-width: 1200px; margin: 0 auto; padding: 24px; display: grid; gap: 20px; }
+.project-concepts-intro { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 24px; background: linear-gradient(135deg, #f5faff, #fff); }
+.project-concepts-intro small, .project-concepts-heading small { color: #64748b; font-size: 12px; }
+.project-concepts-intro h2 { margin: 8px 0; font-size: 23px; }
+.project-concepts-intro p { max-width: 760px; color: #475569; line-height: 1.7; margin: 0; }
+.project-concepts-count { min-width: 110px; text-align: center; display: grid; color: #475569; }
+.project-concepts-count strong { color: #1668dc; font-size: 31px; }
+.project-concepts-form { padding: 24px; display: grid; gap: 18px; }
+.project-concepts-form > p { color: #64748b; line-height: 1.7; margin: 0; }
+.project-concepts-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.project-concepts-heading h2, .project-concepts-heading h3 { margin: 4px 0 0; }
+.project-concepts-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.project-concepts-fields label { display: grid; gap: 8px; font-weight: 600; color: #334155; }
+.project-concepts-fields label:first-child, .project-concepts-fields label:nth-child(2) { grid-column: 1 / -1; }
+.project-concepts-list { display: grid; gap: 16px; }
+.project-concept-card { padding: 22px; display: grid; gap: 18px; }
+.project-concept-card dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 24px; margin: 0; }
+.project-concept-card dt { color: #64748b; font-size: 12px; margin-bottom: 5px; }
+.project-concept-card dd { margin: 0; white-space: pre-wrap; line-height: 1.6; overflow-wrap: anywhere; }
+.project-concepts-actions { display: flex; gap: 8px; }
+.project-concepts-history { border-top: 1px solid #e2e8f0; padding-top: 14px; display: grid; gap: 6px; color: #475569; }
+.project-concepts-empty, .project-concepts-readonly { padding: 20px; color: #64748b; }
+.project-concepts-loading { padding: 70px; text-align: center; }
+@media (max-width: 800px) { .project-concepts-content { padding: 14px; } .project-concepts-intro { align-items: flex-start; } .project-concepts-fields, .project-concept-card dl { grid-template-columns: 1fr; } .project-concepts-fields label:first-child, .project-concepts-fields label:nth-child(2) { grid-column: auto; } }

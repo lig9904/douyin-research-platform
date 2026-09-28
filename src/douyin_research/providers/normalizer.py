@@ -35,6 +35,32 @@ def validate_tikhub_envelope(payload: Any) -> dict[str, Any]:
     return payload
 
 
+def normalize_account_profile(
+    payload: dict[str, Any], *, requested_sec_user_id: str,
+    raw_ref: str | None, observed_at: datetime,
+) -> AccountRef:
+    """Accept only a profile bound to the requested stable Douyin identity."""
+    data = validate_tikhub_envelope(payload).get("data")
+    user = data.get("user") if isinstance(data, dict) else None
+    if not isinstance(user, dict):
+        raise ProviderSchemaError("account profile missing data.user")
+    sec_uid = _first_str(user, "sec_uid", "sec_user_id")
+    if not sec_uid or sec_uid != requested_sec_user_id:
+        raise ProviderSchemaError("account profile sec_uid does not match request")
+    raw_followers = user.get("follower_count")
+    if type(raw_followers) is int and raw_followers >= 0:
+        follower_count = raw_followers
+    elif isinstance(raw_followers, str) and raw_followers.isdecimal():
+        follower_count = int(raw_followers)
+    else:
+        raise ProviderSchemaError("account profile follower_count is unavailable")
+    return AccountRef(
+        provider="tikhub", platform="douyin", platform_account_id=sec_uid,
+        sec_user_id=sec_uid, nickname=_first_str(user, "nickname"),
+        follower_count=follower_count, observed_at=observed_at, raw_ref=raw_ref,
+    )
+
+
 def normalize_video_observations(
     payload: dict[str, Any],
     *,
@@ -82,6 +108,61 @@ def normalize_video_observations(
             )
         )
     return observations
+
+
+def normalize_exact_video_statistics(
+    payload: dict[str, Any], *, video_ids: tuple[str, ...],
+    raw_ref: str | None, observed_at: datetime,
+) -> list[VideoObservation]:
+    """Bind the dedicated statistics list, not arbitrary echoed request IDs."""
+    data = validate_tikhub_envelope(payload).get("data")
+    rows = data.get("statistics_list") if isinstance(data, dict) else None
+    if not isinstance(rows, list) or len(rows) != len(video_ids) or not all(
+        isinstance(row, dict) for row in rows
+    ):
+        raise ProviderSchemaError("exact statistics list is missing or incomplete")
+    raw_ids = [_as_str(row.get("aweme_id")) for row in rows]
+    if len(set(raw_ids)) != len(video_ids) or set(raw_ids) != set(video_ids):
+        raise ProviderSchemaError("exact statistics IDs do not match the request")
+    observations = normalize_video_observations(
+        {"code": 200, "data": rows},
+        endpoint_key="douyin.app.video_statistics", raw_ref=raw_ref,
+        observed_at=observed_at,
+    )
+    if len(observations) != len(video_ids) or {
+        item.video.platform_video_id for item in observations
+    } != set(video_ids) or any(
+        item.metrics is None or item.metrics.play_count is None
+        or item.metrics.play_count < 0 for item in observations
+    ):
+        raise ProviderSchemaError("exact statistics play counts are missing")
+    indexed = {item.video.platform_video_id: item for item in observations}
+    return [indexed[video_id] for video_id in video_ids]
+
+
+def extract_batch_detail_ids(payload: dict[str, Any]) -> list[str]:
+    """Read batch detail IDs before observation deduplication.
+
+    This uses the same JSON-string traversal and ID whitespace normalization as
+    video normalization, but never treats filter-list entries as details.
+    """
+    ids: list[str] = []
+    excluded = frozenset({"aweme_details", "filter_list", "verification_filter_list"})
+    for obj in _walk_dicts(payload.get("data"), excluded_keys=excluded):
+        details = obj.get("aweme_details")
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except json.JSONDecodeError:
+                details = None
+        if not isinstance(details, list):
+            continue
+        for item in details:
+            if isinstance(item, dict):
+                video_id = _as_str(item.get("aweme_id"))
+                if video_id:
+                    ids.append(video_id)
+    return ids
 
 
 def _normalize_low_fan_item(
